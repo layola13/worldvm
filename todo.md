@@ -1,7 +1,7 @@
 # Zig 版 World VM v1（3D 内核先行）实施计划
 
 ## Summary
-- 语言与平台：`Zig 0.14.1`，首版仅 `Windows x64`。
+- 语言与平台：`Zig 0.14.1`，首版仅 `linux x64`。
 - 交付形态：单一 CLI 可执行文件（无第三方依赖）。
 - 范围：先实现 3D 核心（Entity16/Scene32/Tick/碰撞/重力/流体简化/LOD/ASCII 观测），不做自然语言 Parser 主链路。
 - 外挂 LLM：仅做接口占位与本地验证链，不接真实外部 API。
