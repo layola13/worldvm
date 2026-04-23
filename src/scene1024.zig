@@ -12,8 +12,8 @@ pub const PageEntry = struct {
     resident: bool,
     dirty: bool,
     last_tick: u32,
-    aabb: physics.AABB,
-    scene: ?*scene32.Scene32,
+    aabb: physics.AABB = undefined,
+    scene: ?*scene32.Scene32 = null,
 };
 
 pub const Scene1024 = struct {
@@ -35,7 +35,6 @@ pub const Scene1024 = struct {
                 .resident = false,
                 .dirty = false,
                 .last_tick = 0,
-                .aabb = undefined,
                 .scene = null,
             };
         }
@@ -69,12 +68,11 @@ pub const Scene1024 = struct {
             var oldest_tick = self.global_tick;
             var oldest_idx: usize = 0;
             for (0..MAX_ACTIVE_PAGES) |i| {
-                if (self.pages[i].last_tick < oldest_tick) {
+                if (self.pages[i].last_tick <= oldest_tick) {
                     oldest_tick = self.pages[i].last_tick;
                     oldest_idx = i;
                 }
             }
-            // If dirty, we should save it (stub for now)
             target_idx = oldest_idx;
         }
 
@@ -94,4 +92,52 @@ pub const Scene1024 = struct {
         
         return entry;
     }
+
+    pub fn getVoxelAtGlobal(self: *Scene1024, addr_raw: address.WorldAddr) !bool {
+        const parts = address.decode(addr_raw);
+        const page_id = address.getPageId(addr_raw);
+        const entry = try self.getPage(page_id);
+        
+        const sx: i8 = @intCast(parts.lx);
+        const sy: i8 = @intCast(parts.ly);
+        const sz: i8 = @intCast(parts.lz);
+        
+        return scene32.isOccupied(entry.scene.?, sx, sy, sz);
+    }
+
+    pub fn setVoxelAtGlobal(self: *Scene1024, addr_raw: address.WorldAddr, val: bool) !void {
+        const parts = address.decode(addr_raw);
+        const page_id = address.getPageId(addr_raw);
+        const entry = try self.getPage(page_id);
+        entry.dirty = true;
+        
+        const sx: i8 = @intCast(parts.lx);
+        const sy: i8 = @intCast(parts.ly);
+        const sz: i8 = @intCast(parts.lz);
+        
+        if (val) {
+            scene32.setOccupied(entry.scene.?, sx, sy, sz);
+        } else {
+            scene32.clearOccupied(entry.scene.?, sx, sy, sz);
+        }
+    }
 };
+
+test "Global voxel addressing" {
+    const allocator = std.testing.allocator;
+    var s1024 = Scene1024.init(allocator);
+    defer s1024.deinit();
+
+    const addr = address.encode(.{
+        .world = 0, .px = 1, .py = 1, .pz = 1, .lx = 10, .ly = 10, .lz = 10,
+    });
+
+    try s1024.setVoxelAtGlobal(addr, true);
+    const val = try s1024.getVoxelAtGlobal(addr);
+    try std.testing.expect(val == true);
+    
+    const other_addr = address.encode(.{
+        .world = 0, .px = 1, .py = 1, .pz = 1, .lx = 11, .ly = 11, .lz = 11,
+    });
+    try std.testing.expect((try s1024.getVoxelAtGlobal(other_addr)) == false);
+}

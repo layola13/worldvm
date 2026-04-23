@@ -58,17 +58,27 @@ pub fn checkFlow(scene: *scene32.Scene32, inst: *const scene32.Instance, entitie
     };
     for (dirs) |d| {
         const nx = inst.pos_x + d.dx; const ny = inst.pos_y + d.dy; const nz = inst.pos_z + d.dz;
-        // Basic instance bounds check to keep it within scene-reachable area
         if (nx < -16 or nx >= 32 or ny < -16 or ny >= 32 or nz < -16 or nz >= 32) continue;
         
         var ok = true;
-        outer: for (0..16) |ex| { for (0..16) |ey| { for (0..16) |ez| {
-            if (entity16.testVoxel(entity, @truncate(ex), @truncate(ey), @truncate(ez))) {
-                if (isOccupiedByOther(scene, inst, entities, nx + @as(i8, @intCast(ex)), ny + @as(i8, @intCast(ey)), nz + @as(i8, @intCast(ez)))) { 
-                    ok = false; break :outer; 
+        // Optimization: Iterate over 64-bit words instead of 4096 voxels
+        for (0..64) |w_idx| {
+            const word = entity.topology[w_idx];
+            if (word == 0) continue; // Skip empty blocks of 4x4x4 voxels
+            
+            for (0..64) |b_idx| {
+                if ((word & (@as(u64, 1) << @as(u6, @truncate(b_idx)))) != 0) {
+                    const idx = (w_idx << 6) | b_idx;
+                    const ex: i8 = @intCast((idx >> 4) & 0xF);
+                    const ey: i8 = @intCast(idx >> 8);
+                    const ez: i8 = @intCast(idx & 0xF);
+                    if (isOccupiedByOther(scene, inst, entities, nx + ex, ny + ey, nz + ez)) { 
+                        ok = false; break; 
+                    }
                 }
             }
-        } } }
+            if (!ok) break;
+        }
         if (ok) return .{ .flowed = true, .dir = d.dir, .new_x = nx, .new_y = ny, .new_z = nz };
     }
     return .{ .flowed = false, .dir = .hold, .new_x = inst.pos_x, .new_y = inst.pos_y, .new_z = inst.pos_z };
@@ -101,11 +111,24 @@ pub fn checkPush(scene: *scene32.Scene32, inst: *const scene32.Instance, entitie
     const nx = inst.pos_x + dx; const ny = inst.pos_y + dy; const nz = inst.pos_z + dz;
     if (nx < -16 or nx >= 32 or ny < -16 or ny >= 32 or nz < -16 or nz >= 32) return .{ .pushed = false, .new_x = inst.pos_x, .new_y = inst.pos_y, .new_z = inst.pos_z };
     
-    for (0..16) |ex| { for (0..16) |ey| { for (0..16) |ez| {
-        if (entity16.testVoxel(entity, @truncate(ex), @truncate(ey), @truncate(ez))) {
-            if (isOccupiedByOther(scene, inst, entities, nx + @as(i8,@intCast(ex)), ny + @as(i8,@intCast(ey)), nz + @as(i8,@intCast(ez)))) return .{ .pushed = false, .new_x = inst.pos_x, .new_y = inst.pos_y, .new_z = inst.pos_z };
+    var ok = true;
+    for (0..64) |w_idx| {
+        const word = entity.topology[w_idx];
+        if (word == 0) continue;
+        for (0..64) |b_idx| {
+            if ((word & (@as(u64, 1) << @as(u6, @truncate(b_idx)))) != 0) {
+                const idx = (w_idx << 6) | b_idx;
+                const ex: i8 = @intCast((idx >> 4) & 0xF);
+                const ey: i8 = @intCast(idx >> 8);
+                const ez: i8 = @intCast(idx & 0xF);
+                if (isOccupiedByOther(scene, inst, entities, nx + ex, ny + ey, nz + ez)) { 
+                    ok = false; break; 
+                }
+            }
         }
-    } } }
-    return .{ .pushed = true, .new_x = nx, .new_y = ny, .new_z = nz };
+        if (!ok) break;
+    }
+    if (ok) return .{ .pushed = true, .new_x = nx, .new_y = ny, .new_z = nz };
+    return .{ .pushed = false, .new_x = inst.pos_x, .new_y = inst.pos_y, .new_z = inst.pos_z };
 }
 pub fn applyPush(inst: *scene32.Instance, r: PushResult) void { inst.pos_x = r.new_x; inst.pos_y = r.new_y; inst.pos_z = r.new_z; inst.state = .moving; }
