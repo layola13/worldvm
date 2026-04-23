@@ -3,6 +3,7 @@
 const std = @import("std");
 const entity16 = @import("entity16.zig");
 const scene32 = @import("scene32.zig");
+const scene1024 = @import("scene1024.zig");
 const tick_engine = @import("tick_engine.zig");
 const renderer = @import("renderer.zig");
 const Scenarios = @import("scenarios.zig");
@@ -17,15 +18,13 @@ pub fn main() !void {
     var args = try std.process.argsWithAllocator(allocator);
     defer args.deinit();
     
-    // skip program name
     _ = args.next();
-    
     const subcommand = args.next() orelse "run";
     
     if (std.mem.eql(u8, subcommand, "run")) {
-        try cmdRun(&args);
+        try cmdRun(allocator, &args);
     } else if (std.mem.eql(u8, subcommand, "bench")) {
-        try cmdBench(&args);
+        try cmdBench(allocator, &args);
     } else if (std.mem.eql(u8, subcommand, "dump")) {
         try cmdDump(&args);
     } else {
@@ -40,18 +39,17 @@ fn getScenario(name: []const u8) Scenarios.Scenario {
     return .apple_table;
 }
 
-fn cmdRun(args: *anyopaque) !void {
+fn cmdRun(allocator: std.mem.Allocator, args: *std.process.ArgIterator) !void {
     const stdout = std.io.getStdOut().writer();
     var scenario_name: []const u8 = "apple_table";
     var ticks: u32 = 50;
     var verbose = false;
     
-    var iter = @as(*std.process.ArgIterator, @ptrCast(@alignCast(args)));
-    while (iter.next()) |arg| {
+    while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "--scenario") or std.mem.eql(u8, arg, "-s")) {
-            if (iter.next()) |v| scenario_name = v;
+            if (args.next()) |v| scenario_name = v;
         } else if (std.mem.eql(u8, arg, "--ticks") or std.mem.eql(u8, arg, "-t")) {
-            if (iter.next()) |v| ticks = std.fmt.parseInt(u32, v, 10) catch 50;
+            if (args.next()) |v| ticks = std.fmt.parseInt(u32, v, 10) catch 50;
         } else if (std.mem.eql(u8, arg, "-v") or std.mem.eql(u8, arg, "--verbose")) {
             verbose = true;
         }
@@ -59,35 +57,41 @@ fn cmdRun(args: *anyopaque) !void {
     
     try stdout.print("World VM - Scenario: {s}, Ticks: {d}\n\n", .{scenario_name, ticks});
     
-    var scene = scene32.initScene();
+    var s1024 = scene1024.Scene1024.init(allocator);
+    defer s1024.deinit();
+    
+    // For MVP, we use the first page as our active scene
+    const entry = try s1024.getPage(0);
+    const scene = entry.scene.?;
+    
     var entities: [MAX_ENTITIES]entity16.Entity16 = undefined;
-    Scenarios.setupScenario(getScenario(scenario_name), &scene, &entities);
+    Scenarios.setupScenario(getScenario(scenario_name), scene, &entities);
+    
     var engine: tick_engine.TickEngine = undefined;
-    tick_engine.init(&engine, &scene, &entities);
+    tick_engine.init(&engine, &s1024, scene, &entities);
     
     var t: u32 = 0;
     while (t < ticks and !engine.stable) : (t += 1) {
         _ = tick_engine.stepTick(&engine);
         if (verbose) {
-            try renderer.renderScene(&scene, stdout);
+            try renderer.renderScene(scene, stdout);
             try stdout.print("\n", .{});
         }
     }
     
     try stdout.print("=== Final State ===\n", .{});
-    try renderer.renderScene(&scene, stdout);
-    try renderer.renderInstances(&scene, &entities, stdout);
-    try stdout.print("\nDone. Ticks: {d}, Stable: {any}\n", .{scene.tick, engine.stable});
+    try renderer.renderScene(scene, stdout);
+    try renderer.renderInstances(scene, &entities, stdout);
+    try stdout.print("\nDone. Ticks: {d}, Stable: {any}\n", .{t, engine.stable});
 }
 
-fn cmdBench(args: *anyopaque) !void {
+fn cmdBench(allocator: std.mem.Allocator, args: *std.process.ArgIterator) !void {
     const stdout = std.io.getStdOut().writer();
     var scenario_name: []const u8 = "apple_table";
     
-    var iter = @as(*std.process.ArgIterator, @ptrCast(@alignCast(args)));
-    while (iter.next()) |arg| {
+    while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "--scenario") or std.mem.eql(u8, arg, "-s")) {
-            if (iter.next()) |v| scenario_name = v;
+            if (args.next()) |v| scenario_name = v;
         }
     }
     
@@ -98,11 +102,16 @@ fn cmdBench(args: *anyopaque) !void {
     
     var r: u32 = 0;
     while (r < 5) : (r += 1) {
-        var scene = scene32.initScene();
+        var s1024 = scene1024.Scene1024.init(allocator);
+        defer s1024.deinit();
+        const entry = try s1024.getPage(0);
+        const scene = entry.scene.?;
+        
         var entities: [MAX_ENTITIES]entity16.Entity16 = undefined;
-        Scenarios.setupScenario(getScenario(scenario_name), &scene, &entities);
+        Scenarios.setupScenario(getScenario(scenario_name), scene, &entities);
+        
         var engine: tick_engine.TickEngine = undefined;
-        tick_engine.init(&engine, &scene, &entities);
+        tick_engine.init(&engine, &s1024, scene, &entities);
         
         const start = std.time.nanoTimestamp();
         _ = tick_engine.runTicks(&engine, 100);
@@ -116,14 +125,13 @@ fn cmdBench(args: *anyopaque) !void {
     try stdout.print("\nAvg: {}us, {}% stable\n", .{total_us / 5, stable_count * 20});
 }
 
-fn cmdDump(args: *anyopaque) !void {
+fn cmdDump(args: *std.process.ArgIterator) !void {
     const stdout = std.io.getStdOut().writer();
     var scenario_name: []const u8 = "apple_table";
     
-    var iter = @as(*std.process.ArgIterator, @ptrCast(@alignCast(args)));
-    while (iter.next()) |arg| {
+    while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "--scenario") or std.mem.eql(u8, arg, "-s")) {
-            if (iter.next()) |v| scenario_name = v;
+            if (args.next()) |v| scenario_name = v;
         }
     }
     
@@ -134,37 +142,4 @@ fn cmdDump(args: *anyopaque) !void {
     try stdout.print("=== {s} Initial State ===\n\n", .{scenario_name});
     try renderer.renderScene(&scene, stdout);
     try renderer.renderInstances(&scene, &entities, stdout);
-    
-    try stdout.print("\nEntity count:\n", .{});
-    var i: usize = 0;
-    while (i < 6) : (i += 1) {
-        const voxels = entity16.countVoxels(&entities[i]);
-        try stdout.print("Entity {}: {} voxels, {} mass\n", .{
-            i, voxels, entities[i].physics.mass
-        });
-    }
 }
-
-pub const LexiconResponse = struct {
-    status: ResponseStatus,
-    confidence: u8,
-};
-
-pub const ResponseStatus = enum {
-    ok,
-    not_connected,
-    timeout,
-};
-
-pub const ExternalLexiconAdapter = struct {
-    pub fn query(_: *const ExternalLexiconAdapter, input: []const u8) LexiconResponse {
-        _ = input;
-        return .{ .status = .not_connected, .confidence = 0 };
-    }
-};
-
-pub const Verifier = struct {
-    pub fn verify(_: *const Verifier, response: *const LexiconResponse) bool {
-        return response.status == .ok and response.confidence >= 50;
-    }
-};

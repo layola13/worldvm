@@ -1,7 +1,8 @@
-//! Tick Engine - 4-Step Pipeline
+//! Tick Engine - 4-Step Pipeline for 1024^3 World
 const std = @import("std");
 const entity16 = @import("entity16.zig");
 const scene32 = @import("scene32.zig");
+const scene1024 = @import("scene1024.zig");
 const physics = @import("physics.zig");
 
 pub const Operator = enum(u8) { NOP = 0, FALL = 6, FLOW = 7, MOVE = 3, PUSH = 4, BREAK = 5 };
@@ -13,76 +14,73 @@ pub const Intent = struct {
     dy: i8 = 0, 
     dz: i8 = 0, 
     priority: u8 = 128,
-    target_instance: u8 = 255, // For BREAK or PUSH
+    target_instance: u8 = 255,
 };
 
 pub const TickEngine = struct {
-    scene: *scene32.Scene32,
+    s1024: *scene1024.Scene1024,
+    active_page: *scene32.Scene32, // Current focus page for MVP compatibility
     entities: []entity16.Entity16,
     intents: [64]Intent = undefined,
     intent_count: u8 = 0,
     max_ticks: u32 = 1000,
     stable: bool = false,
     tick_id: u32 = 0,
-    reason_code: u8 = 0,
 };
 
-pub fn init(engine: *TickEngine, scene: *scene32.Scene32, entities: []entity16.Entity16) void {
+pub fn init(engine: *TickEngine, s1024: *scene1024.Scene1024, active_page: *scene32.Scene32, entities: []entity16.Entity16) void {
     engine.* = .{ 
-        .scene = scene, 
+        .s1024 = s1024,
+        .active_page = active_page,
         .entities = entities, 
         .max_ticks = 1000, 
         .stable = false, 
-        .tick_id = 0, 
-        .reason_code = 0 
+        .tick_id = 0,
     };
 }
 
 pub fn gather(engine: *TickEngine) void {
     engine.intent_count = 0;
     var i: u8 = 0;
-    while (i < engine.scene.*.instance_count) : (i += 1) {
+    while (i < engine.active_page.instance_count) : (i += 1) {
         if (engine.intent_count >= 64) break;
-        const inst = &engine.scene.*.instances[i];
+        const inst = &engine.active_page.instances[i];
         if (inst.entity_id >= engine.entities.len) continue;
         const entity = &engine.entities[inst.entity_id];
         
         switch (entity.physics.material) {
             .liquid => {
-                const r = physics.checkFlow(engine.scene, inst, engine.entities);
+                const r = physics.checkFlow(engine.s1024, inst, engine.entities);
                 if (r.flowed) {
                     engine.intents[engine.intent_count] = .{ 
                         .instance_idx = i, 
                         .op = .FLOW, 
-                        .dx = r.new_x - inst.pos_x, 
-                        .dy = r.new_y - inst.pos_y, 
-                        .dz = r.new_z - inst.pos_z, 
+                        .dx = @intCast(r.new_x - inst.pos_x), 
+                        .dy = @intCast(r.new_y - inst.pos_y), 
+                        .dz = @intCast(r.new_z - inst.pos_z), 
                         .priority = 180 
                     };
                     engine.intent_count += 1;
                 }
             },
             else => {
-                const r = physics.checkFall(engine.scene, inst, engine.entities);
+                const r = physics.checkFall(engine.s1024, inst, engine.entities);
                 if (r.can_fall) {
                     engine.intents[engine.intent_count] = .{ 
                         .instance_idx = i, 
                         .op = .FALL, 
-                        .dy = r.target_y - inst.pos_y, 
+                        .dy = @intCast(r.target_y - inst.pos_y), 
                         .priority = 200 
                     };
                     engine.intent_count += 1;
                 } else if (r.blocked) {
-                    engine.scene.*.instances[i].state = .resting;
-                    
+                    engine.active_page.instances[i].state = .resting;
                     if (inst.state == .falling) {
                         const impact = physics.calcImpact(-1, entity.physics.mass);
                         const b = physics.checkBreak(impact, entity.physics.material, entity.physics.hardness);
                         if (b.did_break) {
                             engine.intents[engine.intent_count] = .{
-                                .instance_idx = i,
-                                .op = .BREAK,
-                                .priority = 250
+                                .instance_idx = i, .op = .BREAK, .priority = 250
                             };
                             engine.intent_count += 1;
                         }
@@ -95,7 +93,6 @@ pub fn gather(engine: *TickEngine) void {
 
 pub fn speculate(engine: *TickEngine) void {
     if (engine.intent_count < 2) return;
-    // Simple priority sorting
     var i: u8 = 0;
     while (i < engine.intent_count - 1) : (i += 1) {
         var j: u8 = 0;
@@ -110,53 +107,35 @@ pub fn speculate(engine: *TickEngine) void {
 }
 
 pub fn resolve(engine: *TickEngine) void {
-    // Phase 1: Conflict Resolution using Shadow Occupancy
-    // We update the occupancy map in-place during resolution to block later intents.
     var i: u8 = 0;
     while (i < engine.intent_count) : (i += 1) {
         const intent = &engine.intents[i];
         if (intent.op == .NOP or intent.op == .BREAK) continue;
-        
-        const inst = &engine.scene.*.instances[intent.instance_idx];
+        const inst = &engine.active_page.instances[intent.instance_idx];
         const entity = &engine.entities[inst.entity_id];
-        
-        // Temporarily move the entity in the occupancy map to see if it hits something
-        // 1. Clear current occupancy
-        // (Wait, rebuildOccupancy handles the whole scene, so we need a more surgical approach)
-        // For MVP, we'll re-verify the intent against the current scene state.
-        // If the intent is still valid (no one else moved into the spot yet), we accept it.
         
         const nx = inst.pos_x + intent.dx;
         const ny = inst.pos_y + intent.dy;
         const nz = inst.pos_z + intent.dz;
         
         var valid = true;
-        // Re-check collision at target position
         for (0..64) |w_idx| {
             const word = entity.topology[w_idx];
             if (word == 0) continue;
             for (0..64) |b_idx| {
                 if ((word & (@as(u64, 1) << @as(u6, @truncate(b_idx)))) != 0) {
                     const idx = (w_idx << 6) | b_idx;
-                    const ex: i8 = @intCast((idx >> 4) & 0xF);
-                    const ey: i8 = @intCast(idx >> 8);
-                    const ez: i8 = @intCast(idx & 0xF);
-                    if (physics.isOccupiedByOther(engine.scene, inst, engine.entities, nx + ex, ny + ey, nz + ez)) {
+                    const ex: i32 = @intCast((idx >> 4) & 0xF);
+                    const ey: i32 = @intCast(idx >> 8);
+                    const ez: i32 = @intCast(idx & 0xF);
+                    if (physics.isOccupiedGlobal(engine.s1024, inst, engine.entities, nx + ex, ny + ey, nz + ez)) {
                         valid = false; break;
                     }
                 }
             }
             if (!valid) break;
         }
-        
-        if (!valid) {
-            intent.op = .NOP; // Cancel the intent
-        } else {
-            // "Reserve" the spot by updating occupancy Surgicaly
-            // First, clear old pos (approximate with AABB for speed if needed, but here we do precise)
-            // Actually, surgical clear/set is expensive.
-            // Let's just trust priority sorting for now as a baseline 'Resolve'.
-        }
+        if (!valid) intent.op = .NOP;
     }
 }
 
@@ -166,7 +145,7 @@ pub fn commit(engine: *TickEngine) u16 {
     while (i < engine.intent_count) : (i += 1) {
         const intent = &engine.intents[i];
         if (intent.op == .NOP) continue;
-        const inst = &engine.scene.*.instances[intent.instance_idx];
+        const inst = &engine.active_page.instances[intent.instance_idx];
         
         switch (intent.op) {
             .FALL => { inst.pos_y += intent.dy; inst.state = .falling; applied += 1; },
@@ -176,13 +155,14 @@ pub fn commit(engine: *TickEngine) u16 {
             else => {},
         }
     }
-    scene32.rebuildOccupancy(engine.scene, engine.entities);
+    // Update occupancy in global scene (only for active page in MVP)
+    scene32.rebuildOccupancy(engine.active_page, engine.entities);
     return applied;
 }
 
 pub fn stepTick(engine: *TickEngine) bool {
     engine.tick_id += 1;
-    engine.scene.*.tick = engine.tick_id;
+    engine.s1024.global_tick = engine.tick_id;
     gather(engine);
     speculate(engine);
     resolve(engine);
@@ -198,8 +178,4 @@ pub fn runTicks(engine: *TickEngine, max_ticks: u32) u32 {
         ticks_run += 1;
     }
     return ticks_run;
-}
-
-pub fn step_physics(engine: *TickEngine) void {
-    _ = stepTick(engine);
 }

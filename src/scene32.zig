@@ -14,9 +14,9 @@ pub const InstanceState = enum(u8) {
 
 pub const Instance = struct {
     entity_id: u16,
-    pos_x: i8,
-    pos_y: i8,
-    pos_z: i8,
+    pos_x: i32,
+    pos_y: i32,
+    pos_z: i32,
     rot_yaw: u8,
     rot_pitch: u8,
     rot_roll: u8,
@@ -63,11 +63,11 @@ pub fn sceneCoordToBitIndex(x: u8, y: u8, z: u8) u15 {
     return @truncate(@as(u15, z) + @as(u15, x) * SCENE_DIM + @as(u15, y) * SCENE_DIM * SCENE_DIM);
 }
 
-pub fn inBounds(x: i8, y: i8, z: i8) bool {
+pub fn inBounds(x: i32, y: i32, z: i32) bool {
     return x >= 0 and x < SCENE_DIM and y >= 0 and y < SCENE_DIM and z >= 0 and z < SCENE_DIM;
 }
 
-pub fn setOccupied(scene: *Scene32, x: i8, y: i8, z: i8) void {
+pub fn setOccupied(scene: *Scene32, x: i32, y: i32, z: i32) void {
     if (!inBounds(x, y, z)) return;
     const idx = sceneCoordToBitIndex(@intCast(x), @intCast(y), @intCast(z));
     const word = idx >> 6;
@@ -75,7 +75,7 @@ pub fn setOccupied(scene: *Scene32, x: i8, y: i8, z: i8) void {
     scene.occupancy[word] |= @as(u64, 1) << bit;
 }
 
-pub fn clearOccupied(scene: *Scene32, x: i8, y: i8, z: i8) void {
+pub fn clearOccupied(scene: *Scene32, x: i32, y: i32, z: i32) void {
     if (!inBounds(x, y, z)) return;
     const idx = sceneCoordToBitIndex(@intCast(x), @intCast(y), @intCast(z));
     const word = idx >> 6;
@@ -83,7 +83,7 @@ pub fn clearOccupied(scene: *Scene32, x: i8, y: i8, z: i8) void {
     scene.occupancy[word] &= ~(@as(u64, 1) << bit);
 }
 
-pub fn isOccupied(scene: *const Scene32, x: i8, y: i8, z: i8) bool {
+pub fn isOccupied(scene: *const Scene32, x: i32, y: i32, z: i32) bool {
     if (!inBounds(x, y, z)) return true;
     const idx = sceneCoordToBitIndex(@intCast(x), @intCast(y), @intCast(z));
     const word = idx >> 6;
@@ -99,7 +99,7 @@ pub fn addInstance(scene: *Scene32, instance: Instance) ?u8 {
     return idx;
 }
 
-pub fn projectEntityToScene(scene: *Scene32, entity: *const entity16.Entity16, pos_x: i8, pos_y: i8, pos_z: i8) void {
+pub fn projectEntityToScene(scene: *Scene32, entity: *const entity16.Entity16, pos_x: i32, pos_y: i32, pos_z: i32) void {
     var ex: usize = 0;
     while (ex < entity16.ENTITY_DIM) : (ex += 1) {
         var ey: usize = 0;
@@ -107,11 +107,11 @@ pub fn projectEntityToScene(scene: *Scene32, entity: *const entity16.Entity16, p
             var ez: usize = 0;
             while (ez < entity16.ENTITY_DIM) : (ez += 1) {
                 if (entity16.testVoxel(entity, @truncate(ex), @truncate(ey), @truncate(ez))) {
-                    const sx: i8 = @as(i8, @intCast(ex)) + pos_x;
-                    const sy: i8 = @as(i8, @intCast(ey)) + pos_y;
-                    const sz: i8 = @as(i8, @intCast(ez)) + pos_z;
+                    const sx: i32 = @as(i32, @intCast(ex)) + pos_x;
+                    const sy: i32 = @as(i32, @intCast(ey)) + pos_y;
+                    const sz: i32 = @as(i32, @intCast(ez)) + pos_z;
                     if (inBounds(sx, sy, sz)) {
-                        setOccupied(scene, @intCast(sx), @intCast(sy), @intCast(sz));
+                        setOccupied(scene, sx, sy, sz);
                     }
                 }
             }
@@ -141,10 +141,10 @@ pub fn clearScene(scene: *Scene32) void {
     scene.state_flags = 0;
 }
 
-pub fn isInFocus(scene: *const Scene32, x: i8, y: i8, z: i8) bool {
-    const dx: i16 = @as(i16, x) - @as(i16, scene.focus_x);
-    const dy: i16 = @as(i16, y) - @as(i16, scene.focus_y);
-    const dz: i16 = @as(i16, z) - @as(i16, scene.focus_z);
+pub fn isInFocus(scene: *const Scene32, x: i32, y: i32, z: i32) bool {
+    const dx: i32 = x - @as(i32, @intCast(scene.focus_x));
+    const dy: i32 = y - @as(i32, @intCast(scene.focus_y));
+    const dz: i32 = z - @as(i32, @intCast(scene.focus_z));
     const dist2 = dx*dx + dy*dy + dz*dz;
-    return dist2 <= @as(i16, scene.focus_radius) * @as(i16, scene.focus_radius);
+    return dist2 <= @as(i32, @intCast(scene.focus_radius)) * @as(i32, @intCast(scene.focus_radius));
 }
