@@ -62,3 +62,64 @@ var scene = scene32.initScene();
     try std.testing.expect(!result.flowed);
     try std.testing.expect(result.dir == .hold);
 }
+
+test "isOccupiedByOther excludes self" {
+    var scene = scene32.initScene();
+    var entities: [2]entity16.Entity16 = undefined;
+    entities[0] = entity16.Prototypes.apple();
+    const inst = scene32.Instance{ .entity_id = 0, .pos_x = 0, .pos_y = 10, .pos_z = 0, .rot_yaw = 0, .rot_pitch = 0, .rot_roll = 0, .state = .idle, .sleep_tick = 0, ._reserved = .{0} ** 3 };
+    _ = scene32.addInstance(&scene, inst);
+    scene32.rebuildOccupancy(&scene, &entities);
+    
+    // Check a voxel that is definitely occupied by self
+    // Apple is a sphere centered at (8,8,8) with radius 5.
+    // So voxel at (8,8,8) relative to instance is occupied.
+    // World coord: (8, 10+8, 8) = (8, 18, 8)
+    try std.testing.expect(scene32.isOccupied(&scene, 8, 18, 8));
+    
+    // isOccupiedByOther should return false for this voxel
+    const occupied = physics.isOccupiedByOther(&scene, &scene.instances[0], &entities, 8, 18, 8);
+    try std.testing.expect(!occupied);
+}
+
+test "isOccupiedByOther includes others" {
+    var scene = scene32.initScene();
+    var entities: [2]entity16.Entity16 = undefined;
+    entities[0] = entity16.Prototypes.apple();
+    entities[1] = entity16.Prototypes.floor();
+    
+    const apple_inst = scene32.Instance{ .entity_id = 0, .pos_x = 0, .pos_y = 10, .pos_z = 0, .rot_yaw = 0, .rot_pitch = 0, .rot_roll = 0, .state = .idle, .sleep_tick = 0, ._reserved = .{0} ** 3 };
+    _ = scene32.addInstance(&scene, apple_inst);
+    
+    const floor_inst = scene32.Instance{ .entity_id = 1, .pos_x = 0, .pos_y = 0, .pos_z = 0, .rot_yaw = 0, .rot_pitch = 0, .rot_roll = 0, .state = .resting, .sleep_tick = 0, ._reserved = .{0} ** 3 };
+    _ = scene32.addInstance(&scene, floor_inst);
+    
+    scene32.rebuildOccupancy(&scene, &entities);
+    
+    // Voxel at (0,0,0) is occupied by floor
+    try std.testing.expect(scene32.isOccupied(&scene, 0, 0, 0));
+    
+    // isOccupiedByOther for apple should return true for (0,0,0)
+    const occupied = physics.isOccupiedByOther(&scene, &scene.instances[0], &entities, 0, 0, 0);
+    try std.testing.expect(occupied);
+}
+
+test "water_flow integration" {
+    const tick_engine = @import("tick_engine.zig");
+    const scenarios = @import("scenarios.zig");
+    
+    var scene = scene32.initScene();
+    var entities: [64]entity16.Entity16 = undefined;
+    scenarios.setupScenario(.water_flow, &scene, &entities);
+    
+    var engine: tick_engine.TickEngine = undefined;
+    tick_engine.init(&engine, &scene, &entities);
+    
+    // Run 50 ticks
+    _ = tick_engine.runTicks(&engine, 50);
+    
+    // Water should have reached the floor (y=0) and started flowing
+    // Check instance 0 (water)
+    try std.testing.expect(scene.instances[0].pos_y == 0);
+    try std.testing.expect(scene.instances[0].state == .flowing);
+}

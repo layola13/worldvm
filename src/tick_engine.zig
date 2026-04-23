@@ -6,7 +6,15 @@ const physics = @import("physics.zig");
 
 pub const Operator = enum(u8) { NOP = 0, FALL = 6, FLOW = 7, MOVE = 3, PUSH = 4, BREAK = 5 };
 
-pub const Intent = struct { instance_idx: u8, op: Operator, dx: i8 = 0, dy: i8 = 0, dz: i8 = 0, priority: u8 = 128 };
+pub const Intent = struct { 
+    instance_idx: u8, 
+    op: Operator, 
+    dx: i8 = 0, 
+    dy: i8 = 0, 
+    dz: i8 = 0, 
+    priority: u8 = 128,
+    target_instance: u8 = 255, // For BREAK or PUSH
+};
 
 pub const TickEngine = struct {
     scene: *scene32.Scene32,
@@ -20,7 +28,14 @@ pub const TickEngine = struct {
 };
 
 pub fn init(engine: *TickEngine, scene: *scene32.Scene32, entities: []entity16.Entity16) void {
-    engine.* = .{ .scene = scene, .entities = entities, .max_ticks = 1000, .stable = false, .tick_id = 0, .reason_code = 0 };
+    engine.* = .{ 
+        .scene = scene, 
+        .entities = entities, 
+        .max_ticks = 1000, 
+        .stable = false, 
+        .tick_id = 0, 
+        .reason_code = 0 
+    };
 }
 
 pub fn gather(engine: *TickEngine) void {
@@ -31,29 +46,80 @@ pub fn gather(engine: *TickEngine) void {
         const inst = &engine.scene.*.instances[i];
         if (inst.entity_id >= engine.entities.len) continue;
         const entity = &engine.entities[inst.entity_id];
+        
+        // Skip sleeping or resting instances if not needed
+        // For now, check everything
+        
         switch (entity.physics.material) {
             .liquid => {
                 const r = physics.checkFlow(engine.scene, inst, engine.entities);
                 if (r.flowed) {
-                    engine.intents[engine.intent_count] = .{ .instance_idx = i, .op = .FLOW, .dx = r.new_x - inst.pos_x, .dy = r.new_y - inst.pos_y, .dz = r.new_z - inst.pos_z, .priority = 180 };
+                    engine.intents[engine.intent_count] = .{ 
+                        .instance_idx = i, 
+                        .op = .FLOW, 
+                        .dx = r.new_x - inst.pos_x, 
+                        .dy = r.new_y - inst.pos_y, 
+                        .dz = r.new_z - inst.pos_z, 
+                        .priority = 180 
+                    };
                     engine.intent_count += 1;
                 }
             },
             else => {
                 const r = physics.checkFall(engine.scene, inst, engine.entities);
                 if (r.can_fall) {
-                    engine.intents[engine.intent_count] = .{ .instance_idx = i, .op = .FALL, .dy = r.target_y - inst.pos_y, .priority = 200 };
+                    engine.intents[engine.intent_count] = .{ 
+                        .instance_idx = i, 
+                        .op = .FALL, 
+                        .dy = r.target_y - inst.pos_y, 
+                        .priority = 200 
+                    };
                     engine.intent_count += 1;
                 } else if (r.blocked) {
                     engine.scene.*.instances[i].state = .resting;
+                    
+                    // Check for BREAK if it hit something hard
+                    // Simplified: if it's falling and hits something, check impact
+                    if (inst.state == .falling) {
+                        const impact = physics.calcImpact(-1, entity.physics.mass); // Simple impact
+                        const b = physics.checkBreak(impact, entity.physics.material, entity.physics.hardness);
+                        if (b.did_break) {
+                            engine.intents[engine.intent_count] = .{
+                                .instance_idx = i,
+                                .op = .BREAK,
+                                .priority = 250
+                            };
+                            engine.intent_count += 1;
+                        }
+                    }
                 }
             },
         }
     }
 }
 
-pub fn speculate(engine: *TickEngine) void { _ = engine; }
-pub fn resolve(engine: *TickEngine) void { _ = engine; }
+pub fn speculate(engine: *TickEngine) void {
+    // Sort intents by priority
+    // Simple bubble sort for small count
+    if (engine.intent_count < 2) return;
+    var i: u8 = 0;
+    while (i < engine.intent_count - 1) : (i += 1) {
+        var j: u8 = 0;
+        while (j < engine.intent_count - i - 1) : (j += 1) {
+            if (engine.intents[j].priority < engine.intents[j+1].priority) {
+                const tmp = engine.intents[j];
+                engine.intents[j] = engine.intents[j+1];
+                engine.intents[j+1] = tmp;
+            }
+        }
+    }
+}
+
+pub fn resolve(engine: *TickEngine) void {
+    _ = engine;
+    // Collision resolution between intents
+    // For now, if two instances want the same space, the higher priority wins
+}
 
 pub fn commit(engine: *TickEngine) u16 {
     var applied: u16 = 0;
@@ -62,10 +128,31 @@ pub fn commit(engine: *TickEngine) u16 {
         const intent = &engine.intents[i];
         if (intent.op == .NOP) continue;
         const inst = &engine.scene.*.instances[intent.instance_idx];
+        
         switch (intent.op) {
-            .FALL => { inst.pos_y += intent.dy; inst.state = .falling; applied += 1; },
-            .FLOW => { inst.pos_x += intent.dx; inst.pos_y += intent.dy; inst.pos_z += intent.dz; inst.state = .flowing; applied += 1; },
-            .MOVE, .PUSH => { inst.pos_x += intent.dx; inst.pos_y += intent.dy; inst.pos_z += intent.dz; inst.state = .moving; applied += 1; },
+            .FALL => {
+                inst.pos_y += intent.dy;
+                inst.state = .falling;
+                applied += 1;
+            },
+            .FLOW => {
+                inst.pos_x += intent.dx;
+                inst.pos_y += intent.dy;
+                inst.pos_z += intent.dz;
+                inst.state = .flowing;
+                applied += 1;
+            },
+            .MOVE, .PUSH => {
+                inst.pos_x += intent.dx;
+                inst.pos_y += intent.dy;
+                inst.pos_z += intent.dz;
+                inst.state = .moving;
+                applied += 1;
+            },
+            .BREAK => {
+                inst.state = .broken;
+                applied += 1;
+            },
             else => {},
         }
     }
@@ -79,16 +166,20 @@ pub fn stepTick(engine: *TickEngine) bool {
     gather(engine);
     speculate(engine);
     resolve(engine);
-    _ = commit(engine);
-    engine.stable = (engine.intent_count == 0);
+    const applied = commit(engine);
+    engine.stable = (applied == 0);
     return engine.stable;
 }
 
 pub fn runTicks(engine: *TickEngine, max_ticks: u32) u32 {
     var ticks_run: u32 = 0;
     while (ticks_run < max_ticks and !engine.stable) {
-        if (stepTick(engine)) { engine.reason_code = 1; break; }
+        if (stepTick(engine)) break;
         ticks_run += 1;
     }
     return ticks_run;
+}
+
+pub fn step_physics(engine: *TickEngine) void {
+    _ = stepTick(engine);
 }
