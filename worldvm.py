@@ -92,6 +92,14 @@ class WorldVM:
         self.lib.is_instance_sleeping.restype = ctypes.c_int
         self.lib.wake_instance.argtypes = [ctypes.c_uint8]
         self.lib.wake_instance.restype = ctypes.c_int
+        self.lib.is_instance_broken.argtypes = [ctypes.c_uint8]
+        self.lib.is_instance_broken.restype = ctypes.c_int
+        self.lib.get_instance_state.argtypes = [ctypes.c_uint8]
+        self.lib.get_instance_state.restype = ctypes.c_int
+        self.lib.entity_get_medium_type.argtypes = [ctypes.c_uint8]
+        self.lib.entity_get_medium_type.restype = ctypes.c_int
+        self.lib.entity_is_floating.argtypes = [ctypes.c_uint8]
+        self.lib.entity_is_floating.restype = ctypes.c_int
         self.lib.set_time_scale.argtypes = [ctypes.c_float]
         self.lib.get_time_scale.restype = ctypes.c_float
         self.lib.get_joint_count.restype = ctypes.c_uint8
@@ -266,6 +274,20 @@ class WorldVM:
         self.lib.terrain_calculate_hydroplaning_risk.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_float]
         self.lib.terrain_calculate_hydroplaning_risk.restype = ctypes.c_float
         self.lib.terrain_get_weather_visibility.restype = ctypes.c_float
+
+        # Material Pairing
+        self.lib.material_pairing_get_restitution.argtypes = [ctypes.c_uint8, ctypes.c_uint8]
+        self.lib.material_pairing_get_restitution.restype = ctypes.c_float
+        self.lib.material_pairing_get_friction.argtypes = [ctypes.c_uint8, ctypes.c_uint8]
+        self.lib.material_pairing_get_friction.restype = ctypes.c_float
+        self.lib.material_pairing_calculate_impact_damage.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_uint8, ctypes.c_uint8]
+        self.lib.material_pairing_calculate_impact_damage.restype = ctypes.c_float
+        self.lib.material_pairing_get_buoyancy.argtypes = [ctypes.c_uint8]
+        self.lib.material_pairing_get_buoyancy.restype = ctypes.c_float
+        self.lib.material_pairing_get_medium_type.argtypes = [ctypes.c_uint8]
+        self.lib.material_pairing_get_medium_type.restype = ctypes.c_uint8
+        self.lib.material_pairing_is_hard_surface.argtypes = [ctypes.c_uint8]
+        self.lib.material_pairing_is_hard_surface.restype = ctypes.c_int
 
         # Collision
         self.lib.collision_init.restype = None

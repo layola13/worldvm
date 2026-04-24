@@ -17,6 +17,8 @@ const vehicle = @import("vehicle.zig");
 const ragdoll = @import("ragdoll.zig");
 const ballistics = @import("ballistics.zig");
 const rewind = @import("rewind.zig");
+const terrain = @import("terrain.zig");
+const material_pairing = @import("material_pairing.zig");
 
 pub const Operator = enum(u8) { NOP = 0, FALL = 6, FLOW = 7, MOVE = 3, PUSH = 4, BREAK = 5 };
 
@@ -344,11 +346,58 @@ pub fn gather(engine: *TickEngine) void {
                         // P1 fix: compute impact BEFORE applying restitution (original velocity)
                         const impact = physics.calcImpact(inst.vel_y, entity.physics.mass);
 
-                        // Apply bounce (restitution)
-                        inst.vel_y = physics.applyRestitution(inst.vel_y, entity.physics.restitution);
+                        // Get surface type for environment collision and use material pairing
+                        // If blocker_id == 255, we hit environment (terrain)
+                        const surface_type = if (r.blocker_id == 255)
+                            terrain.getSurfaceAt(inst.pos_x, inst.pos_z)
+                        else
+                            terrain.SurfaceType.asphalt_dry; // Default for instance collision
 
-                        // Apply friction to horizontal velocity
-                        physics.applyFriction(&inst.vel_x, &inst.vel_z, entity.physics.friction);
+                        // Get medium type for special handling
+                        const medium_type = material_pairing.getMediumType(surface_type);
+                        const response = material_pairing.getDefaultResponse(surface_type);
+
+                        // Use material pairing to get combined restitution/friction
+                        const combined_restitution = material_pairing.combineRestitution(
+                            entity.physics.restitution, surface_type);
+                        const combined_friction = material_pairing.combineFriction(
+                            entity.physics.friction, surface_type);
+
+                        // Handle different medium types
+                        if (medium_type == .liquid) {
+                            // Liquid: Apply buoyancy instead of normal bounce
+                            // Buoyancy cancels part of gravity, entity floats
+                            const buoyancy_factor = response.buoyancy; // 0.0-1.0
+                            const effective_gravity = 1.0 - buoyancy_factor;
+
+                            // Reduce vertical velocity by buoyancy factor
+                            inst.vel_y = @divTrunc(inst.vel_y * @as(i16, @intFromFloat(effective_gravity)), 10);
+
+                            // Apply higher water resistance to horizontal
+                            const water_friction = @as(u8, @intFromFloat(@min(1.0, combined_friction * 1.5) * 255.0));
+                            physics.applyFriction(&inst.vel_x, &inst.vel_z, water_friction);
+                        } else if (medium_type == .soft) {
+                            // Soft medium: Apply extra friction and partial sinking
+                            // Don't bounce, just compress vertical velocity
+                            inst.vel_y = @divTrunc(inst.vel_y * @as(i16, @intFromFloat(combined_restitution * 0.5)), 10);
+
+                            // Extra friction for soft surfaces
+                            const soft_friction = @as(u8, @intFromFloat(@min(1.0, combined_friction * 1.2) * 255.0));
+                            physics.applyFriction(&inst.vel_x, &inst.vel_z, soft_friction);
+
+                            // Allow slight sinking - reduce resting height
+                            // Entity sinks 1-2 voxels into soft ground
+                            inst.pos_y -= 1;
+                        } else {
+                            // Solid: Normal bounce behavior
+                            // Apply bounce (restitution)
+                            const restitution_u8 = @as(u8, @intFromFloat(@min(1.0, combined_restitution) * 255.0));
+                            inst.vel_y = physics.applyRestitution(inst.vel_y, restitution_u8);
+
+                            // Apply friction to horizontal velocity
+                            const friction_u8 = @as(u8, @intFromFloat(@min(1.0, combined_friction) * 255.0));
+                            physics.applyFriction(&inst.vel_x, &inst.vel_z, friction_u8);
+                        }
 
                         const b_self = physics.checkBreak(impact, entity.physics.material, entity.physics.hardness);
                         if (b_self.did_break) {
@@ -627,8 +676,7 @@ fn updateRagdollWorld(engine: *TickEngine, dt: f32) void {
 
 /// Update all projectiles
 fn updateProjectileWorld(engine: *TickEngine, dt: f32) void {
-    _ = engine;
-    ballistics.simulateAll(dt);
+    ballistics.simulateAll(engine.s1024, engine.entities, dt);
 }
 
 /// Record world state snapshot for rewind

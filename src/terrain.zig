@@ -18,6 +18,19 @@ pub const SurfaceType = enum(u8) {
     water = 9,
     rumble_strip = 10,
     mud_ruts = 11,
+    cloth = 12,          // 布匹/布料 - 高摩擦，低反弹
+    rubber = 13,         // 橡胶 - 高弹性
+    plastic = 14,        // 塑料 - 中等摩擦
+    carpet = 15,         // 地毯 - 软表面，高摩擦
+};
+
+/// Medium type describes the phase/behavior of the surface
+pub const MediumType = enum(u8) {
+    solid = 0,     // Normal solid ground
+    soft = 1,      // Deformable, absorbs impact
+    liquid = 2,    // Water, can cause buoyancy
+    vapor = 3,      // Gas, minimal resistance
+    plasma = 4,     // Extreme heat
 };
 
 pub const TerrainPatch = struct {
@@ -85,6 +98,10 @@ pub fn addTerrainPatch(x: i32, z: i32, radius: i32, surface: SurfaceType) void {
         .water => 0.05,
         .rumble_strip => 0.8,
         .mud_ruts => 0.15,
+        .cloth => 0.85,
+        .rubber => 0.9,
+        .plastic => 0.5,
+        .carpet => 0.9,
     };
 
     const rolling: f32 = switch (surface) {
@@ -100,6 +117,10 @@ pub fn addTerrainPatch(x: i32, z: i32, radius: i32, surface: SurfaceType) void {
         .water => 0.15,
         .rumble_strip => 0.02,
         .mud_ruts => 0.12,
+        .cloth => 0.15,
+        .rubber => 0.01,
+        .plastic => 0.02,
+        .carpet => 0.12,
     };
 
     g_terrain_system.patches[idx] = .{
@@ -142,6 +163,10 @@ pub fn getFrictionAt(world_x: i32, world_z: i32) f32 {
         .water => 0.05,
         .rumble_strip => 0.8,
         .mud_ruts => 0.15,
+        .cloth => 0.85,
+        .rubber => 0.9,
+        .plastic => 0.5,
+        .carpet => 0.9,
     };
 
     if (g_terrain_system.weather.rain_intensity > 0) {
@@ -164,7 +189,12 @@ pub fn getRollingResistanceAt(world_x: i32, world_z: i32) f32 {
         .ice => 0.005,
         .snow => 0.03,
         .water => 0.15,
-        else => 0.02,
+        .rumble_strip => 0.02,
+        .mud_ruts => 0.12,
+        .cloth => 0.15,
+        .rubber => 0.01,
+        .plastic => 0.02,
+        .carpet => 0.12,
     };
 }
 
@@ -199,6 +229,8 @@ pub fn getSurfaceRoughness(world_x: i32, world_z: i32) f32 {
         .gravel => 0.05,
         .mud => 0.03,
         .mud_ruts => 0.08,
+        .cloth => 0.02,
+        .carpet => 0.03,
         else => 0.01,
     };
 }

@@ -80,17 +80,20 @@ pub fn applyFriction(vel_x: *i16, vel_z: *i16, friction: u8) void {
 // ============================================================================
 
 // Global occupancy check that handles page boundaries
-pub fn isOccupiedGlobal(s1024: *scene1024.Scene1024, inst: *const scene32.Instance, entities: []entity16.Entity16, gx: i32, gy: i32, gz: i32, blocker_out: ?*u8) bool {
+// inst parameter is optional - pass null when checking only environment (no self-collision)
+pub fn isOccupiedGlobal(s1024: *scene1024.Scene1024, inst: ?*const scene32.Instance, entities: []entity16.Entity16, gx: i32, gy: i32, gz: i32, blocker_out: ?*u8) bool {
     // 1. Boundary check for the 1024^3 world
     if (gx < 0 or gx >= 1024 or gy < 0 or gy >= 1024 or gz < 0 or gz >= 1024) return true;
 
-    // 2. Check if it's occupied by self
-    const entity = &entities[inst.entity_id];
-    const local_x = gx - inst.pos_x;
-    const local_y = gy - inst.pos_y;
-    const local_z = gz - inst.pos_z;
-    if (local_x >= 0 and local_x < 16 and local_y >= 0 and local_y < 16 and local_z >= 0 and local_z < 16) {
-        if (entity16.testVoxel(entity, @intCast(local_x), @intCast(local_y), @intCast(local_z))) return false;
+    // 2. Check if it's occupied by self (only if inst is provided)
+    if (inst) |i| {
+        const entity = &entities[i.entity_id];
+        const local_x = gx - i.pos_x;
+        const local_y = gy - i.pos_y;
+        const local_z = gz - i.pos_z;
+        if (local_x >= 0 and local_x < 16 and local_y >= 0 and local_y < 16 and local_z >= 0 and local_z < 16) {
+            if (entity16.testVoxel(entity, @intCast(local_x), @intCast(local_y), @intCast(local_z))) return false;
+        }
     }
 
     // 3. Map global to page and local

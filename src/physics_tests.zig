@@ -32,8 +32,8 @@ pub const PhysicsTestScenario = struct {
     setup_fn: *const fn (_: []entity16.Entity16, instances: *[32]scene32.Instance) u8,
 };
 
-var test_entities: [64]entity16.Entity16 = undefined;
-var test_instances: [32]scene32.Instance = undefined;
+pub var test_entities: [64]entity16.Entity16 = undefined;
+pub var test_instances: [32]scene32.Instance = undefined;
 
 pub fn createTestEntities() void {
     test_entities[0] = entity16.Prototypes.apple();

@@ -21,6 +21,7 @@ const drivetrain = @import("drivetrain.zig");
 const aerodynamics = @import("aerodynamics.zig");
 const braking = @import("braking.zig");
 const terrain = @import("terrain.zig");
+const material_pairing = @import("material_pairing.zig");
 const collision = @import("collision.zig");
 const disasters = @import("disasters.zig");
 const sensors = @import("sensors.zig");
@@ -278,6 +279,38 @@ pub export fn get_instance_pos(inst_idx: u8, pos_out: [*]i32) c_int {
     pos_out[1] = inst.pos_y;
     pos_out[2] = inst.pos_z;
     return 0;
+}
+
+pub export fn is_instance_broken(inst_idx: u8) c_int {
+    const s = g_state orelse return -1;
+    if (inst_idx >= s.s1024.instance_count) return -1;
+    const inst = &s.s1024.instances[inst_idx];
+    return if (inst.state == .broken) 1 else 0;
+}
+
+pub export fn get_instance_state(inst_idx: u8) c_int {
+    const s = g_state orelse return -1;
+    if (inst_idx >= s.s1024.instance_count) return -1;
+    const inst = &s.s1024.instances[inst_idx];
+    return @intFromEnum(inst.state);
+}
+
+pub export fn entity_get_medium_type(inst_idx: u8) c_int {
+    const s = g_state orelse return -1;
+    if (inst_idx >= s.s1024.instance_count) return -1;
+    const inst = &s.s1024.instances[inst_idx];
+    const surface = terrain.getSurfaceAt(inst.pos_x, inst.pos_z);
+    const medium = material_pairing.getMediumType(surface);
+    return @intFromEnum(medium);
+}
+
+pub export fn entity_is_floating(inst_idx: u8) c_int {
+    const s = g_state orelse return -1;
+    if (inst_idx >= s.s1024.instance_count) return -1;
+    const inst = &s.s1024.instances[inst_idx];
+    const surface = terrain.getSurfaceAt(inst.pos_x, inst.pos_z);
+    const medium = material_pairing.getMediumType(surface);
+    return if (medium == .liquid) 1 else 0;
 }
 
 // ============================================================================
@@ -984,6 +1017,46 @@ pub export fn terrain_calculate_hydroplaning_risk(speed: f32, water_depth: f32, 
 
 pub export fn terrain_get_weather_visibility() f32 {
     return terrain.getWeather().visibility;
+}
+
+// ============================================================================
+// Material Pairing Functions
+// ============================================================================
+
+pub export fn material_pairing_get_restitution(entity_restitution: u8, surface_type: u8) f32 {
+    const surface: terrain.SurfaceType = @enumFromInt(surface_type);
+    return material_pairing.combineRestitution(entity_restitution, surface);
+}
+
+pub export fn material_pairing_get_friction(entity_friction: u8, surface_type: u8) f32 {
+    const surface: terrain.SurfaceType = @enumFromInt(surface_type);
+    return material_pairing.combineFriction(entity_friction, surface);
+}
+
+pub export fn material_pairing_calculate_impact_damage(
+    impact_velocity: f32,
+    mass: f32,
+    surface_type: u8,
+    material: u8,
+) f32 {
+    const surface: terrain.SurfaceType = @enumFromInt(surface_type);
+    const mat: entity16.MaterialType = @enumFromInt(material);
+    return material_pairing.calculateImpactDamage(impact_velocity, mass, surface, mat);
+}
+
+pub export fn material_pairing_get_buoyancy(surface_type: u8) f32 {
+    const surface: terrain.SurfaceType = @enumFromInt(surface_type);
+    return material_pairing.getDefaultResponse(surface).buoyancy;
+}
+
+pub export fn material_pairing_get_medium_type(surface_type: u8) u8 {
+    const surface: terrain.SurfaceType = @enumFromInt(surface_type);
+    return @intFromEnum(material_pairing.getMediumType(surface));
+}
+
+pub export fn material_pairing_is_hard_surface(surface_type: u8) c_int {
+    const surface: terrain.SurfaceType = @enumFromInt(surface_type);
+    return if (material_pairing.isHardSurface(surface)) 1 else 0;
 }
 
 // ============================================================================
