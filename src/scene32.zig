@@ -22,7 +22,13 @@ pub const Instance = struct {
     rot_roll: u8,
     state: InstanceState,
     sleep_tick: u8,
-    _reserved: [3]u8,
+    vel_x: i16 = 0,
+    vel_y: i16 = 0,
+    vel_z: i16 = 0,
+    ang_x: i8 = 0,
+    ang_y: i8 = 0,
+    ang_z: i8 = 0,
+    _reserved: [2]u8,
 };
 
 pub const Scene32 = struct {

@@ -107,7 +107,7 @@ fn makeInstance(entity_id: u8, x: i32, y: i32, z: i32, state: scene32.InstanceSt
         .rot_roll = 0,
         .state = state,
         .sleep_tick = 0,
-        ._reserved = .{0} ** 3,
+        ._reserved = .{0} ** 2,
     };
 }
 

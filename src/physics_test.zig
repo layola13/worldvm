@@ -15,7 +15,7 @@ test "Static entity does not fall" {
 
     var entities: [4]entity16.Entity16 = undefined;
     entities[0] = entity16.Prototypes.floor();
-    const inst = scene32.Instance{ .entity_id = 0, .pos_x = 0, .pos_y = 0, .pos_z = 0, .rot_yaw = 0, .rot_pitch = 0, .rot_roll = 0, .state = .idle, .sleep_tick = 0, ._reserved = .{0} ** 3 };
+    const inst = scene32.Instance{ .entity_id = 0, .pos_x = 0, .pos_y = 0, .pos_z = 0, .rot_yaw = 0, .rot_pitch = 0, .rot_roll = 0, .state = .idle, .sleep_tick = 0, ._reserved = .{0} ** 2 };
     _ = try s1024.addInstance(inst);
     try s1024.rebuildOccupancy(&entities);
     

@@ -26,7 +26,7 @@ pub fn setupScenario(scenario: Scenario, s1024: *scene1024.Scene1024, entities: 
     const default_inst = scene32.Instance{
         .entity_id = 0, .pos_x = 0, .pos_y = 0, .pos_z = 0,
         .rot_yaw = 0, .rot_pitch = 0, .rot_roll = 0,
-        .state = .idle, .sleep_tick = 0, ._reserved = .{0} ** 3
+        .state = .idle, .sleep_tick = 0, ._reserved = .{0} ** 2
     };
 
     switch (scenario) {
