@@ -91,3 +91,33 @@
 | 文档质量 | ★★★★☆ | 详尽但体量过大，与实现阶段不匹配 |
 
 **核心建议**：现在最需要做的是**停止写文档、开始写代码**。选定一个 7 章的 MVP 子集（01/02/04/05/07/09/12），用 Zig 或 Rust 实现可运行的最小内核，跑通 "输入一句话 → Parser → ISA 指令 → Tick 执行 → 输出结果" 的完整路径。只有在真实代码上跑过，才能发现文档中那些看似合理实则悬空的设计。文档的作用应该是记录已经验证的决策，而不是预先规划所有可能性。
+
+
+
+ 这个项目目前是“能跑的原型（pre-alpha）”，不是可对外稳定交付的版本。核心架构方向是对的，但工程质量和边界安全还没达标。
+
+  关键问题（按严重级别）
+
+  - P0 外部输入可直接触发崩溃：spawn_instance 没校验 entity_id，会在占用重建时越界（src/vm_hook.zig:78, src/scene1024.zig:69）。我实测 entity_id=999 会 panic。
+  - P0 负扭矩可触发运行时 panic：角速度更新把负值 intCast 到无符号（src/tick_engine.zig:241 到 src/tick_engine.zig:243）。我实测 apply_torque(...,-100,...) 后 run_ticks 崩溃。
+  - P1 碰撞破坏逻辑有明显偏差：先做反弹再算冲击力，导致冲击被低估（src/tick_engine.zig:325, src/tick_engine.zig:331）；同时 blocker_id == 0 被错误排除（src/tick_engine.zig:344）。
+  - P1 构建体验断层：zig build run 不可用（缺少显式 run step，见 build.zig:34 到 build.zig:38）。
+  - P1 FFI 语义有占位实现：run_logic_check 基本是硬编码（src/vm_hook.zig:144），get_trace_summary 初始化后恒 PASS（src/vm_hook.zig:152）。
+  - P2 测试覆盖“看起来多，实际有效断言少”：physics_tests 只跑 1/50/100，且只断言 ticks_to_stable > 0（src/physics_tests.zig:358 到 src/physics_tests.zig:371）；passed 字段也未被测
+    试使用（src/physics_tests.zig:350）。
+  - P2 Python 测试链路不闭合：unittest discover 跑到 0 测试；test_section_1.py 直接运行是 2 失败；测试夹具里 get_pos 未实现（tests/physics/test_harness.py:29）；worldvm.py 也未为
+    apply_impulse 等设置 argtypes（worldvm.py:24 到 worldvm.py:31）。
+
+  验证结果
+
+  - zig build test：通过。
+  - 可执行程序直接运行：通过（zig-out/bin/worldvm.exe 正常输出）。
+  - python -m unittest discover -s tests -p "test_*.py" -v：Ran 0 tests。
+  - python tests/physics/test_section_1.py：2 个失败。
+  - 额外实测复现了 2 个崩溃（非法 entity_id、负扭矩）。
+
+  建议优先级
+
+  1. 先修 P0（输入校验 + 负值转换安全处理），否则任何上层接入都不安全。
+  2. 再修 P1（碰撞冲击计算顺序、blocker_id==0、run 构建 step、FFI 占位语义）。
+  3. 最后重建测试基线（让 Python 测试可 discover、补行为断言，而不是只断“跑过”）。

@@ -37,6 +37,10 @@ pub fn build(b: *std.Build) void {
         run_cmd.addArgs(args);
     }
 
+    // P1 fix: add explicit "run" step so `zig build run` works
+    const run_step = b.step("run", "Run the worldvm executable");
+    run_step.dependOn(&run_cmd.step);
+
     const test_files = [_][]const u8{
         "src/address.zig",
         "src/physics_test.zig",

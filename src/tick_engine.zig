@@ -238,9 +238,17 @@ fn applyContinuousPhysics(engine: *TickEngine) void {
         // Apply angular velocity and damping
         if (inst.ang_x != 0 or inst.ang_y != 0 or inst.ang_z != 0) {
             // Update rotation (ang is in radians per tick scaled by 10)
-            inst.rot_yaw = @truncate((@as(u16, inst.rot_yaw) + @as(u8, @intCast(@divTrunc(inst.ang_y, 10))) & 0xFF));
-            inst.rot_pitch = @truncate((@as(u16, inst.rot_pitch) + @as(u8, @intCast(@divTrunc(inst.ang_x, 10))) & 0xFF));
-            inst.rot_roll = @truncate((@as(u16, inst.rot_roll) + @as(u8, @intCast(@divTrunc(inst.ang_z, 10))) & 0xFF));
+            // P0 fix: properly handle negative angular velocity before casting to unsigned
+            const yaw_delta: i16 = @intCast(@divTrunc(inst.ang_y, 10));
+            const pitch_delta: i16 = @intCast(@divTrunc(inst.ang_x, 10));
+            const roll_delta: i16 = @intCast(@divTrunc(inst.ang_z, 10));
+            // Use i16 arithmetic then convert to u8 with proper wrapping
+            const new_yaw: i16 = @as(i16, @intCast(inst.rot_yaw)) + yaw_delta;
+            const new_pitch: i16 = @as(i16, @intCast(inst.rot_pitch)) + pitch_delta;
+            const new_roll: i16 = @as(i16, @intCast(inst.rot_roll)) + roll_delta;
+            inst.rot_yaw = @intCast(@mod(new_yaw, 256));
+            inst.rot_pitch = @intCast(@mod(new_pitch, 256));
+            inst.rot_roll = @intCast(@mod(new_roll, 256));
 
             // Apply angular damping
             physics.applyAngularDamping(&inst.ang_x, &inst.ang_y, &inst.ang_z);
@@ -321,14 +329,14 @@ pub fn gather(engine: *TickEngine) void {
                     inst.state = .resting;
 
                     if (was_moving and inst.vel_y < 0) {
+                        // P1 fix: compute impact BEFORE applying restitution (original velocity)
+                        const impact = physics.calcImpact(inst.vel_y, entity.physics.mass);
+
                         // Apply bounce (restitution)
                         inst.vel_y = physics.applyRestitution(inst.vel_y, entity.physics.restitution);
 
                         // Apply friction to horizontal velocity
                         physics.applyFriction(&inst.vel_x, &inst.vel_z, entity.physics.friction);
-
-                        // Compute impact for breaking
-                        const impact = physics.calcImpact(inst.vel_y, entity.physics.mass);
 
                         const b_self = physics.checkBreak(impact, entity.physics.material, entity.physics.hardness);
                         if (b_self.did_break) {
@@ -341,7 +349,8 @@ pub fn gather(engine: *TickEngine) void {
                             }
                         }
 
-                        if (r.blocker_id != 255 and r.blocker_id != 0) {
+                        // P1 fix: blocker_id == 255 is sentinel "no specific blocker", 0 is valid instance index
+                        if (r.blocker_id != 255) {
                             const target_inst = &engine.s1024.instances[r.blocker_id];
                             const target_ent = &engine.entities[target_inst.entity_id];
                             const b_target = physics.checkBreak(impact, target_ent.physics.material, target_ent.physics.hardness);

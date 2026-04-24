@@ -256,7 +256,13 @@ pub fn checkBreak(impact: u16, material: entity16.MaterialType, hardness: u16) B
     }
     return .{ .did_break = false, .fragments = 0 };
 }
-pub fn calcImpact(vel: i16, mass: u16) u16 { return if (vel < 0) @truncate((@as(u16, @intCast(-vel)) * mass) / 100) else 0; }
+pub fn calcImpact(vel: i16, mass: u16) u16 {
+    if (vel >= 0) return 0;
+    // Use i32 to avoid overflow when negating i16.MIN (-32768)
+    const abs_vel: u32 = @intCast(-@as(i32, vel));
+    const impact: u32 = (abs_vel * @as(u32, mass)) / 100;
+    return @truncate(@min(impact, 65535));
+}
 
 // ============================================================================
 // AABB

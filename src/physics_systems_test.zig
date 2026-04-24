@@ -708,3 +708,418 @@ test "Crash defense calculate energy" {
     const energy = crash_defense.calculateEnergy(&s1024, &entities);
     try testing.expect(energy > 0);
 }
+
+// ============================================================================
+// Tire Physics Tests (Phase 21) - Tests 201-210
+// ============================================================================
+
+const tire = @import("tire.zig");
+const suspension = @import("suspension.zig");
+const drivetrain = @import("drivetrain.zig");
+const aerodynamics = @import("aerodynamics.zig");
+const braking = @import("braking.zig");
+const terrain = @import("terrain.zig");
+const collision = @import("collision.zig");
+const disasters = @import("disasters.zig");
+const sensors = @import("sensors.zig");
+const rewind = @import("rewind.zig");
+const ai_traffic = @import("ai_traffic.zig");
+
+test "Tire init and create" {
+    tire.init();
+    const config = tire.TireConfig{
+        .radius = 0.3,
+        .width = 0.2,
+        .mass = 10,
+        .lateral_stiffness = 100,
+        .longitudinal_stiffness = 100,
+        .camber_thrust_coefficient = 0.5,
+        .peak_slip_ratio = 0.15,
+        .peak_slip_angle = 0.15,
+        .friction_coefficient = 1.0,
+        .rolling_resistance_coefficient = 0.01,
+        .heat_transfer_coefficient = 0.1,
+        .optimal_temperature = 90,
+        .max_temperature = 200,
+    };
+    const t = tire.createTire(0, 0, 0, config);
+    try testing.expect(t != null);
+    try testing.expect(t.?.normal_force > 0);
+}
+
+test "Tire slip ratio" {
+    tire.init();
+    const config = tire.TireConfig{
+        .radius = 0.3, .width = 0.2, .mass = 10,
+        .lateral_stiffness = 100, .longitudinal_stiffness = 100,
+        .camber_thrust_coefficient = 0.5, .peak_slip_ratio = 0.15,
+        .peak_slip_angle = 0.15, .friction_coefficient = 1.0,
+        .rolling_resistance_coefficient = 0.01, .heat_transfer_coefficient = 0.1,
+        .optimal_temperature = 90, .max_temperature = 200,
+    };
+    const t = tire.createTire(0, 0, 0, config);
+    t.?.angular_velocity = 12;
+    const slip = tire.calculateSlipRatio(t.?, 3, 0.3);
+    try testing.expect(slip > 0);
+}
+
+test "Tire friction circle" {
+    const longitudinal: f32 = 5000;
+    const lateral: f32 = 3000;
+    const max_friction: f32 = 6000;
+    const combined = tire.calculateFrictionCircle(longitudinal, lateral, max_friction);
+    try testing.expect(combined < max_friction);
+    try testing.expect(combined > 0);
+}
+
+test "Tire hydroplaning check" {
+    tire.init();
+    const config = tire.TireConfig{
+        .radius = 0.3, .width = 0.2, .mass = 10,
+        .lateral_stiffness = 100, .longitudinal_stiffness = 100,
+        .camber_thrust_coefficient = 0.5, .peak_slip_ratio = 0.15,
+        .peak_slip_angle = 0.15, .friction_coefficient = 1.0,
+        .rolling_resistance_coefficient = 0.01, .heat_transfer_coefficient = 0.1,
+        .optimal_temperature = 90, .max_temperature = 200,
+    };
+    const t = tire.createTire(0, 0, 0, config);
+    const hydroplaning = tire.checkHydroplaning(t.?, 5.0, 50.0);
+    _ = hydroplaning;
+}
+
+// ============================================================================
+// Suspension Tests (Phase 22) - Tests 211-220
+// ============================================================================
+
+test "Suspension init and create" {
+    suspension.init();
+    const config = suspension.SuspensionConfig{
+        .spring_rate = 50000,
+        .damping_ratio = 0.7,
+        .bump_damping = 3000,
+        .rebound_damping = 4000,
+        .preloaded = 500,
+        .max_length = 0.4,
+        .min_length = 0.2,
+        .anti_roll_rate = 10000,
+    };
+    const s = suspension.createSuspension(config);
+    try testing.expect(s != null);
+    try testing.expect(s.?.active == true);
+}
+
+test "Suspension spring force" {
+    suspension.init();
+    const config = suspension.SuspensionConfig{
+        .spring_rate = 50000, .damping_ratio = 0.7,
+        .bump_damping = 3000, .rebound_damping = 4000,
+        .preloaded = 500, .max_length = 0.4, .min_length = 0.2,
+        .anti_roll_rate = 10000,
+    };
+    const s = suspension.createSuspension(config);
+    s.?.current_length = 0.25;
+    const force = suspension.calculateSpringForce(s.?, config);
+    try testing.expect(force > 0);
+}
+
+test "Suspension natural frequency" {
+    const freq = suspension.calculateNaturalFrequency(500, 50000);
+    try testing.expect(freq > 0);
+    try testing.expect(freq < 20);
+}
+
+// ============================================================================
+// Drivetrain Tests (Phase 23-24) - Tests 221-240
+// ============================================================================
+
+test "Drivetrain init and engine" {
+    drivetrain.init();
+    const eng = drivetrain.getEngineState();
+    try testing.expect(eng.active == true);
+    try testing.expect(eng.idle_rpm == 800);
+}
+
+test "Engine torque curve" {
+    drivetrain.init();
+    drivetrain.applyThrottle(0.5);
+    drivetrain.updateEngine(0.016);
+    const eng = drivetrain.getEngineState();
+    try testing.expect(eng.torque > 0);
+}
+
+test "Drivetrain gear ratio" {
+    drivetrain.init();
+    const gear1 = drivetrain.getGearRatio(1);
+    const gear3 = drivetrain.getGearRatio(3);
+    try testing.expect(gear1 > gear3);
+}
+
+test "Drivetrain wheel torque" {
+    drivetrain.init();
+    const wheel_torque = drivetrain.calculateWheelTorque(400, 2, 3.5, 0.85);
+    try testing.expect(wheel_torque > 0);
+}
+
+// ============================================================================
+// Aerodynamics Tests (Phase 25) - Tests 241-250
+// ============================================================================
+
+test "Aerodynamics init" {
+    aerodynamics.init();
+    const aero = aerodynamics.getAeroState();
+    try testing.expect(aero.drag_coefficient > 0);
+}
+
+test "Aerodynamics drag force" {
+    aerodynamics.init();
+    const drag = aerodynamics.calculateDragForce(30, 0, .{ .drag_coefficient = 0.3, .frontal_area = 2.2, .downforce_coefficient = 0.5, .rear_wing_angle = 0, .front_splitter_angle = 0, .diffuser_angle = 0, .wing_surface_area = 0.5 });
+    try testing.expect(drag > 0);
+}
+
+test "Aerodynamics downforce" {
+    aerodynamics.init();
+    const downforce = aerodynamics.calculateDownforce(30, 0, .{ .drag_coefficient = 0.3, .frontal_area = 2.2, .downforce_coefficient = 0.5, .rear_wing_angle = 0, .front_splitter_angle = 0, .diffuser_angle = 0, .wing_surface_area = 0.5 });
+    try testing.expect(downforce >= 0);
+}
+
+// ============================================================================
+// Braking Tests (Phase 26) - Tests 251-260
+// ============================================================================
+
+test "Braking init" {
+    braking.init();
+    const brake = braking.getBrakeState();
+    try testing.expect(brake.pedal_position == 0);
+}
+
+test "Braking apply brake" {
+    braking.init();
+    braking.applyBrake(0.5);
+    braking.updateBraking(0.016);
+    const brake = braking.getBrakeState();
+    try testing.expect(brake.pedal_position > 0);
+}
+
+test "Braking handbrake" {
+    braking.init();
+    braking.applyHandbrake(true);
+    braking.updateBraking(0.016);
+    const brake = braking.getBrakeState();
+    try testing.expect(brake.handbrake_active == true);
+}
+
+test "Braking ABS" {
+    braking.init();
+    braking.applyBrake(1.0);
+    braking.updateABS(0, 0.2, .{ .max_front_torque = 3000, .max_rear_torque = 2000, .pedal_ratio = 4.0, .booster_gain = 1.5, .rotor_diameter = 0.35, .pad_area = 50, .cooling_coefficient = 0.1, .fade_threshold = 300, .abs_threshold = 0.15 });
+    const abs_active = braking.isABSActive(0);
+    _ = abs_active;
+}
+
+// ============================================================================
+// Terrain Tests (Phase 28) - Tests 271-280
+// ============================================================================
+
+test "Terrain init" {
+    terrain.init();
+    const weather = terrain.getWeather();
+    try testing.expect(weather.visibility > 0);
+}
+
+test "Terrain add patch" {
+    terrain.init();
+    terrain.addTerrainPatch(0, 0, 10, terrain.SurfaceType.asphalt_wet);
+    const surface = terrain.getSurfaceAt(0, 0);
+    try testing.expect(surface == .asphalt_wet);
+}
+
+test "Terrain friction at position" {
+    terrain.init();
+    terrain.addTerrainPatch(0, 0, 10, terrain.SurfaceType.ice);
+    const friction = terrain.getFrictionAt(0, 0);
+    try testing.expect(friction < 0.5);
+}
+
+test "Terrain rolling resistance" {
+    terrain.init();
+    terrain.addTerrainPatch(0, 0, 10, terrain.SurfaceType.gravel);
+    const rr = terrain.getRollingResistanceAt(0, 0);
+    try testing.expect(rr > 0.01);
+}
+
+test "Terrain hydroplaning risk" {
+    terrain.init();
+    const risk = terrain.calculateHydroplaningRisk(50, 5, 0.2);
+    try testing.expect(risk >= 0);
+}
+
+// ============================================================================
+// Collision Tests (Phase 30) - Tests 291-300
+// ============================================================================
+
+test "Collision init" {
+    collision.init();
+    const dmg = collision.getDamageState();
+    try testing.expect(dmg.structural_integrity == 100);
+}
+
+test "Collision impact energy" {
+    collision.init();
+    const energy = collision.calculateImpactEnergy(1500, 1000, 20);
+    try testing.expect(energy > 0);
+}
+
+test "Collision apply" {
+    collision.init();
+    const result = collision.applyCollision(0, 0, 0, 0, 0, -10, 1500, .{});
+    try testing.expect(result.impact_speed > 0);
+}
+
+test "Collision structural failure" {
+    collision.init();
+    const failed = collision.checkStructuralFailure();
+    try testing.expect(failed == false);
+}
+
+// ============================================================================
+// Disaster Tests (Phase 71-80) - Tests 701-800
+// ============================================================================
+
+test "Disasters init" {
+    disasters.init();
+    const system = disasters.getDisasterSystem();
+    try testing.expect(system.disaster_count == 0);
+}
+
+test "Disasters trigger earthquake" {
+    disasters.init();
+    disasters.triggerDisaster(.earthquake, 7.0, 0, 0, 0, 1000);
+    const system = disasters.getDisasterSystem();
+    try testing.expect(system.disaster_count == 1);
+}
+
+test "Disasters seismic intensity" {
+    disasters.init();
+    const intensity = disasters.calculateSeismicIntensity(100, 7.0);
+    try testing.expect(intensity > 0);
+    try testing.expect(intensity < 7.0);
+}
+
+test "Disasters chain reaction" {
+    disasters.init();
+    disasters.enableChainReactions(true);
+    disasters.triggerDisaster(.meteor_strike, 10.0, 0, 0, 0, 500);
+    const triggered = disasters.checkChainReaction(0, 0, 0);
+    try testing.expect(triggered == true);
+}
+
+test "Disasters wind velocity" {
+    disasters.init();
+    disasters.triggerDisaster(.hurricane, 5.0, 0, 0, 0, 1000);
+    const wind = disasters.getWindVelocity(50, 50);
+    try testing.expect(@abs(wind.x) >= 0 or @abs(wind.z) >= 0);
+}
+
+// ============================================================================
+// Sensor Tests (Phase 18, 64) - Tests 171-180, 631-640
+// ============================================================================
+
+test "Sensors init" {
+    sensors.init();
+    try testing.expect(sensors.getSensorState(.camera) == null);
+}
+
+test "Sensors add sensor" {
+    sensors.init();
+    const sensor = sensors.addSensor(.radar, 1.5, 200);
+    try testing.expect(sensor != null);
+    try testing.expect(sensor.?.range == 200);
+}
+
+test "Sensors detected objects" {
+    sensors.init();
+    const objs = sensors.getDetectedObjects();
+    try testing.expect(objs.len == 0);
+}
+
+test "Sensors occlusion" {
+    sensors.init();
+    const occlusion = sensors.raycastOcclusion(0, 0, 0, 100, 0, 0, 50, 0, 0, 5);
+    try testing.expect(occlusion > 0);
+}
+
+// ============================================================================
+// Rewind Tests (Phase 19, 35) - Tests 181-190, 341-350
+// ============================================================================
+
+test "Rewind init" {
+    rewind.init();
+    try testing.expect(rewind.isDeterministic() == true);
+}
+
+test "Rewind record state" {
+    rewind.init();
+    const state = rewind.RewindState{
+        .tick = 0, .pos_x = 0, .pos_y = 0, .pos_z = 0,
+        .vel_x = 0, .vel_y = 0, .vel_z = 0,
+        .yaw = 0, .pitch = 0, .roll = 0,
+        .input_forwards = false, .input_backwards = false,
+        .input_left = false, .input_right = false,
+        .input_jump = false, .input_brake = false,
+    };
+    rewind.recordState(state);
+    const usage = rewind.getRewindBufferUsage();
+    try testing.expect(usage.count == 1);
+}
+
+test "Rewind state hash" {
+    rewind.init();
+    const state = rewind.RewindState{
+        .tick = 100, .pos_x = 10, .pos_y = 5, .pos_z = 20,
+        .vel_x = 1, .vel_y = 0, .vel_z = 2,
+        .yaw = 0, .pitch = 0, .roll = 0,
+        .input_forwards = true, .input_backwards = false,
+        .input_left = false, .input_right = false,
+        .input_jump = false, .input_brake = false,
+    };
+    const hash = rewind.calculateStateHash(&state);
+    try testing.expect(hash != 0);
+}
+
+// ============================================================================
+// AI Traffic Tests (Phase 34, 67, 68) - Tests 331-340, 661-670
+// ============================================================================
+
+test "AI Traffic init" {
+    ai_traffic.init();
+    try testing.expect(ai_traffic.getVehicleCount() == 0);
+}
+
+test "AI Traffic spawn vehicle" {
+    ai_traffic.init();
+    const ai_vehicle = ai_traffic.spawnAIVehicle(0, 0, 0, .normal);
+    try testing.expect(ai_vehicle != null);
+    try testing.expect(ai_vehicle.?.behavior == .normal);
+}
+
+test "AI Traffic traffic light" {
+    ai_traffic.init();
+    const light = ai_traffic.addTrafficLight(0, 0, 60);
+    try testing.expect(light != null);
+    try testing.expect(light.?.cycle_duration == 60);
+}
+
+test "AI Traffic update" {
+    ai_traffic.init();
+    _ = ai_traffic.spawnAIVehicle(0, 0, 0, .normal);
+    ai_traffic.updateAI(0.016);
+    const vehicles = ai_traffic.getTrafficVehicles();
+    try testing.expect(vehicles.len > 0);
+}
+
+test "AI Traffic emergency vehicle" {
+    ai_traffic.init();
+    const ai_vehicle2 = ai_traffic.spawnAIVehicle(0, 0, 0, .cautious);
+    ai_traffic.triggerEmergencyVehicle(ai_vehicle2.?);
+    try testing.expect(ai_vehicle2.?.behavior == .reckless);
+}

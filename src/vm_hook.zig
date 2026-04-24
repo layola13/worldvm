@@ -77,6 +77,8 @@ pub export fn init_kernel() c_int {
 
 pub export fn spawn_instance(entity_id: u16, x: i32, y: i32, z: i32) c_int {
     const s = g_state orelse return -1;
+    // P0 fix: validate entity_id to prevent out-of-bounds access
+    if (entity_id >= 64) return -1;
     const inst = scene32.Instance{
         .entity_id = entity_id, .pos_x = x, .pos_y = y, .pos_z = z,
         .rot_yaw = 0, .rot_pitch = 0, .rot_roll = 0,
