@@ -197,7 +197,8 @@ pub fn raycast(ray: Ray, s1024: *scene1024.Scene1024, entities: []entity16.Entit
 /// Sphere cast against scene
 pub fn sphereCast(center_x: f32, center_y: f32, center_z: f32, radius: f32, dir_x: f32, dir_y: f32, dir_z: f32, max_dist: f32, s1024: *scene1024.Scene1024, entities: []entity16.Entity16) RayHit {
     // Simplified sphere cast: use center point raycast
-    const ray = Ray.init(center_x, center_y, center_z, dir_x * max_dist, dir_y * max_dist, dir_z * max_dist);
+    var ray = Ray.init(center_x, center_y, center_z, dir_x * max_dist, dir_y * max_dist, dir_z * max_dist);
+    ray.max_t = max_dist;
     const hit = voxelRaycast(ray, s1024, entities, 0xFFFFFFFF);
 
     if (!hit.hit) return hit;
@@ -221,7 +222,8 @@ pub fn boxCast(min_x: f32, min_y: f32, min_z: f32, max_x: f32, max_y: f32, max_z
     const cx = (min_x + max_x) * 0.5;
     const cy = (min_y + max_y) * 0.5;
     const cz = (min_z + max_z) * 0.5;
-    const ray = Ray.init(cx, cy, cz, dir_x * max_dist, dir_y * max_dist, dir_z * max_dist);
+    var ray = Ray.init(cx, cy, cz, dir_x * max_dist, dir_y * max_dist, dir_z * max_dist);
+    ray.max_t = max_dist;
     return voxelRaycast(ray, s1024, entities, 0xFFFFFFFF);
 }
 

@@ -18,6 +18,48 @@ class TraceEntry(ctypes.Structure):
         ("detail", ctypes.c_char * 64),
     ]
 
+class KCCConfigFFI(ctypes.Structure):
+    _fields_ = [
+        ("move_speed", ctypes.c_float),
+        ("jump_force", ctypes.c_float),
+        ("gravity", ctypes.c_float),
+        ("crouch_speed_mult", ctypes.c_float),
+        ("push_force", ctypes.c_float),
+        ("step_height", ctypes.c_float),
+        ("stand_height", ctypes.c_float),
+        ("crouch_height", ctypes.c_float),
+        ("radius", ctypes.c_float),
+    ]
+
+class TireConfigFFI(ctypes.Structure):
+    _fields_ = [
+        ("radius", ctypes.c_float),
+        ("width", ctypes.c_float),
+        ("mass", ctypes.c_float),
+        ("lateral_stiffness", ctypes.c_float),
+        ("longitudinal_stiffness", ctypes.c_float),
+        ("camber_thrust_coefficient", ctypes.c_float),
+        ("peak_slip_ratio", ctypes.c_float),
+        ("peak_slip_angle", ctypes.c_float),
+        ("friction_coefficient", ctypes.c_float),
+        ("rolling_resistance_coefficient", ctypes.c_float),
+        ("heat_transfer_coefficient", ctypes.c_float),
+        ("optimal_temperature", ctypes.c_float),
+        ("max_temperature", ctypes.c_float),
+    ]
+
+class SuspensionConfigFFI(ctypes.Structure):
+    _fields_ = [
+        ("spring_rate", ctypes.c_float),
+        ("damping_ratio", ctypes.c_float),
+        ("bump_damping", ctypes.c_float),
+        ("rebound_damping", ctypes.c_float),
+        ("preloaded", ctypes.c_float),
+        ("max_length", ctypes.c_float),
+        ("min_length", ctypes.c_float),
+        ("anti_roll_rate", ctypes.c_float),
+    ]
+
 class WorldVM:
     def __init__(self):
         self.lib = ctypes.CDLL(lib_path)
@@ -32,6 +74,14 @@ class WorldVM:
         self.lib.reset_context.restype = ctypes.c_int
         self.lib.apply_impulse.argtypes = [ctypes.c_uint8, ctypes.c_float, ctypes.c_float, ctypes.c_float]
         self.lib.apply_impulse.restype = ctypes.c_int
+        self.lib.apply_force.argtypes = [ctypes.c_uint8, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+        self.lib.apply_force.restype = ctypes.c_int
+        self.lib.apply_torque.argtypes = [ctypes.c_uint8, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+        self.lib.apply_torque.restype = ctypes.c_int
+        self.lib.apply_explosion.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+        self.lib.apply_explosion.restype = None
+        self.lib.apply_buoyancy.argtypes = [ctypes.c_uint8, ctypes.c_float]
+        self.lib.apply_buoyancy.restype = ctypes.c_int
         self.lib.get_instance_velocity.argtypes = [ctypes.c_uint8, ctypes.POINTER(ctypes.c_float)]
         self.lib.get_instance_velocity.restype = ctypes.c_int
         self.lib.get_instance_angular_velocity.argtypes = [ctypes.c_uint8, ctypes.POINTER(ctypes.c_float)]
@@ -71,6 +121,10 @@ class WorldVM:
         self.lib.kcc_slide_along_wall.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.POINTER(ctypes.c_float)]
         self.lib.kcc_slide_along_wall.restype = None
 
+        # KCC Character creation
+        self.lib.kcc_create_character.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.POINTER(KCCConfigFFI)]
+        self.lib.kcc_create_character.restype = ctypes.c_int
+
         # Ballistics
         self.lib.ballistics_init.restype = None
         self.lib.ballistics_spawn_projectile.argtypes = [ctypes.c_float]*6 + [ctypes.c_float, ctypes.c_float]
@@ -86,6 +140,12 @@ class WorldVM:
         self.lib.destruction_init.restype = None
         self.lib.destruction_calculate_damage.argtypes = [ctypes.c_float, ctypes.c_uint8, ctypes.c_float]
         self.lib.destruction_calculate_damage.restype = ctypes.c_float
+        self.lib.destruction_create_destroyable.argtypes = [ctypes.c_uint16, ctypes.c_float]
+        self.lib.destruction_create_destroyable.restype = ctypes.c_int
+        self.lib.destruction_should_shatter.argtypes = [ctypes.c_uint8]
+        self.lib.destruction_should_shatter.restype = ctypes.c_int
+        self.lib.destruction_generate_fracture.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_uint32, ctypes.POINTER(ctypes.c_float)]
+        self.lib.destruction_generate_fracture.restype = None
 
         # Ragdoll
         self.lib.ragdoll_init.restype = None
@@ -93,6 +153,10 @@ class WorldVM:
         self.lib.ragdoll_is_fully_broken.restype = ctypes.c_int
         self.lib.ragdoll_is_resurrection_ready.argtypes = [ctypes.c_uint8]
         self.lib.ragdoll_is_resurrection_ready.restype = ctypes.c_int
+        self.lib.ragdoll_create_humanoid.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_float]
+        self.lib.ragdoll_create_humanoid.restype = ctypes.c_int
+        self.lib.ragdoll_break_limb.argtypes = [ctypes.c_uint8, ctypes.c_uint8]
+        self.lib.ragdoll_break_limb.restype = None
 
         # Vehicle
         self.lib.vehicle_init.restype = None
@@ -100,6 +164,14 @@ class WorldVM:
         self.lib.vehicle_get_forward_dir.restype = None
         self.lib.vehicle_check_flipped.argtypes = [ctypes.c_uint8]
         self.lib.vehicle_check_flipped.restype = ctypes.c_int
+        self.lib.vehicle_create_car.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+        self.lib.vehicle_create_car.restype = ctypes.c_int
+        self.lib.vehicle_create_aircraft.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_float]
+        self.lib.vehicle_create_aircraft.restype = ctypes.c_int
+        self.lib.vehicle_create_boat.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+        self.lib.vehicle_create_boat.restype = ctypes.c_int
+        self.lib.vehicle_create_hovercraft.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+        self.lib.vehicle_create_hovercraft.restype = ctypes.c_int
 
         # Network
         self.lib.network_init.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
@@ -107,6 +179,8 @@ class WorldVM:
         self.lib.network_get_tick.restype = ctypes.c_uint32
         self.lib.network_calculate_crc.argtypes = [ctypes.c_float]*6 + [ctypes.c_float]
         self.lib.network_calculate_crc.restype = ctypes.c_uint32
+        self.lib.network_create_replica.argtypes = [ctypes.c_uint16]
+        self.lib.network_create_replica.restype = ctypes.c_int
 
         # Crash Defense
         self.lib.crash_defense_init.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_uint32]
@@ -120,6 +194,10 @@ class WorldVM:
         self.lib.crash_defense_is_emergency_stopped.restype = ctypes.c_int
         self.lib.crash_defense_is_stuck.argtypes = [ctypes.c_uint32]
         self.lib.crash_defense_is_stuck.restype = ctypes.c_int
+        self.lib.crash_defense_emergency_stop.restype = None
+        self.lib.crash_defense_reset_emergency_stop.restype = None
+        self.lib.crash_defense_update_progress.argtypes = [ctypes.c_uint32]
+        self.lib.crash_defense_update_progress.restype = None
 
         # Tire
         self.lib.tire_init.restype = None
@@ -129,6 +207,8 @@ class WorldVM:
         self.lib.tire_calculate_friction_circle.restype = ctypes.c_float
         self.lib.tire_check_hydroplaning.argtypes = [ctypes.c_uint8, ctypes.c_float, ctypes.c_float]
         self.lib.tire_check_hydroplaning.restype = ctypes.c_int
+        self.lib.tire_create.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.POINTER(TireConfigFFI)]
+        self.lib.tire_create.restype = ctypes.c_int
 
         # Suspension
         self.lib.suspension_init.restype = None
@@ -136,6 +216,8 @@ class WorldVM:
         self.lib.suspension_calculate_spring_force.restype = ctypes.c_float
         self.lib.suspension_calculate_natural_frequency.argtypes = [ctypes.c_float, ctypes.c_float]
         self.lib.suspension_calculate_natural_frequency.restype = ctypes.c_float
+        self.lib.suspension_create.argtypes = [ctypes.POINTER(SuspensionConfigFFI)]
+        self.lib.suspension_create.restype = ctypes.c_int
 
         # Drivetrain
         self.lib.drivetrain_init.restype = None
@@ -221,6 +303,8 @@ class WorldVM:
         self.lib.rewind_get_buffer_count.restype = ctypes.c_uint32
         self.lib.rewind_calculate_state_hash.argtypes = [ctypes.c_uint32, ctypes.c_float, ctypes.c_float, ctypes.c_float]
         self.lib.rewind_calculate_state_hash.restype = ctypes.c_uint64
+        self.lib.rewind_record_state.argtypes = [ctypes.c_uint32, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+        self.lib.rewind_record_state.restype = None
 
         # AI Traffic
         self.lib.ai_traffic_init.restype = None
@@ -232,7 +316,18 @@ class WorldVM:
         self.lib.ai_traffic_trigger_emergency.argtypes = [ctypes.c_uint8]
         self.lib.ai_traffic_trigger_emergency.restype = None
 
+        # Time scale
+        self.lib.set_time_scale.argtypes = [ctypes.c_float]
+        self.lib.set_time_scale.restype = None
+        self.lib.get_time_scale.restype = ctypes.c_float
+
         if self.lib.init_kernel() < 0: raise RuntimeError("Init failed")
+
+    def set_time_scale(self, scale: float):
+        self.lib.set_time_scale(scale)
+
+    def get_time_scale(self) -> float:
+        return self.lib.get_time_scale()
 
     def spawn(self, eid, x, y, z): self.lib.spawn_instance(eid, x, y, z)
     def run(self, t=1): return self.lib.run_ticks(t)

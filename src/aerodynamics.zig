@@ -116,24 +116,43 @@ pub fn calculateCrosswindForce(wind_angle: f32, wind_speed: f32, velocity_x: f32
 
 pub fn updateAero(velocity_x: f32, velocity_z: f32, _: f32) void {
     var aero = &g_aero_system.aero;
-    const config = AeroConfig{};
+
+    // Use actual state values from aero system
+    const config = AeroConfig{
+        .drag_coefficient = aero.drag_coefficient,
+        .frontal_area = aero.frontal_area,
+        .downforce_coefficient = aero.downforce_coefficient,
+        .rear_wing_angle = 0,  // Not stored in state, use 0
+        .front_splitter_angle = 0,  // Not stored in state, use 0
+        .diffuser_angle = 0,
+        .wing_surface_area = 0.5,
+    };
 
     aero.drag_force = calculateDragForce(velocity_x, velocity_z, config);
     aero.downforce = calculateDownforce(velocity_x, velocity_z, config);
     aero.lift_force = calculateLiftForce(velocity_x, velocity_z, config);
     aero.crosswind_force = calculateCrosswindForce(0, 5.0, velocity_x, velocity_z);
 
+    // Use stored pressure values (set by applyWingAngle/applySplitterAngle)
+    // If not set, compute from base pressure
     const pressure_base = 0.5 * aero.air_density * (velocity_x * velocity_x + velocity_z * velocity_z);
-    aero.pressure_front = pressure_base * (1.0 + config.front_splitter_angle * 0.5);
-    aero.pressure_rear = pressure_base * (1.0 - config.rear_wing_angle * 0.3);
+    if (aero.pressure_front == 0) {
+        aero.pressure_front = pressure_base;
+    }
+    if (aero.pressure_rear == 0) {
+        aero.pressure_rear = pressure_base;
+    }
 }
 
 pub fn applyWingAngle(angle: f32) void {
-    _ = angle;
+    g_aero_system.aero.drag_coefficient = 0.30 + @abs(angle) * 0.02;  // More angle = more drag
+    g_aero_system.aero.downforce_coefficient = 0.5 + @abs(angle) * 0.1;  // More angle = more downforce
 }
 
 pub fn applySplitterAngle(angle: f32) void {
-    _ = angle;
+    // Splitter angle affects front downforce and front/rear pressure distribution
+    g_aero_system.aero.pressure_front = angle * 0.5;
+    g_aero_system.aero.pressure_rear = -angle * 0.3;
 }
 
 pub fn setWindDirection(angle: f32, speed: f32) void {

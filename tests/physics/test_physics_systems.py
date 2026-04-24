@@ -280,6 +280,7 @@ class TestKCC(PhysicsTestHarness):
         self.vm.lib.kcc_slide_along_wall(10.0, 0.0, 1.0, 0.0, ctypes.cast(result, ctypes.POINTER(ctypes.c_float)))
 
 
+
 # ============================================================================
 # Ballistics Tests
 # ============================================================================
@@ -314,6 +315,22 @@ class TestBallistics(PhysicsTestHarness):
         result = (ctypes.c_float * 3)()
         self.vm.lib.ballistics_calculate_deflection(10.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.5,
             ctypes.cast(result, ctypes.POINTER(ctypes.c_float)))
+        self.assertGreater(result[0], 0)
+
+    def test_806_ballistics_spawn_multiple_projectiles(self):
+        """Can spawn multiple projectiles"""
+        self.vm.lib.ballistics_init()
+        for i in range(5):
+            result = self.vm.lib.ballistics_spawn_projectile(
+                float(i) * 10.0, 0.0, 0.0, 10.0, 0.0, 0.0, 1.0, 0.01)
+            self.assertGreaterEqual(result, 0)
+
+    def test_807_ballistics_high_energy(self):
+        """High energy projectile has significant speed"""
+        self.vm.lib.ballistics_init()
+        self.vm.lib.ballistics_spawn_projectile(0.0, 0.0, 0.0, 1000.0, 0.0, 0.0, 10.0, 0.02)
+        speed = self.vm.lib.ballistics_get_speed(0)
+        self.assertGreater(speed, 500.0)
 
 
 # ============================================================================
@@ -329,6 +346,24 @@ class TestDestruction(PhysicsTestHarness):
         """Can calculate damage"""
         dmg = self.vm.lib.destruction_calculate_damage(100.0, 1, 50.0)
         self.assertGreaterEqual(dmg, 0)
+
+    def test_903_destruction_create_destroyable(self):
+        """Can create destroyable entity"""
+        self.vm.lib.destruction_init()
+        result = self.vm.lib.destruction_create_destroyable(0, 100.0)
+        self.assertGreaterEqual(result, 0)
+
+    def test_904_destruction_should_shatter(self):
+        """Can check if should shatter"""
+        self.vm.lib.destruction_init()
+        result = self.vm.lib.destruction_should_shatter(0)
+        self.assertEqual(result, 0)
+
+    def test_905_destruction_generate_fracture(self):
+        """Can generate fracture pattern"""
+        self.vm.lib.destruction_init()
+        result = (ctypes.c_float * 48)()  # FracturePattern has 48 floats
+        self.vm.lib.destruction_generate_fracture(8.0, 8.0, 8.0, 12345, result)
 
 
 # ============================================================================
@@ -352,6 +387,18 @@ class TestRagdoll(PhysicsTestHarness):
         result = self.vm.lib.ragdoll_is_resurrection_ready(0)
         self.assertEqual(result, 0)
 
+    def test_a04_ragdoll_create_humanoid(self):
+        """Can create humanoid ragdoll"""
+        self.vm.lib.ragdoll_init()
+        result = self.vm.lib.ragdoll_create_humanoid(0.0, 0.0, 0.0)
+        self.assertGreaterEqual(result, 0)
+
+    def test_a05_ragdoll_break_limb(self):
+        """Can break ragdoll limb"""
+        self.vm.lib.ragdoll_init()
+        self.vm.lib.ragdoll_create_humanoid(0.0, 0.0, 0.0)
+        self.vm.lib.ragdoll_break_limb(0, 2)  # Break left arm
+
 
 # ============================================================================
 # Vehicle Tests
@@ -374,6 +421,7 @@ class TestVehicle(PhysicsTestHarness):
         self.vm.lib.vehicle_init()
         result = self.vm.lib.vehicle_check_flipped(0)
         self.assertEqual(result, 0)
+
 
 
 # ============================================================================

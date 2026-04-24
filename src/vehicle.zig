@@ -220,7 +220,7 @@ pub fn checkGrounded(
     for (wheel_pos) |pos| {
         const wx = @as(i32, @intFromFloat(@floor(pos.x)));
         const wz = @as(i32, @intFromFloat(@floor(pos.z)));
-        if (physics.isOccupiedGlobal(s1024, undefined, entities, wx, check_y, wz, null)) {
+        if (physics.isOccupiedGlobal(s1024, null, entities, wx, check_y, wz, null)) {
             return true;
         }
     }

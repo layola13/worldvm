@@ -1,9 +1,9 @@
-//! Tick Engine - 4-Step Pipeline for 1024^3 World
+//! Tick Engine - Unified Physics World Coordinator
 //!
-//! Phase 1 Enhancement: Continuous Physics
-//! Phase 2 Enhancement: Joint Constraints (via joint.zig)
-//! Phase 5: Force/Torque & Sleep System
-//! Phase 6: Time Scale & Advanced Physics
+//! P0: Unified PhysicsWorld Skeleton
+//! Coordinates discrete voxel physics with continuous physics subsystems
+//!
+//! Pipeline: pre_step -> broadphase -> narrowphase -> solve -> integrate -> events -> snapshot
 
 const std = @import("std");
 const entity16 = @import("entity16.zig");
@@ -12,6 +12,11 @@ const scene1024 = @import("scene1024.zig");
 const physics = @import("physics.zig");
 const bus = @import("bus.zig");
 const joint = @import("joint.zig");
+const kcc = @import("kcc.zig");
+const vehicle = @import("vehicle.zig");
+const ragdoll = @import("ragdoll.zig");
+const ballistics = @import("ballistics.zig");
+const rewind = @import("rewind.zig");
 
 pub const Operator = enum(u8) { NOP = 0, FALL = 6, FLOW = 7, MOVE = 3, PUSH = 4, BREAK = 5 };
 
@@ -40,6 +45,13 @@ pub const TickEngine = struct {
     world_bus: ?*bus.Bus = null,
     arousal_mod: i16 = 0,
     time_scale: f32 = DEFAULT_TIME_SCALE,
+
+    // Joint constraints managed by TickEngine
+    joints: []joint.Joint = &[_]joint.Joint{},
+    joint_count: usize = 0,
+
+    // Fixed timestep for continuous physics
+    fixed_dt: f32 = 1.0 / 60.0,
 };
 
 pub fn init(engine: *TickEngine, s1024: *scene1024.Scene1024, entities: []entity16.Entity16) void {
@@ -475,3 +487,164 @@ pub fn runTicks(engine: *TickEngine, max_ticks: u32) u32 {
     }
     return ticks_run;
 }
+
+// ============================================================================
+// P0: Unified PhysicsWorld Step
+// ============================================================================
+
+/// Unified physics step that coordinates all physics subsystems
+/// This is the main entry point for the unified physics world
+pub fn stepPhysicsWorld(engine: *TickEngine, dt: f32) void {
+    engine.tick_id += 1;
+    engine.s1024.global_tick = engine.tick_id;
+
+    // 1. Pre-step: apply continuous physics to all instances
+    applyContinuousPhysicsWorld(engine);
+
+    // 2. Update KCC characters
+    updateKCCWorld(engine, dt);
+
+    // 3. Update vehicles
+    updateVehicleWorld(engine, dt);
+
+    // 4. Update ragdolls
+    updateRagdollWorld(engine, dt);
+
+    // 5. Update projectiles
+    updateProjectileWorld(engine, dt);
+
+    // 6. Broad phase (placeholder - uses existing gather)
+
+    // 7. Solve joint constraints
+    if (engine.joint_count > 0) {
+        joint.solveJointsForTick(
+            engine.s1024.instances[0..engine.s1024.instance_count],
+            engine.joints[0..engine.joint_count],
+            engine.entities,
+        );
+    }
+
+    // 8. Discrete voxel physics step (existing pipeline)
+    gather(engine);
+    speculate(engine);
+    resolve(engine);
+    const applied = commit(engine);
+    engine.stable = (applied == 0);
+
+    // 9. Record snapshot for rewind
+    recordWorldSnapshot(engine);
+}
+
+/// Apply continuous physics (gravity, damping, angular velocity) to all instances
+fn applyContinuousPhysicsWorld(engine: *TickEngine) void {
+    var i: u8 = 0;
+    while (i < engine.s1024.instance_count) : (i += 1) {
+        const inst = &engine.s1024.instances[i];
+        if (inst.entity_id >= engine.entities.len) continue;
+        if (inst.state == .broken) continue;
+
+        const entity = &engine.entities[inst.entity_id];
+
+        // Skip static objects
+        if ((entity.physics.flags & 0x01) != 0) continue;
+
+        const dt_scale = engine.time_scale;
+        if (dt_scale <= 0.0) continue;
+
+        // Apply gravity
+        if (entity.physics.material != .liquid) {
+            const grav_vel: i32 = @as(i32, physics.GRAVITY);
+            inst.vel_y = @truncate(@as(i32, inst.vel_y) + @as(i32, @intFromFloat(@round(@as(f32, @floatFromInt(grav_vel)) * dt_scale))));
+        }
+
+        // Apply velocity damping
+        physics.applyDamping(&inst.vel_x, &inst.vel_y, &inst.vel_z);
+
+        // Apply angular velocity
+        if (inst.ang_x != 0 or inst.ang_y != 0 or inst.ang_z != 0) {
+            const yaw_delta: i16 = @intCast(@divTrunc(inst.ang_y, 10));
+            const pitch_delta: i16 = @intCast(@divTrunc(inst.ang_x, 10));
+            const roll_delta: i16 = @intCast(@divTrunc(inst.ang_z, 10));
+
+            const new_yaw: i16 = @as(i16, @intCast(inst.rot_yaw)) + yaw_delta;
+            const new_pitch: i16 = @as(i16, @intCast(inst.rot_pitch)) + pitch_delta;
+            const new_roll: i16 = @as(i16, @intCast(inst.rot_roll)) + roll_delta;
+
+            inst.rot_yaw = @intCast(@mod(new_yaw, 256));
+            inst.rot_pitch = @intCast(@mod(new_pitch, 256));
+            inst.rot_roll = @intCast(@mod(new_roll, 256));
+
+            // Apply angular damping
+            physics.applyAngularDamping(&inst.ang_x, &inst.ang_y, &inst.ang_z);
+        }
+
+        // Sleep check
+        if (shouldSleep(inst)) {
+            inst.sleep_tick += 1;
+            if (inst.sleep_tick >= SLEEP_TIME_THRESHOLD) {
+                inst.state = .resting;
+                inst.vel_x = 0;
+                inst.vel_y = 0;
+                inst.vel_z = 0;
+                inst.ang_x = 0;
+                inst.ang_y = 0;
+                inst.ang_z = 0;
+            }
+        } else {
+            inst.sleep_tick = 0;
+        }
+    }
+}
+
+/// Update all KCC characters
+fn updateKCCWorld(engine: *TickEngine, dt: f32) void {
+    _ = engine;
+    _ = dt;
+    // KCC is updated by game logic with input, not automatically
+    // This function exists for future integration
+}
+
+/// Update all vehicles
+fn updateVehicleWorld(engine: *TickEngine, dt: f32) void {
+    const vehicle_sys = vehicle.getSystem();
+    var i: u8 = 0;
+    while (i < vehicle_sys.count) : (i += 1) {
+        const v = &vehicle_sys.vehicles[i];
+        vehicle.update(v, engine.s1024, engine.entities, dt);
+    }
+}
+
+/// Update all ragdolls
+fn updateRagdollWorld(engine: *TickEngine, dt: f32) void {
+    const ragdoll_sys = ragdoll.getSystem();
+    var i: u8 = 0;
+    while (i < ragdoll_sys.count) : (i += 1) {
+        const r = &ragdoll_sys.ragdolls[i];
+        ragdoll.update(r, dt);
+        ragdoll.solveJoints(r, engine.s1024, engine.entities);
+    }
+}
+
+/// Update all projectiles
+fn updateProjectileWorld(engine: *TickEngine, dt: f32) void {
+    _ = engine;
+    ballistics.simulateAll(dt);
+}
+
+/// Record world state snapshot for rewind
+fn recordWorldSnapshot(engine: *TickEngine) void {
+    // TODO: Implement full world state snapshot
+    // Should record: instances, entities, KCC states, vehicle states, ragdoll states, projectiles
+    _ = engine;
+}
+
+/// Get fixed timestep
+pub fn getFixedDT(engine: *const TickEngine) f32 {
+    return engine.fixed_dt;
+}
+
+/// Set fixed timestep
+pub fn setFixedDT(engine: *TickEngine, dt: f32) void {
+    engine.fixed_dt = dt;
+}
+

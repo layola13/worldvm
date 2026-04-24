@@ -8,6 +8,7 @@ const scene32 = @import("scene32.zig");
 const scene1024 = @import("scene1024.zig");
 const entity16 = @import("entity16.zig");
 const physics = @import("physics.zig");
+const query = @import("query.zig");
 
 pub const KCCState = struct {
     pos_x: f32,
@@ -24,6 +25,12 @@ pub const KCCState = struct {
     crouch_height: i32,
     radius: i32,
     mass: u16,
+
+    // Internal state for KCC
+    was_grounded: bool,
+    ground_normal_x: f32,
+    ground_normal_y: f32,
+    ground_normal_z: f32,
 };
 
 pub const KCCConfig = struct {
@@ -36,6 +43,8 @@ pub const KCCConfig = struct {
     stand_height: i32 = 14,
     crouch_height: i32 = 8,
     radius: i32 = 4,
+    max_slope_angle: f32 = 45.0,
+    step_offset: f32 = 0.25,
 };
 
 pub const MAX_KCC: usize = 8;
@@ -55,6 +64,8 @@ pub fn init() void {
             .vel_x = 0, .vel_y = 0, .vel_z = 0,
             .yaw = 0, .grounded = false, .crouching = false, .jumping = false,
             .stand_height = 14, .crouch_height = 8, .radius = 4, .mass = 80,
+            .was_grounded = false,
+            .ground_normal_x = 0, .ground_normal_y = 1, .ground_normal_z = 0,
         };
     }
 }
@@ -72,6 +83,8 @@ pub fn createCharacter(x: f32, y: f32, z: f32, config: KCCConfig) ?*KCCState {
         .crouch_height = config.crouch_height,
         .radius = config.radius,
         .mass = 80,
+        .was_grounded = false,
+        .ground_normal_x = 0, .ground_normal_y = 1, .ground_normal_z = 0,
     };
     return char;
 }
@@ -115,17 +128,29 @@ pub fn checkGrounded(
     s1024: *scene1024.Scene1024,
     entities: []entity16.Entity16,
 ) bool {
-    _ = getHeight(state);
     const check_y = @as(i32, @intFromFloat(@floor(state.pos_y))) - 1;
 
     const radius = state.radius;
     const half_radius = @divTrunc(radius, 2);
 
+    const world_view = query.QueryWorldView{
+        .s1024 = s1024,
+        .instances = s1024.instances[0..s1024.instance_count],
+        .entities = entities,
+    };
+
+    const filter = query.QueryFilter{
+        .include_static = true,
+        .include_dynamic = true,
+        .include_kinematic = true,
+        .include_sensors = false,
+    };
+
     var x: i32 = -half_radius;
     while (x <= half_radius) : (x += 2) {
         const wx = @as(i32, @intFromFloat(@floor(state.pos_x))) + x;
         const wz = @as(i32, @intFromFloat(@floor(state.pos_z))) + x;
-        if (physics.isOccupiedGlobal(s1024, undefined, entities, wx, check_y, wz, null)) {
+        if (query.queryAnyVoxel(&world_view, wx, check_y, wz, filter).hit) {
             return true;
         }
     }
@@ -158,13 +183,26 @@ pub fn checkCollision(
     const py = @as(i32, @intFromFloat(@floor(pos_y)));
     const pz = @as(i32, @intFromFloat(@floor(pos_z)));
 
+    const world_view = query.QueryWorldView{
+        .s1024 = s1024,
+        .instances = s1024.instances[0..s1024.instance_count],
+        .entities = entities,
+    };
+
+    const filter = query.QueryFilter{
+        .include_static = true,
+        .include_dynamic = true,
+        .include_kinematic = true,
+        .include_sensors = false,
+    };
+
     var y: i32 = 0;
     while (y < height) : (y += 2) {
         var x: i32 = -radius;
         while (x <= radius) : (x += 2) {
             var z: i32 = -radius;
             while (z <= radius) : (z += 2) {
-                if (physics.isOccupiedGlobal(s1024, undefined, entities, px + x, py + y, pz + z, null)) {
+                if (query.queryAnyVoxel(&world_view, px + x, py + y, pz + z, filter).hit) {
                     return true;
                 }
             }
@@ -276,6 +314,8 @@ pub fn update(
     config: KCCConfig,
     dt: f32,
 ) void {
+    state.was_grounded = state.grounded;
+
     applyGravity(state, dt, config);
 
     state.pos_x += state.vel_x * dt;
@@ -290,6 +330,14 @@ pub fn update(
 
     resolveCollision(state, s1024, entities, config);
     pushNearbyBodies(state, s1024, entities, config);
+
+    // Update ground normal
+    if (state.grounded) {
+        const gn = getGroundNormal(state, s1024, entities);
+        state.ground_normal_x = gn.x;
+        state.ground_normal_y = gn.y;
+        state.ground_normal_z = gn.z;
+    }
 }
 
 /// Check if character can fit through a gap
