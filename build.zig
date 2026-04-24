@@ -20,6 +20,17 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(exe);
 
+    // Shared library for Python FFI
+    const lib = b.addSharedLibrary(.{
+        .name = "worldvm",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/vm_hook.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    b.installArtifact(lib);
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| {
@@ -35,6 +46,7 @@ pub fn build(b: *std.Build) void {
         "src/bus_test.zig",
         "src/vm_hook_test.zig",
         "src/bench.zig",
+        "src/physics_tests.zig",
     };
 
     const test_step = b.step("test", "Run all unit tests");

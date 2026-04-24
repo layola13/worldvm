@@ -1,147 +1,125 @@
-//! vm_hook.zig - C ABI Hook Interface for World VM
-//! Provides: init_kernel, run_logic_check, run_logic_check_with_timeout, get_trace_summary, reset_context
-//! Used for LLM integration via Tool Call and Hook modes.
-//! Default timeout is 30 seconds (30000ms) for run_logic_check.
-
+//! vm_hook.zig - Full C ABI for Python/LLM Integration
 const std = @import("std");
 const scene1024 = @import("scene1024.zig");
 const scene32 = @import("scene32.zig");
 const tick_engine = @import("tick_engine.zig");
 const entity16 = @import("entity16.zig");
-const scenarios = @import("scenarios.zig");
-
-pub const HOOK_VERSION = "1.0.0";
-
-pub const HookResultCode = enum(c_int) {
-    PASS = 0,
-    FAIL = 1,
-    UNKNOWN = 2,
-    TIMEOUT = 3,
-};
-
-pub const TraceEntry = struct {
-    tick_id: u32,
-    event_type: [*:0]const u8,
-    instance_id: u16,
-    detail: [*:0]const u8,
-};
-
-// Fixed-size for C ABI compatibility
-pub const TraceSummary = extern struct {
-    entries: ?[*]TraceEntry,
-    entry_count: u32,
-    total_ticks: u32,
-    final_status: HookResultCode,
-};
+const mind = @import("mind.zig");
 
 const KernelState = struct {
     s1024: scene1024.Scene1024,
     entities: [64]entity16.Entity16,
     engine: tick_engine.TickEngine,
-    active_scene: *scene32.Scene32,
-    trace_buf: std.ArrayListUnmanaged(TraceEntry) = .{},
-    init_ok: bool = false,
+    affect_sys: mind.AffectSystem,
+    tri_bus: mind.TriWorldBus,
+    trace_storage: [1024]TraceEntry = undefined,
+    trace_count: u32 = 0,
+};
+
+pub const TraceEntry = extern struct {
+    tick_id: u32,
+    event_type: [32]u8,
+    instance_id: u16,
+    detail: [64]u8,
 };
 
 var g_state: ?*KernelState = null;
 var g_gpa: std.heap.GeneralPurposeAllocator(.{}) = undefined;
-var g_allocator: std.mem.Allocator = undefined;
 
 pub export fn init_kernel() c_int {
     if (g_state != null) return 1;
-
     g_gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    g_allocator = g_gpa.allocator();
+    const allocator = g_gpa.allocator();
+    const state = allocator.create(KernelState) catch return -1;
+    
+    // Safety: Initialize entities with explicit physics
+    state.entities[0] = entity16.Prototypes.apple();
+    state.entities[1] = entity16.Prototypes.table();
+    state.entities[2] = entity16.Prototypes.hammer();
+    state.entities[3] = entity16.Prototypes.glass();
+    state.entities[4] = entity16.Prototypes.water();
+    state.entities[5] = entity16.Prototypes.floor();
+    
+    // Explicitly ensure dynamic mass
+    state.entities[0].physics.mass = 10;
+    state.entities[2].physics.mass = 50; // Hammer
+    state.entities[3].physics.mass = 5;  // Glass
+    state.entities[3].physics.material = .fragile;
+    state.entities[3].physics.hardness = 30;
 
-    const state = g_allocator.create(KernelState) catch return -1;
-    errdefer g_allocator.destroy(state);
-
-    state.* = .{
-        .s1024 = scene1024.Scene1024.init(g_allocator),
-        .entities = undefined,
-        .engine = undefined,
-        .active_scene = undefined,
-        .init_ok = false,
-    };
-
-    const entry = state.s1024.getPage(0) catch {
-        state.s1024.deinit();
-        g_allocator.destroy(state);
-        return -1;
-    };
-    state.active_scene = entry.scene.?;
-    scenarios.setupScenario(.apple_table, &state.s1024, &state.entities);
+    state.s1024 = scene1024.Scene1024.init(allocator);
+    state.affect_sys = mind.AffectSystem.init();
+    state.tri_bus = mind.TriWorldBus.init();
+    state.trace_count = 0;
+    _ = state.s1024.getPage(0) catch return -1;
+    
     tick_engine.init(&state.engine, &state.s1024, &state.entities);
-    state.init_ok = true;
+    state.engine.world_bus = &state.tri_bus.inner;
+    
     g_state = state;
     return 0;
 }
 
-pub const DEFAULT_TIMEOUT_MS: u32 = 30000; // 30 seconds
-
-pub export fn run_logic_check(scenario_name: [*:0]const u8, max_ticks: u32) HookResultCode {
-    return run_logic_check_with_timeout(scenario_name, max_ticks, DEFAULT_TIMEOUT_MS);
+pub export fn spawn_instance(entity_id: u16, x: i32, y: i32, z: i32) c_int {
+    const s = g_state orelse return -1;
+    const inst = scene32.Instance{
+        .entity_id = entity_id, .pos_x = x, .pos_y = y, .pos_z = z,
+        .rot_yaw = 0, .rot_pitch = 0, .rot_roll = 0,
+        .state = .idle, .sleep_tick = 0, ._reserved = .{0}**3
+    };
+    _ = s.s1024.addInstance(inst) catch return -1;
+    s.s1024.rebuildOccupancy(&s.entities) catch return -1;
+    s.engine.stable = false;
+    return 0;
 }
 
-pub export fn run_logic_check_with_timeout(scenario_name: [*:0]const u8, max_ticks: u32, max_time_ms: u32) HookResultCode {
-    const state = g_state orelse return .UNKNOWN;
-
-    const name = std.mem.sliceTo(scenario_name, 0);
-    const scenario: scenarios.Scenario = if (std.mem.eql(u8, name, "hammer_glass")) .hammer_glass
-        else if (std.mem.eql(u8, name, "water_flow")) .water_flow
-        else .apple_table;
-
-    scenarios.setupScenario(scenario, &state.s1024, &state.entities);
-
-    state.engine.tick_id = 0;
-    state.engine.stable = false;
-    state.trace_buf.clearRetainingCapacity();
-
-    const start_ns = std.time.nanoTimestamp();
-    const timeout_ns = @as(i128, max_time_ms) * 1000000;
-
+pub export fn run_ticks(max_ticks: u32) c_int {
+    const s = g_state orelse return -1;
     var t: u32 = 0;
-    while (t < max_ticks and !state.engine.stable) : (t += 1) {
-        _ = tick_engine.stepTick(&state.engine);
-
-        // Check timeout
-        const elapsed_ns = std.time.nanoTimestamp() - start_ns;
-        if (elapsed_ns > timeout_ns) {
-            return .TIMEOUT;
+    while (t < max_ticks and !s.engine.stable) : (t += 1) {
+        _ = tick_engine.stepTick(&s.engine);
+        s.affect_sys.update(&s.tri_bus);
+        
+        var i: u16 = 0;
+        while (i < s.tri_bus.inner.msg_count) : (i += 1) {
+            if (s.trace_count < 1024) {
+                const msg = &s.tri_bus.inner.messages[i];
+                var entry = &s.trace_storage[s.trace_count];
+                entry.tick_id = s.engine.tick_id;
+                @memset(&entry.event_type, 0);
+                const type_name = @tagName(msg.payload);
+                @memcpy(entry.event_type[0..@min(type_name.len, 32)], type_name[0..@min(type_name.len, 32)]);
+                entry.instance_id = msg.entity_id;
+                s.trace_count += 1;
+            }
         }
+        s.tri_bus.inner.clear();
     }
-
-    return if (state.engine.stable) .PASS else .FAIL;
+    return if (s.engine.stable) @as(c_int, 1) else @as(c_int, 0);
 }
 
-pub export fn get_trace_summary() TraceSummary {
-    if (g_state) |state| {
-        return .{
-            .entries = state.trace_buf.items.ptr,
-            .entry_count = @intCast(state.trace_buf.items.len),
-            .total_ticks = state.engine.tick_id,
-            .final_status = if (state.engine.stable) .PASS else .FAIL,
-        };
+pub export fn get_emotion_valence() i8 { return if(g_state) |s| s.affect_sys.registers.valence else 0; }
+pub export fn get_emotion_arousal() u8 { return if(g_state) |s| s.affect_sys.registers.arousal else 0; }
+pub export fn get_trace_count() u32 { return if (g_state) |s| s.trace_count else 0; }
+pub export fn get_trace_entry(idx: u32) ?*TraceEntry {
+    const s = g_state orelse return null;
+    if (idx >= s.trace_count) return null;
+    return &s.trace_storage[idx];
+}
+pub export fn reset_context() void {
+    const s = g_state orelse return;
+    s.s1024.instance_count = 0;
+    s.trace_count = 0;
+    s.engine.tick_id = 0;
+    s.engine.stable = false;
+    s.tri_bus.inner.clear();
+}
+pub export fn shutdown_kernel() void {
+    if (g_state) |s| {
+        s.s1024.deinit();
+        const allocator = g_gpa.allocator();
+        allocator.destroy(s);
+        _ = g_gpa.deinit();
+        g_state = null;
     }
-    return .{ .entries = null, .entry_count = 0, .total_ticks = 0, .final_status = .UNKNOWN };
-}
-
-pub export fn reset_context() c_int {
-    const state = g_state orelse return -1;
-    scene32.clearScene(state.active_scene);
-    scenarios.setupScenario(.apple_table, &state.s1024, &state.entities);
-    state.engine.tick_id = 0;
-    state.engine.stable = false;
-    state.trace_buf.clearRetainingCapacity();
-    return 0;
-}
-
-pub export fn shutdown_kernel() c_int {
-    const state = g_state orelse return -1;
-    state.s1024.deinit();
-    state.trace_buf.deinit(g_allocator);
-    g_allocator.destroy(state);
-    g_state = null;
-    _ = g_gpa.deinit();
-    return 0;
 }
