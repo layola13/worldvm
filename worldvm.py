@@ -1,7 +1,14 @@
 import ctypes
 import os
+import sys
 
-lib_path = os.path.join(os.path.dirname(__file__), "zig-out/lib/libworldvm.so")
+if sys.platform == "win32":
+    lib_name = "worldvm.dll"
+    lib_dir = os.path.join("zig-out", "bin")
+else:
+    lib_name = "libworldvm.so"
+    lib_dir = os.path.join("zig-out", "lib")
+lib_path = os.path.join(os.path.dirname(__file__), lib_dir, lib_name)
 
 class TraceEntry(ctypes.Structure):
     _fields_ = [

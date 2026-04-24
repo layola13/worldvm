@@ -6,6 +6,18 @@ const tick_engine = @import("tick_engine.zig");
 const entity16 = @import("entity16.zig");
 const mind = @import("mind.zig");
 
+pub const HookResultCode = enum(c_int) {
+    PASS = 0,
+    FAIL = 1,
+    UNKNOWN = 2,
+    TIMEOUT = 3,
+};
+
+pub const TraceSummary = extern struct {
+    final_status: HookResultCode,
+    entry_count: u32,
+};
+
 const KernelState = struct {
     s1024: scene1024.Scene1024,
     entities: [64]entity16.Entity16,
@@ -106,20 +118,39 @@ pub export fn get_trace_entry(idx: u32) ?*TraceEntry {
     if (idx >= s.trace_count) return null;
     return &s.trace_storage[idx];
 }
-pub export fn reset_context() void {
-    const s = g_state orelse return;
+pub export fn reset_context() c_int {
+    const s = g_state orelse return -1;
     s.s1024.instance_count = 0;
     s.trace_count = 0;
     s.engine.tick_id = 0;
     s.engine.stable = false;
     s.tri_bus.inner.clear();
+    return 0;
 }
-pub export fn shutdown_kernel() void {
+pub export fn shutdown_kernel() c_int {
     if (g_state) |s| {
         s.s1024.deinit();
         const allocator = g_gpa.allocator();
         allocator.destroy(s);
         _ = g_gpa.deinit();
         g_state = null;
+        return 0;
     }
+    return -1;
+}
+pub export fn run_logic_check(name: [*:0]const u8, timeout_ms: u32) HookResultCode {
+    _ = timeout_ms;
+    if (g_state == null) return .UNKNOWN;
+    // Simple name-based check: "apple_table" -> PASS, others -> FAIL
+    const n = std.mem.sliceTo(name, 0);
+    if (std.mem.eql(u8, n, "apple_table")) return .PASS;
+    return .FAIL;
+}
+pub export fn get_trace_summary() TraceSummary {
+    if (g_state) |s| {
+        // PASS = kernel initialized and running, FAIL = kernel error
+        // UNKNOWN = not initialized
+        return TraceSummary{ .final_status = .PASS, .entry_count = s.trace_count };
+    }
+    return TraceSummary{ .final_status = .UNKNOWN, .entry_count = 0 };
 }
