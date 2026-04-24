@@ -1,53 +1,147 @@
 //! Built-in scenarios
 const entity16 = @import("entity16.zig");
 const scene32 = @import("scene32.zig");
+const scene1024 = @import("scene1024.zig");
 
 pub const Scenario = enum {
     apple_table, hammer_glass, water_flow,
+    bounce_test, domino_chain, pyramid_collapse,
+    multi_stack, gas_expand,
 };
 
-pub fn setupScenario(scenario: Scenario, scene: *scene32.Scene32, entities: []entity16.Entity16) void {
-    scene.* = scene32.initScene();
-    
+pub fn setupScenario(scenario: Scenario, s1024: *scene1024.Scene1024, entities: []entity16.Entity16) void {
+    // Base prototypes
     entities[0] = entity16.Prototypes.apple();
     entities[1] = entity16.Prototypes.table();
     entities[2] = entity16.Prototypes.hammer();
     entities[3] = entity16.Prototypes.glass();
     entities[4] = entity16.Prototypes.water();
     entities[5] = entity16.Prototypes.floor();
-    
+    // Physics test prototypes
+    entities[6] = entity16.Prototypes.ball();
+    entities[7] = entity16.Prototypes.brick();
+    entities[8] = entity16.Prototypes.domino();
+    entities[9] = entity16.Prototypes.plate();
+
     const default_inst = scene32.Instance{
         .entity_id = 0, .pos_x = 0, .pos_y = 0, .pos_z = 0,
         .rot_yaw = 0, .rot_pitch = 0, .rot_roll = 0,
         .state = .idle, .sleep_tick = 0, ._reserved = .{0} ** 3
     };
-    
+
     switch (scenario) {
         .apple_table => {
             var inst = default_inst;
             inst.entity_id = 0; inst.pos_x = 10; inst.pos_y = 28; inst.pos_z = 15;
-            _ = scene32.addInstance(scene, inst);
+            _ = s1024.addInstance(inst) catch {};
             inst.entity_id = 1; inst.pos_x = 8; inst.pos_y = 20; inst.pos_z = 15;
-            _ = scene32.addInstance(scene, inst);
+            _ = s1024.addInstance(inst) catch {};
             inst.entity_id = 5; inst.pos_x = 0; inst.pos_y = 0; inst.pos_z = 0; inst.state = .resting;
-            _ = scene32.addInstance(scene, inst);
+            _ = s1024.addInstance(inst) catch {};
         },
         .hammer_glass => {
             var inst = default_inst;
             inst.entity_id = 3; inst.pos_x = 10; inst.pos_y = 15; inst.pos_z = 15;
-            _ = scene32.addInstance(scene, inst);
+            _ = s1024.addInstance(inst) catch {};
             inst.entity_id = 2; inst.pos_x = 10; inst.pos_y = 25; inst.pos_z = 15;
-            _ = scene32.addInstance(scene, inst);
+            _ = s1024.addInstance(inst) catch {};
             inst.entity_id = 5; inst.pos_x = 0; inst.pos_y = 0; inst.pos_z = 0; inst.state = .resting;
-            _ = scene32.addInstance(scene, inst);
+            _ = s1024.addInstance(inst) catch {};
         },
         .water_flow => {
             var inst = default_inst;
             inst.entity_id = 4; inst.pos_x = 12; inst.pos_y = 20; inst.pos_z = 15;
-            _ = scene32.addInstance(scene, inst);
+            _ = s1024.addInstance(inst) catch {};
             inst.entity_id = 5; inst.pos_x = 0; inst.pos_y = 0; inst.pos_z = 0; inst.state = .resting;
-            _ = scene32.addInstance(scene, inst);
+            _ = s1024.addInstance(inst) catch {};
+        },
+        .bounce_test => {
+            // Ball bouncing on plate - tests elastic collision
+            var inst = default_inst;
+            inst.entity_id = 6; inst.pos_x = 10; inst.pos_y = 20; inst.pos_z = 15;
+            _ = s1024.addInstance(inst) catch {};
+            inst.entity_id = 9; inst.pos_x = 5; inst.pos_y = 10; inst.pos_z = 5; inst.state = .resting;
+            _ = s1024.addInstance(inst) catch {};
+            inst.entity_id = 5; inst.pos_x = 0; inst.pos_y = 0; inst.pos_z = 0; inst.state = .resting;
+            _ = s1024.addInstance(inst) catch {};
+        },
+        .domino_chain => {
+            // 5 dominoes in a row - tests sequential collision
+            var inst = default_inst;
+            inst.entity_id = 8; inst.pos_x = 5; inst.pos_y = 5; inst.pos_z = 15;
+            _ = s1024.addInstance(inst) catch {};
+            inst.entity_id = 8; inst.pos_x = 8; inst.pos_y = 5; inst.pos_z = 15;
+            _ = s1024.addInstance(inst) catch {};
+            inst.entity_id = 8; inst.pos_x = 11; inst.pos_y = 5; inst.pos_z = 15;
+            _ = s1024.addInstance(inst) catch {};
+            inst.entity_id = 8; inst.pos_x = 14; inst.pos_y = 5; inst.pos_z = 15;
+            _ = s1024.addInstance(inst) catch {};
+            inst.entity_id = 8; inst.pos_x = 17; inst.pos_y = 5; inst.pos_z = 15;
+            _ = s1024.addInstance(inst) catch {};
+            inst.entity_id = 6; inst.pos_x = 2; inst.pos_y = 5; inst.pos_z = 15; // Ball to push first domino
+            _ = s1024.addInstance(inst) catch {};
+            inst.entity_id = 5; inst.pos_x = 0; inst.pos_y = 0; inst.pos_z = 0; inst.state = .resting;
+            _ = s1024.addInstance(inst) catch {};
+        },
+        .pyramid_collapse => {
+            // Pyramid of 6 bricks - tests stacked physics
+            var inst = default_inst;
+            // Bottom row (3 bricks)
+            inst.entity_id = 7; inst.pos_x = 5; inst.pos_y = 1; inst.pos_z = 12;
+            _ = s1024.addInstance(inst) catch {};
+            inst.entity_id = 7; inst.pos_x = 10; inst.pos_y = 1; inst.pos_z = 12;
+            _ = s1024.addInstance(inst) catch {};
+            inst.entity_id = 7; inst.pos_x = 15; inst.pos_y = 1; inst.pos_z = 12;
+            _ = s1024.addInstance(inst) catch {};
+            // Middle row (2 bricks)
+            inst.entity_id = 7; inst.pos_x = 7; inst.pos_y = 8; inst.pos_z = 12;
+            _ = s1024.addInstance(inst) catch {};
+            inst.entity_id = 7; inst.pos_x = 12; inst.pos_y = 8; inst.pos_z = 12;
+            _ = s1024.addInstance(inst) catch {};
+            // Top row (1 brick)
+            inst.entity_id = 7; inst.pos_x = 10; inst.pos_y = 15; inst.pos_z = 12;
+            _ = s1024.addInstance(inst) catch {};
+            // Ball to topple pyramid
+            inst.entity_id = 6; inst.pos_x = 3; inst.pos_y = 1; inst.pos_z = 12;
+            _ = s1024.addInstance(inst) catch {};
+            inst.entity_id = 5; inst.pos_x = 0; inst.pos_y = 0; inst.pos_z = 0; inst.state = .resting;
+            _ = s1024.addInstance(inst) catch {};
+        },
+        .multi_stack => {
+            // Multiple independent stacks - tests parallel stability
+            var inst = default_inst;
+            // Stack 1
+            inst.entity_id = 7; inst.pos_x = 5; inst.pos_y = 1; inst.pos_z = 5;
+            _ = s1024.addInstance(inst) catch {};
+            inst.entity_id = 7; inst.pos_x = 5; inst.pos_y = 8; inst.pos_z = 5;
+            _ = s1024.addInstance(inst) catch {};
+            inst.entity_id = 7; inst.pos_x = 5; inst.pos_y = 15; inst.pos_z = 5;
+            _ = s1024.addInstance(inst) catch {};
+            // Stack 2
+            inst.entity_id = 7; inst.pos_x = 15; inst.pos_y = 1; inst.pos_z = 5;
+            _ = s1024.addInstance(inst) catch {};
+            inst.entity_id = 7; inst.pos_x = 15; inst.pos_y = 8; inst.pos_z = 5;
+            _ = s1024.addInstance(inst) catch {};
+            // Stack 3
+            inst.entity_id = 7; inst.pos_x = 10; inst.pos_y = 1; inst.pos_z = 20;
+            _ = s1024.addInstance(inst) catch {};
+            inst.entity_id = 7; inst.pos_x = 10; inst.pos_y = 8; inst.pos_z = 20;
+            _ = s1024.addInstance(inst) catch {};
+            inst.entity_id = 7; inst.pos_x = 10; inst.pos_y = 15; inst.pos_z = 20;
+            _ = s1024.addInstance(inst) catch {};
+            inst.entity_id = 6; inst.pos_x = 3; inst.pos_y = 1; inst.pos_z = 5; // Ball to topple stack 1
+            _ = s1024.addInstance(inst) catch {};
+            inst.entity_id = 5; inst.pos_x = 0; inst.pos_y = 0; inst.pos_z = 0; inst.state = .resting;
+            _ = s1024.addInstance(inst) catch {};
+        },
+        .gas_expand => {
+            // Liquid spreading - tests flow behavior
+            var inst = default_inst;
+            inst.entity_id = 4; inst.pos_x = 10; inst.pos_y = 20; inst.pos_z = 15;
+            _ = s1024.addInstance(inst) catch {};
+            inst.entity_id = 5; inst.pos_x = 0; inst.pos_y = 0; inst.pos_z = 0; inst.state = .resting;
+            _ = s1024.addInstance(inst) catch {};
         },
     }
-    scene32.rebuildOccupancy(scene, entities);
+    s1024.rebuildOccupancy(entities) catch {};
 }

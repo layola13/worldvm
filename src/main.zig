@@ -26,7 +26,7 @@ pub fn main() !void {
     } else if (std.mem.eql(u8, subcommand, "bench")) {
         try cmdBench(allocator, &args);
     } else if (std.mem.eql(u8, subcommand, "dump")) {
-        try cmdDump(&args);
+        try cmdDump(allocator, &args);
     } else {
         try std.io.getStdErr().writer().print("Usage: worldvm <run|bench|dump>\n", .{});
         return error.InvalidCommand;
@@ -36,6 +36,11 @@ pub fn main() !void {
 fn getScenario(name: []const u8) Scenarios.Scenario {
     if (std.mem.eql(u8, name, "hammer_glass")) return .hammer_glass;
     if (std.mem.eql(u8, name, "water_flow")) return .water_flow;
+    if (std.mem.eql(u8, name, "bounce_test")) return .bounce_test;
+    if (std.mem.eql(u8, name, "domino_chain")) return .domino_chain;
+    if (std.mem.eql(u8, name, "pyramid_collapse")) return .pyramid_collapse;
+    if (std.mem.eql(u8, name, "multi_stack")) return .multi_stack;
+    if (std.mem.eql(u8, name, "gas_expand")) return .gas_expand;
     return .apple_table;
 }
 
@@ -60,15 +65,14 @@ fn cmdRun(allocator: std.mem.Allocator, args: *std.process.ArgIterator) !void {
     var s1024 = scene1024.Scene1024.init(allocator);
     defer s1024.deinit();
     
-    // For MVP, we use the first page as our active scene
     const entry = try s1024.getPage(0);
     const scene = entry.scene.?;
     
     var entities: [MAX_ENTITIES]entity16.Entity16 = undefined;
-    Scenarios.setupScenario(getScenario(scenario_name), scene, &entities);
+    Scenarios.setupScenario(getScenario(scenario_name), &s1024, &entities);
     
     var engine: tick_engine.TickEngine = undefined;
-    tick_engine.init(&engine, &s1024, scene, &entities);
+    tick_engine.init(&engine, &s1024, &entities);
     
     var t: u32 = 0;
     while (t < ticks and !engine.stable) : (t += 1) {
@@ -81,7 +85,7 @@ fn cmdRun(allocator: std.mem.Allocator, args: *std.process.ArgIterator) !void {
     
     try stdout.print("=== Final State ===\n", .{});
     try renderer.renderScene(scene, stdout);
-    try renderer.renderInstances(scene, &entities, stdout);
+    try renderer.renderInstances(&s1024, &entities, stdout);
     try stdout.print("\nDone. Ticks: {d}, Stable: {any}\n", .{t, engine.stable});
 }
 
@@ -104,14 +108,13 @@ fn cmdBench(allocator: std.mem.Allocator, args: *std.process.ArgIterator) !void 
     while (r < 5) : (r += 1) {
         var s1024 = scene1024.Scene1024.init(allocator);
         defer s1024.deinit();
-        const entry = try s1024.getPage(0);
-        const scene = entry.scene.?;
+        _ = try s1024.getPage(0);
         
         var entities: [MAX_ENTITIES]entity16.Entity16 = undefined;
-        Scenarios.setupScenario(getScenario(scenario_name), scene, &entities);
+        Scenarios.setupScenario(getScenario(scenario_name), &s1024, &entities);
         
         var engine: tick_engine.TickEngine = undefined;
-        tick_engine.init(&engine, &s1024, scene, &entities);
+        tick_engine.init(&engine, &s1024, &entities);
         
         const start = std.time.nanoTimestamp();
         _ = tick_engine.runTicks(&engine, 100);
@@ -125,7 +128,7 @@ fn cmdBench(allocator: std.mem.Allocator, args: *std.process.ArgIterator) !void 
     try stdout.print("\nAvg: {}us, {}% stable\n", .{total_us / 5, stable_count * 20});
 }
 
-fn cmdDump(args: *std.process.ArgIterator) !void {
+fn cmdDump(allocator: std.mem.Allocator, args: *std.process.ArgIterator) !void {
     const stdout = std.io.getStdOut().writer();
     var scenario_name: []const u8 = "apple_table";
     
@@ -135,11 +138,15 @@ fn cmdDump(args: *std.process.ArgIterator) !void {
         }
     }
     
-    var scene = scene32.initScene();
+    var s1024 = scene1024.Scene1024.init(allocator);
+    defer s1024.deinit();
+    const entry = try s1024.getPage(0);
+    const scene = entry.scene.?;
+    
     var entities: [MAX_ENTITIES]entity16.Entity16 = undefined;
-    Scenarios.setupScenario(getScenario(scenario_name), &scene, &entities);
+    Scenarios.setupScenario(getScenario(scenario_name), &s1024, &entities);
     
     try stdout.print("=== {s} Initial State ===\n\n", .{scenario_name});
-    try renderer.renderScene(&scene, stdout);
-    try renderer.renderInstances(&scene, &entities, stdout);
+    try renderer.renderScene(scene, stdout);
+    try renderer.renderInstances(&s1024, &entities, stdout);
 }

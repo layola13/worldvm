@@ -23,12 +23,36 @@ pub const EdgeSlot = struct {
     target_id: u16 = 0, relation_type: u8 = 0, weight: u8 = 0,
 };
 
+const sdf = @import("sdf.zig");
+
 pub const Entity16 = struct {
     topology: [TOPOLOGY_WORDS]u64 = undefined,
     physics: PhysicsBlock = .{},
     visual: VisualBlock = .{},
     relations: [64]EdgeSlot = undefined,
     reserved: [4096 - 512 - 16 - 4 - 256]u8 = undefined,
+
+    pub fn fromSDF(node: sdf.SDFNode) Entity16 {
+        var e = initEntity16();
+        var x: u8 = 0;
+        while (x < ENTITY_DIM) : (x += 1) {
+            var y: u8 = 0;
+            while (y < ENTITY_DIM) : (y += 1) {
+                var z: u8 = 0;
+                while (z < ENTITY_DIM) : (z += 1) {
+                    // Map 0..15 to -1..1 range for SDF evaluation
+                    const fx = (@as(f32, @floatFromInt(x)) - 7.5) / 7.5;
+                    const fy = (@as(f32, @floatFromInt(y)) - 7.5) / 7.5;
+                    const fz = (@as(f32, @floatFromInt(z)) - 7.5) / 7.5;
+                    
+                    if (node.evaluate(sdf.Vec3.init(fx, fy, fz)) <= 0.0) {
+                        setVoxel(&e, x, y, z);
+                    }
+                }
+            }
+        }
+        return e;
+    }
 };
 
 pub fn coordToBitIndex(x: u8, y: u8, z: u8) u12 {
@@ -110,12 +134,12 @@ pub const Prototypes = struct {
         fillBox(&e, 1, 1, 12, 3, 7, 14); fillBox(&e, 12, 1, 12, 14, 7, 14); return e;
     }
     pub fn hammer() Entity16 {
-        var e: Entity16 = .{}; e.topology = .{0} ** 64; e.physics.mass = 200; e.physics.material = .solid;
+        var e: Entity16 = .{}; e.topology = .{0} ** 64; e.physics.mass = 1000; e.physics.material = .solid;
         fillBox(&e, 5, 8, 6, 10, 14, 9); fillBox(&e, 3, 10, 4, 12, 12, 11); return e;
     }
     pub fn glass() Entity16 {
-        var e: Entity16 = .{}; e.topology = .{0} ** 64; e.physics.mass = 30; e.physics.material = .fragile; e.physics.flags |= 0x04;
-        fillHollowBox(&e, 2, 0, 2, 13, 12, 13); return e;
+        var e: Entity16 = .{}; e.topology = .{0} ** 64; e.physics.mass = 30; e.physics.material = .fragile; e.physics.hardness = 30; e.physics.flags |= 0x04;
+        fillBox(&e, 2, 0, 2, 13, 12, 13); return e;
     }
     pub fn water() Entity16 {
         var e: Entity16 = .{}; e.topology = .{0} ** 64; e.physics.mass = 10; e.physics.material = .liquid;
@@ -124,6 +148,29 @@ pub const Prototypes = struct {
     pub fn floor() Entity16 {
         var e: Entity16 = .{}; e.topology = .{0} ** 64; e.physics.mass = 0; e.physics.material = .solid; e.physics.flags |= 0x01;
         fillBox(&e, 0, 0, 0, 15, 0, 15); return e;
+    }
+    // Physics test prototypes
+    pub fn ball() Entity16 {
+        // Small elastic ball for bounce testing
+        var e: Entity16 = .{}; e.topology = .{0} ** 64; e.physics.mass = 20; e.physics.material = .elastic;
+        e.physics.restitution = 200; e.physics.hardness = 255;
+        fillSphere(&e, 8, 8, 8, 4); return e;
+    }
+    pub fn brick() Entity16 {
+        // Simple solid brick for stacking
+        var e: Entity16 = .{}; e.topology = .{0} ** 64; e.physics.mass = 100; e.physics.material = .solid;
+        fillBox(&e, 2, 0, 2, 13, 6, 13); return e;
+    }
+    pub fn domino() Entity16 {
+        // Thin tall box for domino effect
+        var e: Entity16 = .{}; e.topology = .{0} ** 64; e.physics.mass = 30; e.physics.material = .solid;
+        fillBox(&e, 5, 0, 6, 10, 14, 9); return e;
+    }
+    pub fn plate() Entity16 {
+        // Flat plate surface
+        var e: Entity16 = .{}; e.topology = .{0} ** 64; e.physics.mass = 50; e.physics.material = .solid;
+        e.physics.flags |= 0x01; // Fixed
+        fillBox(&e, 0, 0, 0, 15, 1, 15); return e;
     }
 };
 

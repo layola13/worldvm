@@ -27,8 +27,6 @@ pub const Instance = struct {
 
 pub const Scene32 = struct {
     occupancy: [OCCUPANCY_WORDS]u64,
-    instances: [MAX_INSTANCES]Instance,
-    instance_count: u8,
     focus_x: u8,
     focus_y: u8,
     focus_z: u8,
@@ -44,8 +42,6 @@ pub const Scene32 = struct {
 pub fn initScene() Scene32 {
     var scene: Scene32 = undefined;
     scene.occupancy = .{0} ** OCCUPANCY_WORDS;
-    @memset(&scene.instances, std.mem.zeroes(Instance));
-    scene.instance_count = 0;
     scene.focus_x = 15;
     scene.focus_y = 15;
     scene.focus_z = 15;
@@ -91,52 +87,9 @@ pub fn isOccupied(scene: *const Scene32, x: i32, y: i32, z: i32) bool {
     return (scene.occupancy[word] & (@as(u64, 1) << bit)) != 0;
 }
 
-pub fn addInstance(scene: *Scene32, instance: Instance) ?u8 {
-    if (scene.instance_count >= MAX_INSTANCES) return null;
-    const idx = scene.instance_count;
-    scene.instances[idx] = instance;
-    scene.instance_count += 1;
-    return idx;
-}
-
-pub fn projectEntityToScene(scene: *Scene32, entity: *const entity16.Entity16, pos_x: i32, pos_y: i32, pos_z: i32) void {
-    var ex: usize = 0;
-    while (ex < entity16.ENTITY_DIM) : (ex += 1) {
-        var ey: usize = 0;
-        while (ey < entity16.ENTITY_DIM) : (ey += 1) {
-            var ez: usize = 0;
-            while (ez < entity16.ENTITY_DIM) : (ez += 1) {
-                if (entity16.testVoxel(entity, @truncate(ex), @truncate(ey), @truncate(ez))) {
-                    const sx: i32 = @as(i32, @intCast(ex)) + pos_x;
-                    const sy: i32 = @as(i32, @intCast(ey)) + pos_y;
-                    const sz: i32 = @as(i32, @intCast(ez)) + pos_z;
-                    if (inBounds(sx, sy, sz)) {
-                        setOccupied(scene, sx, sy, sz);
-                    }
-                }
-            }
-        }
-    }
-}
-
-pub fn rebuildOccupancy(scene: *Scene32, entities: []const entity16.Entity16) void {
-    var i: usize = 0;
-    while (i < OCCUPANCY_WORDS) : (i += 1) scene.occupancy[i] = 0;
-    i = 0;
-    while (i < scene.instance_count) : (i += 1) {
-        const inst = scene.instances[i];
-        if (inst.entity_id < entities.len) {
-            projectEntityToScene(scene, &entities[inst.entity_id], inst.pos_x, inst.pos_y, inst.pos_z);
-        }
-    }
-}
-
 pub fn clearScene(scene: *Scene32) void {
     var i: usize = 0;
     while (i < OCCUPANCY_WORDS) : (i += 1) scene.occupancy[i] = 0;
-    i = 0;
-    while (i < MAX_INSTANCES) : (i += 1) scene.instances[i] = .{ .entity_id = 0, .pos_x = 0, .pos_y = 0, .pos_z = 0, .rot_yaw = 0, .rot_pitch = 0, .rot_roll = 0, .state = .idle, .sleep_tick = 0, ._reserved = .{0} ** 3 };
-    scene.instance_count = 0;
     scene.tick = 0;
     scene.state_flags = 0;
 }

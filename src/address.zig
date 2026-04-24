@@ -22,7 +22,7 @@ pub fn encode(parts: AddrParts) WorldAddr {
     addr |= @as(u64, parts.world) << 30;
     addr |= @as(u64, parts.px) << 25;
     addr |= @as(u64, parts.py) << 20;
-    addr |= @as(u64, parts.pz) << 15;
+    addr |= @as(u64, parts.pz) << 15;  // bit[15] = pz[0]
     addr |= @as(u64, parts.lx) << 10;
     addr |= @as(u64, parts.ly) << 5;
     addr |= @as(u64, parts.lz);
@@ -42,7 +42,7 @@ pub fn decode(addr: WorldAddr) AddrParts {
 }
 
 pub fn getPageId(addr: WorldAddr) u32 {
-    return @truncate((addr >> 15) & 0x7FFF); // px, py, pz combined (15 bits)
+    return @truncate((addr >> 15) & 0x7FFF); // bits[29-15] = px[4-0]+py[4-0]+pz[4-0]
 }
 
 pub fn getLocalIdx(addr: WorldAddr) u15 {

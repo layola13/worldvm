@@ -8,7 +8,7 @@ const address = @import("address.zig");
 pub const FallResult = struct { can_fall: bool, target_y: i32, blocked: bool, blocker_id: u8 };
 
 // Global occupancy check that handles page boundaries
-pub fn isOccupiedGlobal(s1024: *scene1024.Scene1024, inst: *const scene32.Instance, entities: []entity16.Entity16, gx: i32, gy: i32, gz: i32) bool {
+pub fn isOccupiedGlobal(s1024: *scene1024.Scene1024, inst: *const scene32.Instance, entities: []entity16.Entity16, gx: i32, gy: i32, gz: i32, blocker_out: ?*u8) bool {
     // 1. Boundary check for the 1024^3 world
     if (gx < 0 or gx >= 1024 or gy < 0 or gy >= 1024 or gz < 0 or gz >= 1024) return true;
 
@@ -33,7 +33,26 @@ pub fn isOccupiedGlobal(s1024: *scene1024.Scene1024, inst: *const scene32.Instan
         .world = 0, .px = px, .py = py, .pz = pz, .lx = lx, .ly = ly, .lz = lz
     });
 
-    return s1024.getVoxelAtGlobal(addr) catch true;
+    // Check all instances in s1024 for this voxel (slow but correct for MVP)
+    for (0..s1024.instance_count) |i| {
+        const other = &s1024.instances[i];
+        if (other == inst) continue;
+        
+        const ox = gx - other.pos_x;
+        const oy = gy - other.pos_y;
+        const oz = gz - other.pos_z;
+        
+        if (ox >= 0 and ox < 16 and oy >= 0 and oy < 16 and oz >= 0 and oz < 16) {
+            if (entity16.testVoxel(&entities[other.entity_id], @intCast(ox), @intCast(oy), @intCast(oz))) {
+                if (blocker_out != null) blocker_out.?.* = @intCast(i);
+                return true;
+            }
+        }
+    }
+
+    const occupied = s1024.getVoxelAtGlobal(addr) catch true;
+    if (occupied and blocker_out != null) blocker_out.?.* = 255; // Environment
+    return occupied;
 }
 
 pub fn checkFall(s1024: *scene1024.Scene1024, inst: *const scene32.Instance, entities: []entity16.Entity16) FallResult {
@@ -45,12 +64,13 @@ pub fn checkFall(s1024: *scene1024.Scene1024, inst: *const scene32.Instance, ent
     
     // Optimization: check bottom layer of entity
     var ex: u8 = 0;
+    var blocker: u8 = 0;
     while (ex < 16) : (ex += 1) {
         var ez: u8 = 0;
         while (ez < 16) : (ez += 1) {
             if (entity16.testVoxel(entity, ex, 0, ez)) {
-                if (isOccupiedGlobal(s1024, inst, entities, inst.pos_x + ex, below_y, inst.pos_z + ez)) {
-                    return .{ .can_fall = false, .target_y = below_y, .blocked = true, .blocker_id = 0 };
+                if (isOccupiedGlobal(s1024, inst, entities, inst.pos_x + ex, below_y, inst.pos_z + ez, &blocker)) {
+                    return .{ .can_fall = false, .target_y = below_y, .blocked = true, .blocker_id = blocker };
                 }
             }
         }
@@ -83,7 +103,7 @@ pub fn checkFlow(s1024: *scene1024.Scene1024, inst: *const scene32.Instance, ent
                     const ex: i32 = @intCast((idx >> 4) & 0xF);
                     const ey: i32 = @intCast(idx >> 8);
                     const ez: i32 = @intCast(idx & 0xF);
-                    if (isOccupiedGlobal(s1024, inst, entities, nx + ex, ny + ey, nz + ez)) { 
+                    if (isOccupiedGlobal(s1024, inst, entities, nx + ex, ny + ey, nz + ez, null)) { 
                         ok = false; break; 
                     }
                 }
@@ -131,7 +151,7 @@ pub fn checkPush(s1024: *scene1024.Scene1024, inst: *const scene32.Instance, ent
                 const ex: i32 = @intCast((idx >> 4) & 0xF);
                 const ey: i32 = @intCast(idx >> 8);
                 const ez: i32 = @intCast(idx & 0xF);
-                if (isOccupiedGlobal(s1024, inst, entities, nx + ex, ny + ey, nz + ez)) { 
+                if (isOccupiedGlobal(s1024, inst, entities, nx + ex, ny + ey, nz + ez, null)) { 
                     ok = false; break; 
                 }
             }

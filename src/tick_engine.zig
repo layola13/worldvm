@@ -4,6 +4,7 @@ const entity16 = @import("entity16.zig");
 const scene32 = @import("scene32.zig");
 const scene1024 = @import("scene1024.zig");
 const physics = @import("physics.zig");
+const bus = @import("bus.zig");
 
 pub const Operator = enum(u8) { NOP = 0, FALL = 6, FLOW = 7, MOVE = 3, PUSH = 4, BREAK = 5 };
 
@@ -19,32 +20,34 @@ pub const Intent = struct {
 
 pub const TickEngine = struct {
     s1024: *scene1024.Scene1024,
-    active_page: *scene32.Scene32, // Current focus page for MVP compatibility
     entities: []entity16.Entity16,
     intents: [64]Intent = undefined,
     intent_count: u8 = 0,
     max_ticks: u32 = 1000,
     stable: bool = false,
     tick_id: u32 = 0,
+    world_bus: ?*bus.Bus = null,
+    arousal_mod: i16 = 0,
 };
 
-pub fn init(engine: *TickEngine, s1024: *scene1024.Scene1024, active_page: *scene32.Scene32, entities: []entity16.Entity16) void {
+pub fn init(engine: *TickEngine, s1024: *scene1024.Scene1024, entities: []entity16.Entity16) void {
     engine.* = .{ 
         .s1024 = s1024,
-        .active_page = active_page,
         .entities = entities, 
         .max_ticks = 1000, 
         .stable = false, 
         .tick_id = 0,
+        .world_bus = null,
+        .arousal_mod = 0,
     };
 }
 
 pub fn gather(engine: *TickEngine) void {
     engine.intent_count = 0;
     var i: u8 = 0;
-    while (i < engine.active_page.instance_count) : (i += 1) {
+    while (i < engine.s1024.instance_count) : (i += 1) {
         if (engine.intent_count >= 64) break;
-        const inst = &engine.active_page.instances[i];
+        const inst = &engine.s1024.instances[i];
         if (inst.entity_id >= engine.entities.len) continue;
         const entity = &engine.entities[inst.entity_id];
         
@@ -58,7 +61,7 @@ pub fn gather(engine: *TickEngine) void {
                         .dx = @intCast(r.new_x - inst.pos_x), 
                         .dy = @intCast(r.new_y - inst.pos_y), 
                         .dz = @intCast(r.new_z - inst.pos_z), 
-                        .priority = 180 
+                        .priority = @intCast(@as(i16, 180) + engine.arousal_mod), 
                     };
                     engine.intent_count += 1;
                 }
@@ -70,19 +73,39 @@ pub fn gather(engine: *TickEngine) void {
                         .instance_idx = i, 
                         .op = .FALL, 
                         .dy = @intCast(r.target_y - inst.pos_y), 
-                        .priority = 200 
+                        .priority = @intCast(@as(i16, 200) + engine.arousal_mod), 
                     };
                     engine.intent_count += 1;
                 } else if (r.blocked) {
-                    engine.active_page.instances[i].state = .resting;
-                    if (inst.state == .falling) {
-                        const impact = physics.calcImpact(-1, entity.physics.mass);
-                        const b = physics.checkBreak(impact, entity.physics.material, entity.physics.hardness);
-                        if (b.did_break) {
+                    const was_moving = (inst.state == .falling or inst.state == .moving or inst.state == .idle);
+                    engine.s1024.instances[i].state = .resting;
+                    if (was_moving) {
+                        const impact = physics.calcImpact(-100, entity.physics.mass);
+                        
+                        const b_self = physics.checkBreak(impact, entity.physics.material, entity.physics.hardness);
+                        if (b_self.did_break) {
                             engine.intents[engine.intent_count] = .{
                                 .instance_idx = i, .op = .BREAK, .priority = 250
                             };
                             engine.intent_count += 1;
+                            if (engine.world_bus) |b| {
+                                b.broadcastPhysicsEvent(inst.entity_id, engine.tick_id, .{ .impact_velocity = -100, .hardness = entity.physics.hardness, .did_break = true });
+                            }
+                        }
+                        
+                        if (r.blocker_id != 255) {
+                            const target_inst = &engine.s1024.instances[r.blocker_id];
+                            const target_ent = &engine.entities[target_inst.entity_id];
+                            const b_target = physics.checkBreak(impact, target_ent.physics.material, target_ent.physics.hardness);
+                            if (b_target.did_break) {
+                                engine.intents[engine.intent_count] = .{
+                                    .instance_idx = r.blocker_id, .op = .BREAK, .priority = 250
+                                };
+                                engine.intent_count += 1;
+                                if (engine.world_bus) |b| {
+                                    b.broadcastPhysicsEvent(target_inst.entity_id, engine.tick_id, .{ .impact_velocity = -100, .hardness = target_ent.physics.hardness, .did_break = true });
+                                }
+                            }
                         }
                     }
                 }
@@ -111,7 +134,7 @@ pub fn resolve(engine: *TickEngine) void {
     while (i < engine.intent_count) : (i += 1) {
         const intent = &engine.intents[i];
         if (intent.op == .NOP or intent.op == .BREAK) continue;
-        const inst = &engine.active_page.instances[intent.instance_idx];
+        const inst = &engine.s1024.instances[intent.instance_idx];
         const entity = &engine.entities[inst.entity_id];
         
         const nx = inst.pos_x + intent.dx;
@@ -128,7 +151,7 @@ pub fn resolve(engine: *TickEngine) void {
                     const ex: i32 = @intCast((idx >> 4) & 0xF);
                     const ey: i32 = @intCast(idx >> 8);
                     const ez: i32 = @intCast(idx & 0xF);
-                    if (physics.isOccupiedGlobal(engine.s1024, inst, engine.entities, nx + ex, ny + ey, nz + ez)) {
+                    if (physics.isOccupiedGlobal(engine.s1024, inst, engine.entities, nx + ex, ny + ey, nz + ez, null)) {
                         valid = false; break;
                     }
                 }
@@ -145,7 +168,7 @@ pub fn commit(engine: *TickEngine) u16 {
     while (i < engine.intent_count) : (i += 1) {
         const intent = &engine.intents[i];
         if (intent.op == .NOP) continue;
-        const inst = &engine.active_page.instances[intent.instance_idx];
+        const inst = &engine.s1024.instances[intent.instance_idx];
         
         switch (intent.op) {
             .FALL => { inst.pos_y += intent.dy; inst.state = .falling; applied += 1; },
@@ -155,8 +178,7 @@ pub fn commit(engine: *TickEngine) u16 {
             else => {},
         }
     }
-    // Update occupancy in global scene (only for active page in MVP)
-    scene32.rebuildOccupancy(engine.active_page, engine.entities);
+    engine.s1024.rebuildOccupancy(engine.entities) catch {};
     return applied;
 }
 
