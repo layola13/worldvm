@@ -58,6 +58,12 @@ pub const LayeredHit = struct {
     total_energy_loss: f32,
 };
 
+const TopologyVoxel = struct {
+    x: u8,
+    y: u8,
+    z: u8,
+};
+
 pub const Projectile = struct {
     pos_x: f32,
     pos_y: f32,
@@ -173,24 +179,24 @@ pub fn getMaterialProps(entity: *const entity16.Entity16) MaterialProps {
     const mat = entity.physics.material;
 
     return switch (mat) {
-        .metal => .{
+        .solid => .{
             .density = MaterialDensity.steel,
             .thickness = 2.0,
             .porosity = 0.0,
             .hardness = hardness,
             .toughness = hardness * 0.5,
         },
-        .stone => .{
-            .density = MaterialDensity.concrete,
+        .composite => .{
+            .density = MaterialDensity.composite,
             .thickness = 4.0,
             .porosity = 0.1,
             .hardness = hardness,
             .toughness = hardness * 0.3,
         },
-        .wood => .{
-            .density = MaterialDensity.wood,
+        .elastic => .{
+            .density = MaterialDensity.rubber,
             .thickness = 3.0,
-            .porosity = 0.4,
+            .porosity = 0.15,
             .hardness = hardness,
             .toughness = hardness * 0.2,
         },
@@ -309,7 +315,13 @@ pub fn layeredRaycast(
     entity_id: u16,
     inst_x: i32, inst_y: i32, inst_z: i32,
 ) LayeredHit {
-    var result: LayeredHit = .{ .layer_count = 0, .final_t = 0, .total_penetration = 0, .total_energy_loss = 0 };
+    var result: LayeredHit = .{
+        .layer_count = 0,
+        .hits = undefined,
+        .final_t = 0,
+        .total_penetration = 0,
+        .total_energy_loss = 0,
+    };
 
     const props = getMaterialProps(ent);
     var energy = proj.remaining_energy;
@@ -367,7 +379,7 @@ pub fn layeredRaycast(
 // P8: Runtime topology splitting - find connected components after damage
 pub const TopologyFragment = struct {
     voxel_count: u16,
-    voxels: [128]struct { x: u8, y: u8, z: u8 },
+    voxels: [128]TopologyVoxel,
     center_x: f32,
     center_y: f32,
     center_z: f32,
@@ -424,7 +436,7 @@ pub fn splitTopology(
 
     // BFS to find connected components (simplified - just split by octant)
     var fragment_idx: u8 = 0;
-    var temp_voxels: [128]struct { x: u8, y: u8, z: u8 } = undefined;
+    var temp_voxels: [128]TopologyVoxel = undefined;
     var temp_count: u16 = 0;
 
     {

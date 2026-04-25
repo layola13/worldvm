@@ -43,6 +43,7 @@ pub fn build(b: *std.Build) void {
 
     const test_files = [_][]const u8{
         "src/address.zig",
+        "src/prediction.zig",
         "src/physics_test.zig",
         "src/scene1024_test.zig",
         "src/mind_test.zig",

@@ -4,6 +4,7 @@
 //! - Velocity-based movement with gravity, friction, and restitution
 //! - Angular velocity for rotation
 
+const std = @import("std");
 const entity16 = @import("entity16.zig");
 const scene32 = @import("scene32.zig");
 const scene1024 = @import("scene1024.zig");
@@ -17,18 +18,32 @@ pub const GRAVITY: i16 = -100;           // Default gravity acceleration per tic
 pub const TERMINAL_VELOCITY: i32 = 500;  // Max fall velocity
 pub const DAMPING: u8 = 245;             // Velocity damping (0-255, 255=no damping)
 pub const ANGULAR_DAMPING: u8 = 240;      // Angular velocity damping
+pub const SweepAxis = enum { x, y, z };
 
 // ============================================================================
 // Velocity & Continuous Physics
 // ============================================================================
 
 pub const FallResult = struct { can_fall: bool, target_y: i32, blocked: bool, blocker_id: u8 };
+pub const SweepResult = struct {
+    pos_x: i32,
+    pos_y: i32,
+    pos_z: i32,
+    blocked: bool,
+    blocker_id: u8,
+};
 
 /// Apply gravity acceleration to velocity
 pub fn applyGravity(vel_y: *i16, mass: u16) void {
     if (mass == 0) return;  // Static objects don't fall
     const new_vel = @as(i32, vel_y.*) + @as(i32, GRAVITY);
-    vel_y.* = @truncate(@min(TERMINAL_VELOCITY, new_vel));
+    vel_y.* = clampVerticalVelocity(new_vel);
+}
+
+pub fn clampVerticalVelocity(vel_y: i32) i16 {
+    const min_vel = -TERMINAL_VELOCITY;
+    const max_vel = TERMINAL_VELOCITY;
+    return @truncate(@max(min_vel, @min(max_vel, vel_y)));
 }
 
 /// Apply linear damping (airs resistance)
@@ -112,6 +127,7 @@ pub fn isOccupiedGlobal(s1024: *scene1024.Scene1024, inst: ?*const scene32.Insta
     for (0..s1024.instance_count) |i| {
         const other = &s1024.instances[i];
         if (other == inst) continue;
+        if (other.state == .broken) continue;
 
         const ox = gx - other.pos_x;
         const oy = gy - other.pos_y;
@@ -128,6 +144,71 @@ pub fn isOccupiedGlobal(s1024: *scene1024.Scene1024, inst: ?*const scene32.Insta
     const occupied = s1024.getVoxelAtGlobal(addr) catch true;
     if (occupied and blocker_out != null) blocker_out.?.* = 255; // Environment
     return occupied;
+}
+
+fn tryOccupyTranslatedPosition(
+    s1024: *scene1024.Scene1024,
+    inst: *const scene32.Instance,
+    entities: []entity16.Entity16,
+    target_x: i32,
+    target_y: i32,
+    target_z: i32,
+) struct { can_occupy: bool, blocker_id: u8 } {
+    const entity = &entities[inst.entity_id];
+
+    for (0..64) |w_idx| {
+        const word = entity.topology[w_idx];
+        if (word == 0) continue;
+        for (0..64) |b_idx| {
+            if ((word & (@as(u64, 1) << @as(u6, @truncate(b_idx)))) == 0) continue;
+            const idx = (w_idx << 6) | b_idx;
+            const ex: i32 = @intCast((idx >> 4) & 0xF);
+            const ey: i32 = @intCast(idx >> 8);
+            const ez: i32 = @intCast(idx & 0xF);
+            var blocker_id: u8 = 255;
+            if (isOccupiedGlobal(s1024, inst, entities, target_x + ex, target_y + ey, target_z + ez, &blocker_id)) {
+                return .{ .can_occupy = false, .blocker_id = blocker_id };
+            }
+        }
+    }
+
+    return .{ .can_occupy = true, .blocker_id = 255 };
+}
+
+pub fn sweepAxis(
+    s1024: *scene1024.Scene1024,
+    inst: *const scene32.Instance,
+    entities: []entity16.Entity16,
+    start_x: i32,
+    start_y: i32,
+    start_z: i32,
+    vel: i16,
+    axis: SweepAxis,
+) SweepResult {
+    var pos_x = start_x;
+    var pos_y = start_y;
+    var pos_z = start_z;
+    const delta: i32 = vel;
+    if (delta == 0) {
+        return .{ .pos_x = pos_x, .pos_y = pos_y, .pos_z = pos_z, .blocked = false, .blocker_id = 255 };
+    }
+
+    const step: i32 = if (delta > 0) 1 else -1;
+    var remaining = @abs(delta);
+    while (remaining > 0) : (remaining -= 1) {
+        const next_x = if (axis == .x) pos_x + step else pos_x;
+        const next_y = if (axis == .y) pos_y + step else pos_y;
+        const next_z = if (axis == .z) pos_z + step else pos_z;
+        const occupancy = tryOccupyTranslatedPosition(s1024, inst, entities, next_x, next_y, next_z);
+        if (!occupancy.can_occupy) {
+            return .{ .pos_x = pos_x, .pos_y = pos_y, .pos_z = pos_z, .blocked = true, .blocker_id = occupancy.blocker_id };
+        }
+        pos_x = next_x;
+        pos_y = next_y;
+        pos_z = next_z;
+    }
+
+    return .{ .pos_x = pos_x, .pos_y = pos_y, .pos_z = pos_z, .blocked = false, .blocker_id = 255 };
 }
 
 // ============================================================================
@@ -275,6 +356,82 @@ pub const AABB = struct { min_x: i32, min_y: i32, min_z: i32, max_x: i32, max_y:
 pub fn makeAABB(x: i32, y: i32, z: i32, d: usize) AABB { return .{ .min_x=x, .min_y=y, .min_z=z, .max_x=x+@as(i32,@intCast(d)), .max_y=y+@as(i32,@intCast(d)), .max_z=z+@as(i32,@intCast(d)) }; }
 pub fn aabbHit(a: AABB, b: AABB) bool { return !(a.max_x <= b.min_x or b.max_x <= a.min_x or a.max_y <= b.min_y or b.max_y <= a.min_y or a.max_z <= b.min_z or b.max_z <= a.min_z); }
 
+pub fn computeEntityLocalAABB(entity: *const entity16.Entity16) ?AABB {
+    var has_voxel = false;
+    var min_x: i32 = 16;
+    var min_y: i32 = 16;
+    var min_z: i32 = 16;
+    var max_x: i32 = 0;
+    var max_y: i32 = 0;
+    var max_z: i32 = 0;
+
+    for (0..64) |w_idx| {
+        const word = entity.topology[w_idx];
+        if (word == 0) continue;
+        for (0..64) |b_idx| {
+            if ((word & (@as(u64, 1) << @as(u6, @truncate(b_idx)))) == 0) continue;
+            const idx = (w_idx << 6) | b_idx;
+            const ex: i32 = @intCast((idx >> 4) & 0xF);
+            const ey: i32 = @intCast(idx >> 8);
+            const ez: i32 = @intCast(idx & 0xF);
+
+            has_voxel = true;
+            min_x = @min(min_x, ex);
+            min_y = @min(min_y, ey);
+            min_z = @min(min_z, ez);
+            max_x = @max(max_x, ex + 1);
+            max_y = @max(max_y, ey + 1);
+            max_z = @max(max_z, ez + 1);
+        }
+    }
+
+    if (!has_voxel) return null;
+    return .{
+        .min_x = min_x,
+        .min_y = min_y,
+        .min_z = min_z,
+        .max_x = max_x,
+        .max_y = max_y,
+        .max_z = max_z,
+    };
+}
+
+pub fn computeEntityWorldAABB(inst: *const scene32.Instance, entity: *const entity16.Entity16) ?AABB {
+    const local = computeEntityLocalAABB(entity) orelse return null;
+    return .{
+        .min_x = inst.pos_x + local.min_x,
+        .min_y = inst.pos_y + local.min_y,
+        .min_z = inst.pos_z + local.min_z,
+        .max_x = inst.pos_x + local.max_x,
+        .max_y = inst.pos_y + local.max_y,
+        .max_z = inst.pos_z + local.max_z,
+    };
+}
+
+pub fn computeSweptEntityWorldAABB(inst: *const scene32.Instance, entity: *const entity16.Entity16) ?AABB {
+    var bounds = computeEntityWorldAABB(inst, entity) orelse return null;
+
+    if (inst.vel_x < 0) {
+        bounds.min_x += inst.vel_x;
+    } else {
+        bounds.max_x += inst.vel_x;
+    }
+
+    if (inst.vel_y < 0) {
+        bounds.min_y += inst.vel_y;
+    } else {
+        bounds.max_y += inst.vel_y;
+    }
+
+    if (inst.vel_z < 0) {
+        bounds.min_z += inst.vel_z;
+    } else {
+        bounds.max_z += inst.vel_z;
+    }
+
+    return bounds;
+}
+
 // ============================================================================
 // Push
 // ============================================================================
@@ -306,3 +463,65 @@ pub fn checkPush(s1024: *scene1024.Scene1024, inst: *const scene32.Instance, ent
     return .{ .pushed = false, .new_x = inst.pos_x, .new_y = inst.pos_y, .new_z = inst.pos_z };
 }
 pub fn applyPush(inst: *scene32.Instance, r: PushResult) void { inst.pos_x = r.new_x; inst.pos_y = r.new_y; inst.pos_z = r.new_z; inst.state = .moving; }
+
+test "applyGravity clamps downward velocity to terminal speed" {
+    var vel_y: i16 = -480;
+    applyGravity(&vel_y, 10);
+    try std.testing.expect(vel_y == -500);
+
+    applyGravity(&vel_y, 10);
+    try std.testing.expect(vel_y == -500);
+}
+
+test "clampVerticalVelocity limits both signs" {
+    try std.testing.expect(clampVerticalVelocity(600) == 500);
+    try std.testing.expect(clampVerticalVelocity(-600) == -500);
+    try std.testing.expect(clampVerticalVelocity(120) == 120);
+}
+
+test "computeEntityLocalAABB returns tight occupied bounds" {
+    var entity = entity16.initEntity16();
+    entity16.setVoxel(&entity, 1, 2, 3);
+    entity16.setVoxel(&entity, 4, 5, 6);
+
+    const bounds = computeEntityLocalAABB(&entity).?;
+    try std.testing.expectEqual(@as(i32, 1), bounds.min_x);
+    try std.testing.expectEqual(@as(i32, 2), bounds.min_y);
+    try std.testing.expectEqual(@as(i32, 3), bounds.min_z);
+    try std.testing.expectEqual(@as(i32, 5), bounds.max_x);
+    try std.testing.expectEqual(@as(i32, 6), bounds.max_y);
+    try std.testing.expectEqual(@as(i32, 7), bounds.max_z);
+}
+
+test "computeSweptEntityWorldAABB expands bounds by velocity" {
+    var entity = entity16.initEntity16();
+    entity16.setVoxel(&entity, 1, 2, 3);
+    entity16.setVoxel(&entity, 4, 5, 6);
+
+    const inst = scene32.Instance{
+        .entity_id = 0,
+        .pos_x = 10,
+        .pos_y = 20,
+        .pos_z = 30,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .moving,
+        .sleep_tick = 0,
+        .vel_x = -2,
+        .vel_y = 3,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+
+    const bounds = computeSweptEntityWorldAABB(&inst, &entity).?;
+    try std.testing.expectEqual(@as(i32, 9), bounds.min_x);
+    try std.testing.expectEqual(@as(i32, 22), bounds.min_y);
+    try std.testing.expectEqual(@as(i32, 33), bounds.min_z);
+    try std.testing.expectEqual(@as(i32, 15), bounds.max_x);
+    try std.testing.expectEqual(@as(i32, 29), bounds.max_y);
+    try std.testing.expectEqual(@as(i32, 37), bounds.max_z);
+}

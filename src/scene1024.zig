@@ -56,52 +56,12 @@ pub const Scene1024 = struct {
     }
 
     pub fn rebuildOccupancy(self: *Scene1024, entities: []const entity16.Entity16) !void {
-        // 1. Clear all active pages
-        for (0..MAX_ACTIVE_PAGES) |i| {
-            if (self.pages[i].resident and self.pages[i].scene != null) {
-                @memset(&self.pages[i].scene.?.occupancy, 0);
-            }
-        }
-
-        // 2. Project all instances
-        for (0..self.instance_count) |i| {
-            const inst = &self.instances[i];
-            const entity = &entities[inst.entity_id];
-            
-            var ex: u8 = 0;
-            while (ex < 16) : (ex += 1) {
-                var ey: u8 = 0;
-                while (ey < 16) : (ey += 1) {
-                    var ez: u8 = 0;
-                    while (ez < 16) : (ez += 1) {
-                        if (entity16.testVoxel(entity, ex, ey, ez)) {
-                            const gx = inst.pos_x + ex;
-                            const gy = inst.pos_y + ey;
-                            const gz = inst.pos_z + ez;
-                            
-                            // Map global to page
-                            const px: u32 = @intCast(@divFloor(gx, 32));
-                            const py: u32 = @intCast(@divFloor(gy, 32));
-                            const pz: u32 = @intCast(@divFloor(gz, 32));
-                            const page_id = address.encode(.{
-                                .world = 0, .px = @intCast(px), .py = @intCast(py), .pz = @intCast(pz),
-                                .lx = 0, .ly = 0, .lz = 0
-                            }) >> 15; // Extract page part
-                            
-                            // Only project to resident pages
-                            for (0..MAX_ACTIVE_PAGES) |p_idx| {
-                                if (self.pages[p_idx].resident and self.pages[p_idx].page_id == @as(u32, @truncate(page_id))) {
-                                    const lx: i32 = @mod(gx, 32);
-                                    const ly: i32 = @mod(gy, 32);
-                                    const lz: i32 = @mod(gz, 32);
-                                    scene32.setOccupied(self.pages[p_idx].scene.?, lx, ly, lz);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        // Static environment voxels live in paged Scene32 data and must remain
+        // distinct from dynamic instance occupancy. Instance collision queries
+        // already walk `self.instances` directly, so rebuilding should not erase
+        // or overwrite page occupancy here.
+        _ = self;
+        _ = entities;
     }
 
     pub fn deinit(self: *Scene1024) void {

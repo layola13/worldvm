@@ -6,6 +6,7 @@
 const std = @import("std");
 const scene32 = @import("scene32.zig");
 const entity16 = @import("entity16.zig");
+const prediction = @import("prediction.zig");
 
 pub const ReplicaState = struct {
     entity_id: u16,
@@ -163,15 +164,21 @@ pub fn predict(
     const jump_force: f32 = 350.0;
     const gravity: f32 = -800.0;
 
-    if (input.forward) replica.pos_z += move_speed * dt;
-    if (input.backward) replica.pos_z -= move_speed * dt;
-    if (input.left) replica.pos_x -= move_speed * dt;
-    if (input.right) replica.pos_x += move_speed * dt;
+    var vel_x = replica.vel_x;
+    var vel_z = replica.vel_z;
+
+    if (input.forward) vel_z = move_speed;
+    if (input.backward) vel_z = -move_speed;
+    if (input.left) vel_x = -move_speed;
+    if (input.right) vel_x = move_speed;
 
     if (input.jump) replica.vel_y = jump_force;
 
+    replica.vel_x = vel_x;
+    replica.vel_z = vel_z;
     replica.vel_y += gravity * dt;
-    replica.pos_y += replica.vel_y * dt;
+
+    advanceReplicaLinearPosition(replica, dt);
 
     if (input.crouch) {
         replica.pos_y -= 2.0 * dt;
@@ -183,6 +190,30 @@ pub fn predict(
 
     replica.tick += 1;
     replica.checksum = calculateCRC(replica);
+}
+
+pub fn predictLinearReplica(replica: *const ReplicaState, dt: f32) ReplicaState {
+    const predicted = prediction.predictLinearState(.{
+        .pos_x = replica.pos_x,
+        .pos_y = replica.pos_y,
+        .pos_z = replica.pos_z,
+        .vel_x = replica.vel_x,
+        .vel_y = replica.vel_y,
+        .vel_z = replica.vel_z,
+    }, dt);
+
+    var result = replica.*;
+    result.pos_x = predicted.pos_x;
+    result.pos_y = predicted.pos_y;
+    result.pos_z = predicted.pos_z;
+    return result;
+}
+
+fn advanceReplicaLinearPosition(replica: *ReplicaState, dt: f32) void {
+    const predicted = predictLinearReplica(replica, dt);
+    replica.pos_x = predicted.pos_x;
+    replica.pos_y = predicted.pos_y;
+    replica.pos_z = predicted.pos_z;
 }
 
 /// Reconcile local with remote state

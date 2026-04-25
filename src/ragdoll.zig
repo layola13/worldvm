@@ -360,6 +360,7 @@ pub fn applyAngularImpulse(ragdoll: *Ragdoll, ang_vel_x: f32, ang_vel_y: f32, an
 pub fn enableMotor(ragdoll: *Ragdoll, joint_idx: u8, enabled: bool) void {
     if (joint_idx >= ragdoll.joint_count) return;
     ragdoll.motors[joint_idx].enabled = enabled;
+    joint.setMotorEnabled(&ragdoll.joints[joint_idx], enabled);
 }
 
 // P7: Set motor target angle with PD gains
@@ -377,6 +378,7 @@ pub fn setMotorTarget(
     ragdoll.motors[joint_idx].derivative_gain = d_gain;
     ragdoll.motors[joint_idx].max_torque = max_torque;
     ragdoll.motors[joint_idx].enabled = true;
+    joint.configureMotor(&ragdoll.joints[joint_idx], target_angle, p_gain, max_torque);
 }
 
 // P7: Calculate PD control torque
@@ -396,31 +398,35 @@ pub fn updateActiveMotors(ragdoll: *Ragdoll, dt: f32) void {
     var j: u8 = 0;
     while (j < ragdoll.joint_count) : (j += 1) {
         const motor = &ragdoll.motors[j];
+        const joint_def = &ragdoll.joints[j];
+        joint.setMotorEnabled(joint_def, motor.enabled);
         if (!motor.enabled) continue;
 
-        // Get current joint angle (simplified - using limit diff)
+        // Ragdoll is configuration-layer only; feedback must come from the
+        // actual solved joint state, not the previous target we wrote.
+        const torque = calculateMotorTorque(motor, motor.current_angle, dt);
+        joint.configureMotor(
+            joint_def,
+            motor.target_angle,
+            motor.proportional_gain,
+            @max(motor.max_torque, @abs(torque)),
+        );
+    }
+}
+
+pub fn syncMotorFeedbackFromInstances(ragdoll: *Ragdoll, instances: []scene32.Instance) void {
+    var j: u8 = 0;
+    while (j < ragdoll.joint_count) : (j += 1) {
         const joint_def = &ragdoll.joints[j];
-        const current_angle = joint_def.limit_max - joint_def.limit_min;
+        if (joint_def.entity_a >= instances.len or joint_def.entity_b >= instances.len) continue;
 
-        const torque = calculateMotorTorque(motor, current_angle, dt);
+        const drive_state = joint.measureJointDriveState(
+            &instances[joint_def.entity_a],
+            &instances[joint_def.entity_b],
+            joint_def,
+        ) orelse continue;
 
-        // Apply torque to connected parts
-        const part_a_idx = @as(u8, @intCast(joint_def.entity_a));
-        const part_b_idx = @as(u8, @intCast(joint_def.entity_b));
-
-        if (part_a_idx < ragdoll.part_count) {
-            const part_a = &ragdoll.parts[part_a_idx];
-            const force_scale = torque * part_a.mass_ratio * 0.01;
-            part_a.vel_x += force_scale;
-            part_a.vel_y += force_scale * 0.5;
-        }
-
-        if (part_b_idx < ragdoll.part_count) {
-            const part_b = &ragdoll.parts[part_b_idx];
-            const force_scale = -torque * part_b.mass_ratio * 0.01;
-            part_b.vel_x += force_scale;
-            part_b.vel_y += force_scale * 0.5;
-        }
+        ragdoll.motors[j].current_angle = drive_state.position;
     }
 }
 
@@ -497,6 +503,24 @@ pub fn setTargetPose(ragdoll: *Ragdoll, pose: *const RagdollPose) void {
     }
 }
 
+fn syncPoseJointTargetsIntoMotors(ragdoll: *Ragdoll) void {
+    var i: u8 = 0;
+    while (i < ragdoll.joint_count) : (i += 1) {
+        const target = ragdoll.pose.joint_targets[i];
+        const motor = &ragdoll.motors[i];
+        const joint_def = &ragdoll.joints[i];
+
+        if (!motor.enabled and ragdoll.pose.blend_factor <= 0) continue;
+
+        joint.configureMotor(
+            joint_def,
+            target,
+            if (joint_def.motor_speed > 0.0) joint_def.motor_speed else @max(1.0, ragdoll.pose.blend_factor * 10.0),
+            if (joint_def.motor_max_torque > 0.0) joint_def.motor_max_torque else 100.0,
+        );
+    }
+}
+
 // P7: Blend pose towards target
 pub fn blendToPose(ragdoll: *Ragdoll, dt: f32) void {
     if (ragdoll.pose.blend_factor <= 0) return;
@@ -512,6 +536,8 @@ pub fn blendToPose(ragdoll: *Ragdoll, dt: f32) void {
         part.pos_y += (target.y - part.pos_y) * blend_speed;
         part.pos_z += (target.z - part.pos_z) * blend_speed;
     }
+
+    syncPoseJointTargetsIntoMotors(ragdoll);
 }
 
 // P7: Full active ragdoll update
@@ -529,6 +555,100 @@ pub fn updateActive(ragdoll: *Ragdoll, dt: f32) void {
 
     // Blend to target pose
     blendToPose(ragdoll, dt);
+}
+
+test "ragdoll motor target syncs into shared joint motor state" {
+    init();
+    const ragdoll = createHumanoid(0, 0, 0).?;
+
+    enableMotor(ragdoll, 0, true);
+    setMotorTarget(ragdoll, 0, 0.75, 6.0, 0.5, 120.0);
+    updateActiveMotors(ragdoll, 1.0 / 60.0);
+
+    try std.testing.expect(ragdoll.joints[0].motor_enabled);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.75), ragdoll.joints[0].motor_target, 0.0001);
+    try std.testing.expect(ragdoll.joints[0].motor_speed >= 6.0);
+    try std.testing.expect(ragdoll.joints[0].motor_max_torque >= 120.0);
+}
+
+test "ragdoll pose joint targets sync into shared joint motor state" {
+    init();
+    const ragdoll = createHumanoid(0, 0, 0).?;
+
+    var pose = ragdoll.pose;
+    pose.blend_factor = 0.8;
+    pose.joint_targets[0] = 0.35;
+    setTargetPose(ragdoll, &pose);
+    blendToPose(ragdoll, 1.0 / 60.0);
+
+    try std.testing.expect(ragdoll.joints[0].motor_enabled);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.35), ragdoll.joints[0].motor_target, 0.0001);
+    try std.testing.expect(ragdoll.joints[0].motor_speed > 0.0);
+    try std.testing.expect(ragdoll.joints[0].motor_max_torque > 0.0);
+}
+
+test "ragdoll solveJoints syncs motor feedback from solved joint state" {
+    init();
+    const ragdoll = createHumanoid(0, 0, 0).?;
+    enableMotor(ragdoll, 0, true);
+    setMotorTarget(ragdoll, 0, 0.75, 6.0, 0.5, 120.0);
+
+    var entities = [_]entity16.Entity16{ entity16.initEntity16(), entity16.initEntity16() };
+    entities[0].physics.mass = 10;
+    entities[1].physics.mass = 10;
+
+    var instances = [_]scene32.Instance{
+        .{
+            .entity_id = 0,
+            .pos_x = 0,
+            .pos_y = 0,
+            .pos_z = 0,
+            .rot_yaw = 0,
+            .rot_pitch = 0,
+            .rot_roll = 0,
+            .state = .moving,
+            .sleep_tick = 0,
+            .vel_x = 0,
+            .vel_y = 0,
+            .vel_z = 0,
+            .ang_x = 0,
+            .ang_y = 0,
+            .ang_z = 0,
+            ._reserved = .{0} ** 2,
+        },
+        .{
+            .entity_id = 1,
+            .pos_x = 0,
+            .pos_y = 0,
+            .pos_z = 0,
+            .rot_yaw = 0,
+            .rot_pitch = 0,
+            .rot_roll = 0,
+            .state = .moving,
+            .sleep_tick = 0,
+            .vel_x = 0,
+            .vel_y = 0,
+            .vel_z = 0,
+            .ang_x = 0,
+            .ang_y = 0,
+            .ang_z = 0,
+            ._reserved = .{0} ** 2,
+        },
+    };
+
+    ragdoll.joints[0].entity_a = 0;
+    ragdoll.joints[0].entity_b = 1;
+    ragdoll.joints[0].axis_x = 0;
+    ragdoll.joints[0].axis_y = 1;
+    ragdoll.joints[0].axis_z = 0;
+    ragdoll.joints[0].limit_min = -1.0;
+    ragdoll.joints[0].limit_max = 1.0;
+
+    updateActiveMotors(ragdoll, 1.0 / 60.0);
+    solveJoints(ragdoll, instances[0..], entities[0..]);
+
+    try std.testing.expect(ragdoll.motors[0].current_angle != ragdoll.motors[0].target_angle);
+    try std.testing.expectApproxEqAbs(ragdoll.motors[0].current_angle, joint.measureJointDriveState(&instances[0], &instances[1], &ragdoll.joints[0]).?.position, 0.0001);
 }
 
 /// Get part world position
@@ -613,32 +733,12 @@ pub fn solveJoints(
     entities: []entity16.Entity16,
 ) void {
     if (!ragdoll.active) return;
-
-    var iter: u8 = 0;
-    while (iter < 4) : (iter += 1) {
-        var j: u8 = 0;
-        while (j < ragdoll.joint_count) : (j += 1) {
-            const joint_def = &ragdoll.joints[j];
-            if (!joint_def.enabled) continue;
-
-            if (joint_def.entity_a >= instances.len or joint_def.entity_b >= instances.len) continue;
-
-            const inst_a = &instances[joint_def.entity_a];
-            const inst_b = &instances[joint_def.entity_b];
-
-            if (inst_a.state == .broken or inst_b.state == .broken) continue;
-
-            switch (joint_def.joint_type) {
-                .hinge => {
-                    joint.solveHingeConstraint(inst_a, inst_b, joint_def, entities);
-                },
-                .fixed, .ball_socket => {
-                    joint.solveDistanceConstraint(inst_a, inst_b, joint_def, entities);
-                },
-                else => {},
-            }
-        }
-    }
+    joint.solveJointsForTick(
+        instances,
+        ragdoll.joints[0..ragdoll.joint_count],
+        entities,
+    );
+    syncMotorFeedbackFromInstances(ragdoll, instances);
 }
 
 /// Get ragdoll center of mass

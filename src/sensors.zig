@@ -4,6 +4,7 @@
 //! Handles: Radar, LiDAR, camera, ultrasonic, sensor fusion, false positives
 
 const std = @import("std");
+const prediction = @import("prediction.zig");
 
 pub const SensorType = enum(u8) {
     camera = 0,
@@ -49,13 +50,15 @@ pub const SensorFusionState = struct {
 pub const MAX_SENSORS: usize = 8;
 pub const MAX_DETECTED_OBJECTS: usize = 32;
 
-var g_sensor_system: struct {
+pub const SensorSystem = struct {
     sensors: [MAX_SENSORS]SensorState,
     sensor_count: u8,
     fusion: SensorFusionState,
     degradation_factor: f32,
     interference_level: f32,
-} = undefined;
+};
+
+var g_sensor_system: SensorSystem = undefined;
 
 pub fn init() void {
     g_sensor_system.sensor_count = 0;
@@ -206,11 +209,44 @@ pub fn calculateConfidence(distance: f32, sensor: *const SensorState, weather_vi
 }
 
 pub fn predictObjectPosition(obj: *const DetectedObject, time_delta: f32) struct { x: f32, y: f32, z: f32 } {
+    const predicted = prediction.predictLinearState(.{
+        .pos_x = obj.pos_x,
+        .pos_y = obj.pos_y,
+        .pos_z = obj.pos_z,
+        .vel_x = obj.vel_x,
+        .vel_y = obj.vel_y,
+        .vel_z = obj.vel_z,
+    }, time_delta);
     return .{
-        .x = obj.pos_x + obj.vel_x * time_delta,
-        .y = obj.pos_y + obj.vel_y * time_delta,
-        .z = obj.pos_z + obj.vel_z * time_delta,
+        .x = predicted.pos_x,
+        .y = predicted.pos_y,
+        .z = predicted.pos_z,
     };
+}
+
+pub fn predictObjectPositionFromComponents(pos_x: f32, pos_y: f32, pos_z: f32, vel_x: f32, vel_y: f32, vel_z: f32, time_delta: f32) struct { x: f32, y: f32, z: f32 } {
+    const predicted = prediction.predictLinearState(.{
+        .pos_x = pos_x,
+        .pos_y = pos_y,
+        .pos_z = pos_z,
+        .vel_x = vel_x,
+        .vel_y = vel_y,
+        .vel_z = vel_z,
+    }, time_delta);
+    return .{
+        .x = predicted.pos_x,
+        .y = predicted.pos_y,
+        .z = predicted.pos_z,
+    };
+}
+
+pub fn predictObjectPose(obj: *const DetectedObject, time_delta: f32) prediction.PlanarPoseForecast {
+    return prediction.predictPlanarPose(.{
+        .pos_x = obj.pos_x,
+        .pos_y = obj.pos_y,
+        .pos_z = obj.pos_z,
+        .yaw = prediction.resolvePlanarHeading(obj.vel_x, obj.vel_z, 0.0),
+    }, obj.vel_x, obj.vel_y, obj.vel_z, 0.0, time_delta);
 }
 
 pub fn getDetectedObjects() []DetectedObject {
@@ -231,4 +267,27 @@ pub fn resetSensors() void {
     g_sensor_system.fusion.object_count = 0;
     g_sensor_system.degradation_factor = 1.0;
     g_sensor_system.interference_level = 0;
+}
+
+pub fn getSystem() *SensorSystem {
+    return &g_sensor_system;
+}
+
+test "predictObjectPose advances detected object and preserves heading from velocity" {
+    const pose = predictObjectPose(&.{
+        .object_id = 1,
+        .object_type = 0,
+        .pos_x = 10,
+        .pos_y = 2,
+        .pos_z = 4,
+        .vel_x = 3,
+        .vel_y = 0,
+        .vel_z = 4,
+        .confidence = 1.0,
+        .age = 0,
+        .sensor_source = .radar,
+    }, 2.0);
+    try std.testing.expectApproxEqAbs(@as(f32, 16.0), pose.pos_x, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 12.0), pose.pos_z, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, std.math.atan2(@as(f32, 3.0), @as(f32, 4.0))), pose.yaw, 0.0001);
 }

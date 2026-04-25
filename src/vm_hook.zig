@@ -23,10 +23,12 @@ const braking = @import("braking.zig");
 const terrain = @import("terrain.zig");
 const material_pairing = @import("material_pairing.zig");
 const collision = @import("collision.zig");
+const query = @import("query.zig");
 const disasters = @import("disasters.zig");
 const sensors = @import("sensors.zig");
 const rewind = @import("rewind.zig");
 const ai_traffic = @import("ai_traffic.zig");
+const prediction = @import("prediction.zig");
 
 pub const HookResultCode = enum(c_int) {
     PASS = 0,
@@ -57,6 +59,14 @@ pub const TraceEntry = extern struct {
     detail: [64]u8,
 };
 
+fn buildHookQueryWorldView(s: *KernelState) query.QueryWorldView {
+    return .{
+        .s1024 = &s.s1024,
+        .instances = s.s1024.instances[0..s.s1024.instance_count],
+        .entities = s.entities[0..],
+    };
+}
+
 var g_state: ?*KernelState = null;
 var g_gpa: std.heap.GeneralPurposeAllocator(.{}) = undefined;
 
@@ -85,6 +95,8 @@ pub export fn init_kernel() c_int {
     state.affect_sys = mind.AffectSystem.init();
     state.tri_bus = mind.TriWorldBus.init();
     state.trace_count = 0;
+    rewind.init();
+    joint.initGlobal();
     _ = state.s1024.getPage(0) catch return -1;
     
     tick_engine.init(&state.engine, &state.s1024, &state.entities);
@@ -149,6 +161,8 @@ pub export fn reset_context() c_int {
     s.engine.tick_id = 0;
     s.engine.stable = false;
     s.tri_bus.inner.clear();
+    rewind.init();
+    joint.initGlobal();
     return 0;
 }
 pub export fn shutdown_kernel() c_int {
@@ -317,34 +331,7 @@ pub export fn entity_is_floating(inst_idx: u8) c_int {
 // Joint System Functions
 // ============================================================================
 
-const JointState = struct {
-    joints: [64]joint.Joint,
-    joint_count: u8 = 0,
-
-    fn init() JointState {
-        var js: JointState = undefined;
-        js.joint_count = 0;
-        for (0..64) |i| {
-            js.joints[i] = .{
-                .joint_type = .fixed,
-                .entity_a = 0,
-                .entity_b = 0,
-                .anchor_a_x = 0,
-                .anchor_a_y = 0,
-                .anchor_a_z = 0,
-                .anchor_b_x = 0,
-                .anchor_b_y = 0,
-                .anchor_b_z = 0,
-            };
-        }
-        return js;
-    }
-};
-
-var g_joints: JointState = JointState.init();
-
 pub export fn add_joint_fixed(entity_a: u8, entity_b: u8, anchor_x: i32, anchor_y: i32, anchor_z: i32) c_int {
-    if (g_joints.joint_count >= 64) return -1;
     const j = joint.Joint{
         .joint_type = .fixed,
         .entity_a = entity_a,
@@ -352,13 +339,10 @@ pub export fn add_joint_fixed(entity_a: u8, entity_b: u8, anchor_x: i32, anchor_
         .anchor_a_x = anchor_x, .anchor_a_y = anchor_y, .anchor_a_z = anchor_z,
         .anchor_b_x = anchor_x, .anchor_b_y = anchor_y, .anchor_b_z = anchor_z,
     };
-    g_joints.joints[g_joints.joint_count] = j;
-    g_joints.joint_count += 1;
-    return @as(c_int, g_joints.joint_count - 1);
+    return if (joint.addGlobalJoint(j)) |idx| idx else -1;
 }
 
 pub export fn add_joint_hinge(entity_a: u8, entity_b: u8, anchor_x: i32, anchor_y: i32, anchor_z: i32, axis_x: i32, axis_y: i32, axis_z: i32) c_int {
-    if (g_joints.joint_count >= 64) return -1;
     const j = joint.Joint{
         .joint_type = .hinge,
         .entity_a = entity_a,
@@ -367,13 +351,10 @@ pub export fn add_joint_hinge(entity_a: u8, entity_b: u8, anchor_x: i32, anchor_
         .anchor_b_x = anchor_x, .anchor_b_y = anchor_y, .anchor_b_z = anchor_z,
         .axis_x = axis_x, .axis_y = axis_y, .axis_z = axis_z,
     };
-    g_joints.joints[g_joints.joint_count] = j;
-    g_joints.joint_count += 1;
-    return @as(c_int, g_joints.joint_count - 1);
+    return if (joint.addGlobalJoint(j)) |idx| idx else -1;
 }
 
 pub export fn add_joint_spring(entity_a: u8, entity_b: u8, anchor_x: i32, anchor_y: i32, anchor_z: i32, stiffness: f32, damping: f32) c_int {
-    if (g_joints.joint_count >= 64) return -1;
     const j = joint.Joint{
         .joint_type = .spring,
         .entity_a = entity_a,
@@ -383,13 +364,10 @@ pub export fn add_joint_spring(entity_a: u8, entity_b: u8, anchor_x: i32, anchor
         .stiffness = stiffness,
         .damping = damping,
     };
-    g_joints.joints[g_joints.joint_count] = j;
-    g_joints.joint_count += 1;
-    return @as(c_int, g_joints.joint_count - 1);
+    return if (joint.addGlobalJoint(j)) |idx| idx else -1;
 }
 
 pub export fn add_joint_ball_socket(entity_a: u8, entity_b: u8, anchor_x: i32, anchor_y: i32, anchor_z: i32) c_int {
-    if (g_joints.joint_count >= 64) return -1;
     const j = joint.Joint{
         .joint_type = .ball_socket,
         .entity_a = entity_a,
@@ -397,23 +375,22 @@ pub export fn add_joint_ball_socket(entity_a: u8, entity_b: u8, anchor_x: i32, a
         .anchor_a_x = anchor_x, .anchor_a_y = anchor_y, .anchor_a_z = anchor_z,
         .anchor_b_x = anchor_x, .anchor_b_y = anchor_y, .anchor_b_z = anchor_z,
     };
-    g_joints.joints[g_joints.joint_count] = j;
-    g_joints.joint_count += 1;
-    return @as(c_int, g_joints.joint_count - 1);
+    return if (joint.addGlobalJoint(j)) |idx| idx else -1;
 }
 
 pub export fn solve_joints() void {
     if (g_state) |s| {
-        tick_engine.solveJointsForEngine(&s.engine, g_joints.joints[0..g_joints.joint_count]);
+        const system = joint.getSystem();
+        tick_engine.solveJointsForEngine(&s.engine, system.joints[0..system.joint_count]);
     }
 }
 
 pub export fn clear_joints() void {
-    g_joints.joint_count = 0;
+    joint.clearGlobalJoints();
 }
 
 pub export fn get_joint_count() u8 {
-    return g_joints.joint_count;
+    return joint.getSystem().joint_count;
 }
 
 // ============================================================================
@@ -439,12 +416,7 @@ pub export fn raycast_single(origin_x: f32, origin_y: f32, origin_z: f32, dir_x:
 
 pub export fn sphere_cast(center_x: f32, center_y: f32, center_z: f32, radius: f32, dir_x: f32, dir_y: f32, dir_z: f32, max_dist: f32, hit_out: [*]f32) c_int {
     const s = g_state orelse return -1;
-    // Simplified: use center-point raycast (ignores radius for now)
-    _ = radius;
-    const ray = raycast.Ray.init(center_x, center_y, center_z, dir_x, dir_y, dir_z);
-    var mod_ray = ray;
-    mod_ray.max_t = max_dist;
-    const hit = raycast.voxelRaycast(mod_ray, &s.s1024, &s.entities, 0xFFFFFFFF);
+    const hit = raycast.sphereCast(center_x, center_y, center_z, radius, dir_x, dir_y, dir_z, max_dist, &s.s1024, &s.entities);
     hit_out[0] = if (hit.hit) hit.t else -1.0;
     hit_out[1] = hit.normal_x;
     hit_out[2] = hit.normal_y;
@@ -455,20 +427,159 @@ pub export fn sphere_cast(center_x: f32, center_y: f32, center_z: f32, radius: f
 
 pub export fn box_cast(min_x: f32, min_y: f32, min_z: f32, max_x: f32, max_y: f32, max_z: f32, dir_x: f32, dir_y: f32, dir_z: f32, max_dist: f32, hit_out: [*]f32) c_int {
     const s = g_state orelse return -1;
-    // Simplified: cast from center point
-    const cx = (min_x + max_x) * 0.5;
-    const cy = (min_y + max_y) * 0.5;
-    const cz = (min_z + max_z) * 0.5;
-    const ray = raycast.Ray.init(cx, cy, cz, dir_x, dir_y, dir_z);
-    var mod_ray = ray;
-    mod_ray.max_t = max_dist;
-    const hit = raycast.voxelRaycast(mod_ray, &s.s1024, &s.entities, 0xFFFFFFFF);
+    const hit = raycast.boxCast(min_x, min_y, min_z, max_x, max_y, max_z, dir_x, dir_y, dir_z, max_dist, &s.s1024, &s.entities);
     hit_out[0] = if (hit.hit) hit.t else -1.0;
     hit_out[1] = hit.normal_x;
     hit_out[2] = hit.normal_y;
     hit_out[3] = hit.normal_z;
     hit_out[4] = @as(f32, @floatFromInt(hit.entity_id));
     return if (hit.hit) 1 else 0;
+}
+
+pub export fn raycast_single_with_layer_mask(origin_x: f32, origin_y: f32, origin_z: f32, dir_x: f32, dir_y: f32, dir_z: f32, max_dist: f32, layer_mask: u32, hit_out: [*]f32) c_int {
+    const s = g_state orelse return -1;
+    const world = buildHookQueryWorldView(s);
+    const hit = query.raycastSingle(&world, .{
+        .origin_x = origin_x,
+        .origin_y = origin_y,
+        .origin_z = origin_z,
+        .dir_x = dir_x,
+        .dir_y = dir_y,
+        .dir_z = dir_z,
+        .max_distance = max_dist,
+    }, .{
+        .layer_mask = layer_mask,
+    });
+    hit_out[0] = if (hit.hit) hit.distance else -1.0;
+    hit_out[1] = hit.normal_x;
+    hit_out[2] = hit.normal_y;
+    hit_out[3] = hit.normal_z;
+    hit_out[4] = @as(f32, @floatFromInt(hit.entity_id));
+    hit_out[5] = hit.position_x;
+    hit_out[6] = hit.position_y;
+    hit_out[7] = hit.position_z;
+    return if (hit.hit) 1 else 0;
+}
+
+pub export fn sphere_cast_with_layer_mask(center_x: f32, center_y: f32, center_z: f32, radius: f32, dir_x: f32, dir_y: f32, dir_z: f32, max_dist: f32, layer_mask: u32, hit_out: [*]f32) c_int {
+    const s = g_state orelse return -1;
+    const world = buildHookQueryWorldView(s);
+    const hit = query.sphereCast(&world, center_x, center_y, center_z, radius, dir_x, dir_y, dir_z, max_dist, .{
+        .layer_mask = layer_mask,
+    });
+    hit_out[0] = if (hit.hit) hit.distance else -1.0;
+    hit_out[1] = hit.normal_x;
+    hit_out[2] = hit.normal_y;
+    hit_out[3] = hit.normal_z;
+    hit_out[4] = @as(f32, @floatFromInt(hit.entity_id));
+    return if (hit.hit) 1 else 0;
+}
+
+pub export fn box_cast_with_layer_mask(min_x: f32, min_y: f32, min_z: f32, max_x: f32, max_y: f32, max_z: f32, dir_x: f32, dir_y: f32, dir_z: f32, max_dist: f32, layer_mask: u32, hit_out: [*]f32) c_int {
+    const s = g_state orelse return -1;
+    const world = buildHookQueryWorldView(s);
+    const hit = query.boxCast(&world, min_x, min_y, min_z, max_x, max_y, max_z, dir_x, dir_y, dir_z, max_dist, .{
+        .layer_mask = layer_mask,
+    });
+    hit_out[0] = if (hit.hit) hit.distance else -1.0;
+    hit_out[1] = hit.normal_x;
+    hit_out[2] = hit.normal_y;
+    hit_out[3] = hit.normal_z;
+    hit_out[4] = @as(f32, @floatFromInt(hit.entity_id));
+    return if (hit.hit) 1 else 0;
+}
+
+pub export fn query_overlap_aabb_with_layer_mask(min_x: f32, min_y: f32, min_z: f32, max_x: f32, max_y: f32, max_z: f32, layer_mask: u32, result_out: [*]f32, result_len: u32) c_int {
+    const s = g_state orelse return -1;
+    if (result_len < 4) return -1;
+
+    const world = buildHookQueryWorldView(s);
+    const result = query.overlapAABB(&world, min_x, min_y, min_z, max_x, max_y, max_z, .{
+        .layer_mask = layer_mask,
+    });
+    result_out[0] = if (result.hit) 1.0 else 0.0;
+    result_out[1] = @as(f32, @floatFromInt(result.count));
+    result_out[2] = @as(f32, @floatFromInt(result.first_instance_idx));
+    result_out[3] = if (result.environment_overlap) 1.0 else 0.0;
+    return if (result.hit) 1 else 0;
+}
+
+pub export fn query_overlap_capsule_with_layer_mask(center_x: f32, center_y: f32, center_z: f32, radius: f32, half_height: f32, layer_mask: u32, result_out: [*]f32, result_len: u32) c_int {
+    const s = g_state orelse return -1;
+    if (result_len < 4) return -1;
+
+    const world = buildHookQueryWorldView(s);
+    const result = query.overlapCapsule(&world, center_x, center_y, center_z, radius, half_height, .{
+        .layer_mask = layer_mask,
+    });
+    result_out[0] = if (result.hit) 1.0 else 0.0;
+    result_out[1] = @as(f32, @floatFromInt(result.count));
+    result_out[2] = @as(f32, @floatFromInt(result.first_instance_idx));
+    result_out[3] = if (result.environment_overlap) 1.0 else 0.0;
+    return if (result.hit) 1 else 0;
+}
+
+pub export fn query_compute_penetration_aabb_with_layer_mask(
+    min_x: f32,
+    min_y: f32,
+    min_z: f32,
+    max_x: f32,
+    max_y: f32,
+    max_z: f32,
+    layer_mask: u32,
+    result_out: [*]f32,
+    result_len: u32,
+) c_int {
+    const s = g_state orelse return -1;
+    if (result_len < 18) return -1;
+
+    const world = buildHookQueryWorldView(s);
+    const result = query.computePenetrationAABB(&world, min_x, min_y, min_z, max_x, max_y, max_z, .{
+        .layer_mask = layer_mask,
+    });
+
+    result_out[0] = result.depth;
+    result_out[1] = result.dir_x;
+    result_out[2] = result.dir_y;
+    result_out[3] = result.dir_z;
+    result_out[4] = @as(f32, @floatFromInt(result.manifold_point_count));
+    result_out[5] = @as(f32, @floatFromInt(result.instance_idx));
+
+    var point_idx: usize = 0;
+    while (point_idx < 4) : (point_idx += 1) {
+        const base = 6 + point_idx * 3;
+        result_out[base] = result.manifold_points[point_idx].x;
+        result_out[base + 1] = result.manifold_points[point_idx].y;
+        result_out[base + 2] = result.manifold_points[point_idx].z;
+    }
+
+    return if (result.overlapping) 1 else 0;
+}
+
+pub export fn query_compute_penetration_capsule_with_layer_mask(
+    center_x: f32,
+    center_y: f32,
+    center_z: f32,
+    radius: f32,
+    half_height: f32,
+    layer_mask: u32,
+    result_out: [*]f32,
+    result_len: u32,
+) c_int {
+    const s = g_state orelse return -1;
+    if (result_len < 5) return -1;
+
+    const world = buildHookQueryWorldView(s);
+    const result = query.computePenetrationCapsule(&world, center_x, center_y, center_z, radius, half_height, .{
+        .layer_mask = layer_mask,
+    });
+
+    result_out[0] = result.depth;
+    result_out[1] = result.dir_x;
+    result_out[2] = result.dir_y;
+    result_out[3] = result.dir_z;
+    result_out[4] = @as(f32, @floatFromInt(result.instance_idx));
+    return if (result.overlapping) 1 else 0;
 }
 
 // ============================================================================
@@ -499,6 +610,9 @@ pub const KCCConfigFFI = extern struct {
     stand_height: f32,
     crouch_height: f32,
     radius: f32,
+    max_slope_angle: f32,
+    step_offset: f32,
+    prevent_fall_off_ledges: bool,
 };
 
 pub export fn kcc_init() void {
@@ -516,6 +630,9 @@ pub export fn kcc_create_character(x: f32, y: f32, z: f32, config: KCCConfigFFI)
         .stand_height = @intFromFloat(config.stand_height),
         .crouch_height = @intFromFloat(config.crouch_height),
         .radius = @intFromFloat(config.radius),
+        .max_slope_angle = config.max_slope_angle,
+        .step_offset = config.step_offset,
+        .prevent_fall_off_ledges = config.prevent_fall_off_ledges,
     });
     return if (char != null) 1 else 0;
 }
@@ -524,6 +641,13 @@ pub export fn kcc_get_height(char_idx: u8) f32 {
     const sys = kcc.getSystem();
     if (char_idx >= sys.count) return 14.0;
     return @as(f32, @floatFromInt(kcc.getHeight(&sys.characters[char_idx])));
+}
+
+pub export fn kcc_try_set_crouch(char_idx: u8, active: bool) c_int {
+    const s = g_state orelse return -1;
+    const sys = kcc.getSystem();
+    if (char_idx >= sys.count) return -1;
+    return if (kcc.trySetCrouch(&sys.characters[char_idx], active, &s.s1024, s.entities[0..])) 1 else 0;
 }
 
 pub export fn kcc_slide_along_wall(vel_x: f32, vel_z: f32, normal_x: f32, normal_z: f32, result_out: [*]f32) void {
@@ -681,6 +805,31 @@ pub export fn vehicle_check_flipped(vehicle_idx: u8) c_int {
     return if (vehicle.checkFlipped(&sys.vehicles[vehicle_idx])) 1 else 0;
 }
 
+pub export fn vehicle_predictive_conflict_response(
+    vehicle_a_idx: u8,
+    vehicle_b_idx: u8,
+    dt: f32,
+    result_out: [*]f32,
+) c_int {
+    const sys = vehicle.getSystem();
+    if (vehicle_a_idx >= sys.count or vehicle_b_idx >= sys.count) return -1;
+
+    const a = &sys.vehicles[vehicle_a_idx];
+    const b = &sys.vehicles[vehicle_b_idx];
+    const horizon = @max(0.2, dt * 4.0);
+    const step = @max(0.05, dt);
+    const conflict = vehicle.computeVehicleOccupancyConflict(a, b, horizon, step);
+    const side_sign: f32 = if (vehicle_a_idx < vehicle_b_idx) 1.0 else -1.0;
+    const recommendation = vehicle.buildVehicleAvoidanceRecommendationFromConflict(conflict, horizon, side_sign);
+
+    result_out[0] = if (conflict.valid) 1.0 else 0.0;
+    result_out[1] = if (conflict.valid) conflict.start_time else -1.0;
+    result_out[2] = if (conflict.valid) conflict.end_time else -1.0;
+    result_out[3] = recommendation.brake_amount;
+    result_out[4] = vehicle.applyVehicleSteeringBias(a, b, recommendation.steering_bias);
+    return if (recommendation.should_brake) 1 else 0;
+}
+
 // ============================================================================
 // Network Functions
 // ============================================================================
@@ -714,6 +863,107 @@ pub export fn network_calculate_crc(pos_x: f32, pos_y: f32, pos_z: f32, vel_x: f
     state.vel_z = vel_z;
     state.yaw = @intFromFloat(yaw);
     return network.calculateCRC(&state);
+}
+
+pub export fn prediction_compute_ttc(a_pos_x: f32, a_pos_y: f32, a_pos_z: f32, a_vel_x: f32, a_vel_y: f32, a_vel_z: f32, b_pos_x: f32, b_pos_y: f32, b_pos_z: f32, b_vel_x: f32, b_vel_y: f32, b_vel_z: f32, collision_radius: f32, horizon: f32, result_out: [*]f32) c_int {
+    const result = prediction.computeTTC(.{
+        .pos_x = a_pos_x, .pos_y = a_pos_y, .pos_z = a_pos_z,
+        .vel_x = a_vel_x, .vel_y = a_vel_y, .vel_z = a_vel_z,
+    }, .{
+        .pos_x = b_pos_x, .pos_y = b_pos_y, .pos_z = b_pos_z,
+        .vel_x = b_vel_x, .vel_y = b_vel_y, .vel_z = b_vel_z,
+    }, collision_radius, horizon);
+    result_out[0] = result.time;
+    result_out[1] = result.distance_at_closest;
+    return if (result.valid) 1 else 0;
+}
+
+pub export fn prediction_assess_collision_risk(
+    a_pos_x: f32,
+    a_pos_y: f32,
+    a_pos_z: f32,
+    a_vel_x: f32,
+    a_vel_y: f32,
+    a_vel_z: f32,
+    b_pos_x: f32,
+    b_pos_y: f32,
+    b_pos_z: f32,
+    b_vel_x: f32,
+    b_vel_y: f32,
+    b_vel_z: f32,
+    collision_radius: f32,
+    horizon: f32,
+    step: f32,
+    result_out: [*]f32,
+) c_int {
+    const result = prediction.assessCollisionRisk(.{
+        .pos_x = a_pos_x, .pos_y = a_pos_y, .pos_z = a_pos_z,
+        .vel_x = a_vel_x, .vel_y = a_vel_y, .vel_z = a_vel_z,
+    }, .{
+        .pos_x = b_pos_x, .pos_y = b_pos_y, .pos_z = b_pos_z,
+        .vel_x = b_vel_x, .vel_y = b_vel_y, .vel_z = b_vel_z,
+    }, collision_radius, horizon, step);
+
+    result_out[0] = @floatFromInt(@intFromEnum(result.level));
+    result_out[1] = result.score;
+    result_out[2] = result.ttc.time;
+    result_out[3] = result.ttc.distance_at_closest;
+    result_out[4] = if (result.window.valid) result.window.start_time else -1.0;
+    result_out[5] = if (result.window.valid) result.window.end_time else -1.0;
+    result_out[6] = result.window.min_distance;
+    return if (result.level == .none) 0 else 1;
+}
+
+pub export fn prediction_compute_occupancy_conflict(
+    a_pos_x: f32,
+    a_pos_y: f32,
+    a_pos_z: f32,
+    a_vel_x: f32,
+    a_vel_y: f32,
+    a_vel_z: f32,
+    a_yaw: f32,
+    a_yaw_rate: f32,
+    a_half_x: f32,
+    a_half_y: f32,
+    a_half_z: f32,
+    b_pos_x: f32,
+    b_pos_y: f32,
+    b_pos_z: f32,
+    b_vel_x: f32,
+    b_vel_y: f32,
+    b_vel_z: f32,
+    b_yaw: f32,
+    b_yaw_rate: f32,
+    b_half_x: f32,
+    b_half_y: f32,
+    b_half_z: f32,
+    horizon: f32,
+    step: f32,
+    result_out: [*]f32,
+) c_int {
+    const result = prediction.computeOccupancyConflictWindow(
+        .{ .pos_x = a_pos_x, .pos_y = a_pos_y, .pos_z = a_pos_z, .yaw = a_yaw },
+        a_vel_x,
+        a_vel_y,
+        a_vel_z,
+        a_yaw_rate,
+        a_half_x,
+        a_half_y,
+        a_half_z,
+        .{ .pos_x = b_pos_x, .pos_y = b_pos_y, .pos_z = b_pos_z, .yaw = b_yaw },
+        b_vel_x,
+        b_vel_y,
+        b_vel_z,
+        b_yaw_rate,
+        b_half_x,
+        b_half_y,
+        b_half_z,
+        horizon,
+        step,
+    );
+    result_out[0] = if (result.valid) result.start_time else -1.0;
+    result_out[1] = if (result.valid) result.end_time else -1.0;
+    return if (result.valid) 1 else 0;
 }
 
 // ============================================================================
@@ -1141,6 +1391,69 @@ pub export fn sensors_calculate_confidence(distance: f32, sensor_type: u8, weath
     return 0;
 }
 
+pub export fn sensors_predict_object_position(pos_x: f32, pos_y: f32, pos_z: f32, vel_x: f32, vel_y: f32, vel_z: f32, time_delta: f32, result_out: [*]f32) void {
+    const predicted = sensors.predictObjectPositionFromComponents(pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, time_delta);
+    result_out[0] = predicted.x;
+    result_out[1] = predicted.y;
+    result_out[2] = predicted.z;
+}
+
+pub export fn query_compute_penetration_aabb_with_manifold(
+    min_x: f32,
+    min_y: f32,
+    min_z: f32,
+    max_x: f32,
+    max_y: f32,
+    max_z: f32,
+    result_out: [*]f32,
+    result_len: u32,
+) c_int {
+    const s = g_state orelse return -1;
+    if (result_len < 17) return -1;
+
+    const world = buildHookQueryWorldView(s);
+    const result = query.computePenetrationAABB(&world, min_x, min_y, min_z, max_x, max_y, max_z, .{});
+
+    result_out[0] = result.depth;
+    result_out[1] = result.dir_x;
+    result_out[2] = result.dir_y;
+    result_out[3] = result.dir_z;
+    result_out[4] = @as(f32, @floatFromInt(result.manifold_point_count));
+
+    var point_idx: usize = 0;
+    while (point_idx < 4) : (point_idx += 1) {
+        const base = 5 + point_idx * 3;
+        result_out[base] = result.manifold_points[point_idx].x;
+        result_out[base + 1] = result.manifold_points[point_idx].y;
+        result_out[base + 2] = result.manifold_points[point_idx].z;
+    }
+
+    return if (result.overlapping) 1 else 0;
+}
+
+pub export fn query_compute_penetration_capsule(
+    center_x: f32,
+    center_y: f32,
+    center_z: f32,
+    radius: f32,
+    half_height: f32,
+    result_out: [*]f32,
+    result_len: u32,
+) c_int {
+    const s = g_state orelse return -1;
+    if (result_len < 5) return -1;
+
+    const world = buildHookQueryWorldView(s);
+    const result = query.computePenetrationCapsule(&world, center_x, center_y, center_z, radius, half_height, .{});
+
+    result_out[0] = result.depth;
+    result_out[1] = result.dir_x;
+    result_out[2] = result.dir_y;
+    result_out[3] = result.dir_z;
+    result_out[4] = @as(f32, @floatFromInt(result.instance_idx));
+    return if (result.overlapping) 1 else 0;
+}
+
 // ============================================================================
 // Rewind Functions
 // ============================================================================
@@ -1179,6 +1492,10 @@ pub export fn rewind_get_buffer_count() u32 {
     return rewind.getRewindBufferUsage().count;
 }
 
+pub export fn rewind_get_world_snapshot_count() u32 {
+    return rewind.getWorldSnapshotBufferUsage().count;
+}
+
 pub export fn rewind_calculate_state_hash(tick: u32, pos_x: f32, pos_y: f32, pos_z: f32) u64 {
     const state: rewind.RewindState = .{
         .tick = tick,
@@ -1199,6 +1516,131 @@ pub export fn rewind_calculate_state_hash(tick: u32, pos_x: f32, pos_y: f32, pos
         .input_brake = false,
     };
     return rewind.calculateStateHash(&state);
+}
+
+pub export fn rewind_get_world_snapshot_hash(tick: u32) u64 {
+    const snapshot = rewind.getWorldSnapshotAtTick(tick) orelse return 0;
+    return snapshot.world_hash;
+}
+
+pub export fn rewind_predict_instance_position(tick: u32, instance_idx: u8, time_delta: f32, result_out: [*]f32) c_int {
+    const snapshot = rewind.getWorldSnapshotAtTick(tick) orelse return -1;
+    const predicted = prediction.predictSnapshotInstance(snapshot, instance_idx, time_delta) orelse return -1;
+    result_out[0] = predicted.pos_x;
+    result_out[1] = predicted.pos_y;
+    result_out[2] = predicted.pos_z;
+    return 0;
+}
+
+pub export fn rewind_predict_instance_pose(tick: u32, instance_idx: u8, time_delta: f32, result_out: [*]f32) c_int {
+    const snapshot = rewind.getWorldSnapshotAtTick(tick) orelse return -1;
+    const predicted = prediction.predictSnapshotInstancePose(snapshot, instance_idx, time_delta) orelse return -1;
+    result_out[0] = predicted.pos_x;
+    result_out[1] = predicted.pos_y;
+    result_out[2] = predicted.pos_z;
+    result_out[3] = predicted.yaw_steps;
+    return 0;
+}
+
+pub export fn rewind_compute_snapshot_ttc(tick: u32, instance_a_idx: u8, instance_b_idx: u8, collision_radius: f32, horizon: f32, result_out: [*]f32) c_int {
+    const snapshot = rewind.getWorldSnapshotAtTick(tick) orelse return -1;
+    const result = prediction.computeSnapshotTTC(snapshot, instance_a_idx, instance_b_idx, collision_radius, horizon);
+    result_out[0] = result.time;
+    result_out[1] = result.distance_at_closest;
+    return if (result.valid) 1 else 0;
+}
+
+pub export fn rewind_forecast_snapshot_positions(tick: u32, time_delta: f32, result_out: [*]f32, max_instances: u32) u32 {
+    const snapshot = rewind.getWorldSnapshotAtTick(tick) orelse return 0;
+    var entries: [scene32.MAX_INSTANCES]prediction.SnapshotForecastEntry = undefined;
+    const count = prediction.predictSnapshotInstances(snapshot, time_delta, entries[0..]);
+    const limited_count: u32 = @min(count, max_instances);
+
+    var index: u32 = 0;
+    while (index < limited_count) : (index += 1) {
+        result_out[index * 4] = @as(f32, @floatFromInt(entries[index].entity_id));
+        result_out[index * 4 + 1] = entries[index].state.pos_x;
+        result_out[index * 4 + 2] = entries[index].state.pos_y;
+        result_out[index * 4 + 3] = entries[index].state.pos_z;
+    }
+    return limited_count;
+}
+
+pub export fn rewind_simulate_snapshot_instance_position(tick: u32, instance_idx: u8, ticks_forward: u32, result_out: [*]f32) c_int {
+    const s = g_state orelse return -1;
+    const snapshot = rewind.getWorldSnapshotAtTick(tick) orelse return -1;
+    const advanced = rewind.simulateWorldSnapshotForward(snapshot, ticks_forward, s.s1024.allocator, &s.entities) catch return -1;
+    const predicted = prediction.snapshotInstanceToLinearState(&advanced, instance_idx) orelse return -1;
+    result_out[0] = predicted.pos_x;
+    result_out[1] = predicted.pos_y;
+    result_out[2] = predicted.pos_z;
+    return 0;
+}
+
+pub export fn rewind_simulate_snapshot_hash(tick: u32, ticks_forward: u32) u64 {
+    const s = g_state orelse return 0;
+    const snapshot = rewind.getWorldSnapshotAtTick(tick) orelse return 0;
+    const advanced = rewind.simulateWorldSnapshotForward(snapshot, ticks_forward, s.s1024.allocator, &s.entities) catch return 0;
+    return advanced.world_hash;
+}
+
+pub export fn rewind_simulate_snapshot_positions(tick: u32, ticks_forward: u32, result_out: [*]f32, max_instances: u32) u32 {
+    const s = g_state orelse return 0;
+    const snapshot = rewind.getWorldSnapshotAtTick(tick) orelse return 0;
+    var advanced: rewind.WorldSnapshot = undefined;
+    const count = rewind.forecastSnapshotInstancesSimulated(snapshot, ticks_forward, s.s1024.allocator, &s.entities, &advanced) catch return 0;
+    const limited_count: u32 = @min(count, max_instances);
+
+    var index: u32 = 0;
+    while (index < limited_count) : (index += 1) {
+        const instance = advanced.instances[index];
+        result_out[index * 4] = @as(f32, @floatFromInt(instance.entity_id));
+        result_out[index * 4 + 1] = @as(f32, @floatFromInt(instance.pos_x));
+        result_out[index * 4 + 2] = @as(f32, @floatFromInt(instance.pos_y));
+        result_out[index * 4 + 3] = @as(f32, @floatFromInt(instance.pos_z));
+    }
+    return limited_count;
+}
+
+pub export fn rewind_diff_simulated_snapshot(tick: u32, ticks_forward: u32, result_out: [*]u32, result_len: u32) u32 {
+    const s = g_state orelse return 0;
+    const snapshot = rewind.getWorldSnapshotAtTick(tick) orelse return 0;
+    const advanced = rewind.simulateWorldSnapshotForward(snapshot, ticks_forward, s.s1024.allocator, &s.entities) catch return 0;
+    const diff = rewind.diffWorldSnapshots(snapshot, &advanced);
+    if (result_len < 31) return 0;
+
+    result_out[0] = diff.tick_from;
+    result_out[1] = diff.tick_to;
+    result_out[2] = if (diff.hash_changed) 1 else 0;
+    result_out[3] = if (diff.instance_count_changed) 1 else 0;
+    result_out[4] = diff.instances_moved;
+    result_out[5] = if (diff.kcc_count_changed) 1 else 0;
+    result_out[6] = diff.kcc_changed;
+    result_out[7] = if (diff.vehicle_count_changed) 1 else 0;
+    result_out[8] = diff.vehicles_changed;
+    result_out[9] = if (diff.joint_count_changed) 1 else 0;
+    result_out[10] = diff.joints_changed;
+    result_out[11] = if (diff.ragdoll_count_changed) 1 else 0;
+    result_out[12] = diff.ragdolls_changed;
+    result_out[13] = diff.projectiles_changed;
+    result_out[14] = if (diff.destroyable_count_changed) 1 else 0;
+    result_out[15] = diff.destroyables_changed;
+    result_out[16] = if (diff.terrain_patch_count_changed) 1 else 0;
+    result_out[17] = if (diff.terrain_changed) 1 else 0;
+    result_out[18] = if (diff.disaster_count_changed) 1 else 0;
+    result_out[19] = if (diff.disasters_changed) 1 else 0;
+    result_out[20] = if (diff.collision_changed) 1 else 0;
+    result_out[21] = if (diff.defense_changed) 1 else 0;
+    result_out[22] = if (diff.sensor_changed) 1 else 0;
+    result_out[23] = if (diff.network_changed) 1 else 0;
+    result_out[24] = if (diff.tire_changed) 1 else 0;
+    result_out[25] = if (diff.suspension_changed) 1 else 0;
+    result_out[26] = if (diff.drivetrain_changed) 1 else 0;
+    result_out[27] = if (diff.aero_changed) 1 else 0;
+    result_out[28] = if (diff.braking_changed) 1 else 0;
+    result_out[29] = if (diff.debris_changed) 1 else 0;
+    result_out[30] = if (diff.ai_traffic_changed) 1 else 0;
+    return 31;
 }
 
 // ============================================================================
@@ -1224,9 +1666,24 @@ pub export fn ai_traffic_get_vehicle_count() u8 {
     return ai_traffic.getVehicleCount();
 }
 
+pub export fn ai_traffic_get_light_count() u8 {
+    return ai_traffic.getTrafficLightCount();
+}
+
 pub export fn ai_traffic_trigger_emergency(vehicle_idx: u8) void {
     const vehicles = ai_traffic.getTrafficVehicles();
     if (vehicle_idx < vehicles.len) {
         ai_traffic.triggerEmergencyVehicle(@constCast(&vehicles[vehicle_idx]));
     }
+}
+
+pub export fn ai_traffic_estimate_safe_pass(vehicle_idx: u8, light_idx: u8, vehicle_length: f32, result_out: [*]f32) c_int {
+    const vehicles = ai_traffic.getTrafficVehicles();
+    if (vehicle_idx >= vehicles.len) return -1;
+    const light = ai_traffic.getTrafficLight(light_idx) orelse return -1;
+    const result = ai_traffic.estimateSafePassForVehicle(&vehicles[vehicle_idx], light, vehicle_length);
+    result_out[0] = result.time_to_line;
+    result_out[1] = result.time_to_clear;
+    result_out[2] = result.margin_to_change;
+    return if (result.can_pass) 1 else 0;
 }

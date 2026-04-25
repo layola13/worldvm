@@ -216,7 +216,7 @@ pub fn applyWeather(weather: WeatherCondition) void {
         g_terrain_system.weather.freezing = true;
     }
 
-    g_terrain_system.visibility = if (weather.fog_density > 0)
+    g_terrain_system.weather.visibility = if (weather.fog_density > 0)
         1000.0 * (1.0 - weather.fog_density)
     else
         1000.0;

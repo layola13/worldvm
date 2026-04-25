@@ -724,6 +724,7 @@ const disasters = @import("disasters.zig");
 const sensors = @import("sensors.zig");
 const rewind = @import("rewind.zig");
 const ai_traffic = @import("ai_traffic.zig");
+const prediction = @import("prediction.zig");
 
 test "Tire init and create" {
     tire.init();
@@ -1048,6 +1049,26 @@ test "Sensors occlusion" {
     try testing.expect(occlusion > 0);
 }
 
+test "Sensors prediction uses shared linear forecast" {
+    const obj = sensors.DetectedObject{
+        .object_id = 1,
+        .object_type = 0,
+        .pos_x = 1.0,
+        .pos_y = 2.0,
+        .pos_z = 3.0,
+        .vel_x = 4.0,
+        .vel_y = 0.0,
+        .vel_z = -1.0,
+        .confidence = 1.0,
+        .age = 0,
+        .sensor_source = .radar,
+    };
+    const predicted = sensors.predictObjectPosition(&obj, 2.0);
+    try testing.expectApproxEqAbs(@as(f32, 9.0), predicted.x, 0.0001);
+    try testing.expectApproxEqAbs(@as(f32, 2.0), predicted.y, 0.0001);
+    try testing.expectApproxEqAbs(@as(f32, 1.0), predicted.z, 0.0001);
+}
+
 // ============================================================================
 // Rewind Tests (Phase 19, 35) - Tests 181-190, 341-350
 // ============================================================================
@@ -1086,6 +1107,18 @@ test "Rewind state hash" {
     try testing.expect(hash != 0);
 }
 
+test "Prediction TTC head-on" {
+    const result = prediction.computeTTC(.{
+        .pos_x = 0, .pos_y = 0, .pos_z = 0,
+        .vel_x = 12, .vel_y = 0, .vel_z = 0,
+    }, .{
+        .pos_x = 60, .pos_y = 0, .pos_z = 0,
+        .vel_x = -8, .vel_y = 0, .vel_z = 0,
+    }, 1.0, 10.0);
+    try testing.expect(result.valid);
+    try testing.expect(result.time > 2.8 and result.time < 3.2);
+}
+
 // ============================================================================
 // AI Traffic Tests (Phase 34, 67, 68) - Tests 331-340, 661-670
 // ============================================================================
@@ -1115,6 +1148,22 @@ test "AI Traffic update" {
     ai_traffic.updateAI(0.016);
     const vehicles = ai_traffic.getTrafficVehicles();
     try testing.expect(vehicles.len > 0);
+}
+
+test "AI Traffic safe pass estimate blocks late yellow" {
+    ai_traffic.init();
+    const vehicle_ptr = ai_traffic.spawnAIVehicle(0, 0, 0, .normal);
+    const light_ptr = ai_traffic.addTrafficLight(0, 20, 60);
+    try testing.expect(vehicle_ptr != null);
+    try testing.expect(light_ptr != null);
+
+    vehicle_ptr.?.vel_z = 10.0;
+    light_ptr.?.timer = 55.0;
+    light_ptr.?.state = .yellow;
+
+    const result = ai_traffic.estimateSafePassForVehicle(vehicle_ptr.?, light_ptr.?, 4.5);
+    try testing.expect(!result.can_pass);
+    try testing.expect(result.margin_to_change < 0);
 }
 
 test "AI Traffic emergency vehicle" {

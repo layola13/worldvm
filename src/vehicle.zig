@@ -8,6 +8,13 @@ const scene32 = @import("scene32.zig");
 const scene1024 = @import("scene1024.zig");
 const entity16 = @import("entity16.zig");
 const physics = @import("physics.zig");
+const prediction = @import("prediction.zig");
+
+const WheelWorldPosition = struct {
+    x: f32,
+    y: f32,
+    z: f32,
+};
 
 pub const VehicleType = enum(u8) {
     car = 0,
@@ -188,8 +195,8 @@ pub fn getRightDir(vehicle: *const VehicleState) struct { x: f32, z: f32 } {
 }
 
 /// Get wheel world positions
-pub fn getWheelPositions(vehicle: *const VehicleState) [4]struct { x: f32, y: f32, z: f32 } {
-    var positions: [4]struct { x: f32, y: f32, z: f32 } = undefined;
+pub fn getWheelPositions(vehicle: *const VehicleState) [4]WheelWorldPosition {
+    var positions: [4]WheelWorldPosition = undefined;
     const fwd = getForwardDir(vehicle);
     const right = getRightDir(vehicle);
 
@@ -208,13 +215,138 @@ pub fn getWheelPositions(vehicle: *const VehicleState) [4]struct { x: f32, y: f3
     return positions;
 }
 
+fn getVehicleHalfExtents(vehicle: *const VehicleState) struct { x: f32, y: f32, z: f32 } {
+    return switch (vehicle.vehicle_type) {
+        .car, .truck, .motorcycle => .{ .x = 6.0, .y = 2.0, .z = 8.0 },
+        .aircraft => .{ .x = 12.0, .y = 4.0, .z = 12.0 },
+        .boat => .{ .x = 8.0, .y = 3.0, .z = 12.0 },
+        .hovercraft => .{ .x = 7.0, .y = 2.0, .z = 7.0 },
+    };
+}
+
+pub fn predictVehiclePose(vehicle: *const VehicleState, time_delta: f32) prediction.PlanarPoseForecast {
+    const forward = getForwardDir(vehicle);
+    const vel_x = forward.x * vehicle.speed;
+    const vel_z = forward.z * vehicle.speed;
+    return prediction.predictPlanarPose(.{
+        .pos_x = vehicle.pos_x,
+        .pos_y = vehicle.pos_y,
+        .pos_z = vehicle.pos_z,
+        .yaw = vehicle.yaw,
+    }, vel_x, 0.0, vel_z, vehicle.angular_velocity, time_delta);
+}
+
+pub fn predictVehicleOccupancy(vehicle: *const VehicleState, time_delta: f32) prediction.FutureOccupancyAABB {
+    const pose = predictVehiclePose(vehicle, time_delta);
+    const extents = getVehicleHalfExtents(vehicle);
+    return prediction.computeFutureOccupancyAABB(
+        pose.pos_x,
+        pose.pos_y + extents.y,
+        pose.pos_z,
+        extents.x,
+        extents.y,
+        extents.z,
+    );
+}
+
+pub fn computeVehicleOccupancyConflict(a: *const VehicleState, b: *const VehicleState, horizon: f32, step: f32) prediction.OccupancyConflictWindow {
+    const a_extents = getVehicleHalfExtents(a);
+    const b_extents = getVehicleHalfExtents(b);
+    return prediction.computeOccupancyConflictWindow(
+        .{
+            .pos_x = a.pos_x,
+            .pos_y = a.pos_y + a_extents.y,
+            .pos_z = a.pos_z,
+            .yaw = a.yaw,
+        },
+        getForwardDir(a).x * a.speed,
+        0.0,
+        getForwardDir(a).z * a.speed,
+        a.angular_velocity,
+        a_extents.x,
+        a_extents.y,
+        a_extents.z,
+        .{
+            .pos_x = b.pos_x,
+            .pos_y = b.pos_y + b_extents.y,
+            .pos_z = b.pos_z,
+            .yaw = b.yaw,
+        },
+        getForwardDir(b).x * b.speed,
+        0.0,
+        getForwardDir(b).z * b.speed,
+        b.angular_velocity,
+        b_extents.x,
+        b_extents.y,
+        b_extents.z,
+        horizon,
+        step,
+    );
+}
+
+pub fn buildVehicleAvoidanceRecommendationFromConflict(conflict: prediction.OccupancyConflictWindow, horizon: f32, side_sign: f32) prediction.AvoidanceRecommendation {
+    return prediction.buildAvoidanceRecommendation(conflict, horizon, side_sign, 0.75, 0.2, 0.5, 0.5);
+}
+
+pub fn buildVehicleAvoidanceRecommendation(a: *const VehicleState, b: *const VehicleState, horizon: f32, step: f32, side_sign: f32) prediction.AvoidanceRecommendation {
+    const conflict = computeVehicleOccupancyConflict(a, b, horizon, step);
+    return buildVehicleAvoidanceRecommendationFromConflict(conflict, horizon, side_sign);
+}
+
+pub fn applyVehicleSteeringBias(self: *const VehicleState, other: *const VehicleState, steering_bias: f32) f32 {
+    if (@abs(steering_bias) <= 0.000001) return self.steering;
+
+    const dx = other.pos_x - self.pos_x;
+    const dz = other.pos_z - self.pos_z;
+    const dist_sq = dx * dx + dz * dz;
+    var normal_x: f32 = 1.0;
+    var normal_z: f32 = 0.0;
+    if (dist_sq > 0.000001) {
+        const inv_dist = 1.0 / @sqrt(dist_sq);
+        normal_x = dx * inv_dist;
+        normal_z = dz * inv_dist;
+    }
+    const tangent_x = -normal_z;
+    const tangent_z = normal_x;
+    const right = getRightDir(self);
+    const tangent_dot = tangent_x * right.x + tangent_z * right.z;
+    return @max(-1.0, @min(1.0, self.steering + tangent_dot * steering_bias));
+}
+
+pub fn applyPredictiveVehicleAvoidance(dt: f32) void {
+    const sys = getSystem();
+    const horizon = @max(0.2, dt * 4.0);
+    const step = @max(0.05, dt);
+    var i: usize = 0;
+    while (i < sys.count) : (i += 1) {
+        var j: usize = i + 1;
+        while (j < sys.count) : (j += 1) {
+            const a = &sys.vehicles[i];
+            const b = &sys.vehicles[j];
+            const window = computeVehicleOccupancyConflict(a, b, horizon, step);
+            const side_sign: f32 = if (@intFromPtr(a) < @intFromPtr(b)) 1.0 else -1.0;
+            const recommendation = buildVehicleAvoidanceRecommendationFromConflict(window, horizon, side_sign);
+            if (recommendation.conflict.valid) {
+                a.steering = applyVehicleSteeringBias(a, b, recommendation.steering_bias);
+                b.steering = applyVehicleSteeringBias(b, a, recommendation.steering_bias);
+                if (recommendation.should_brake) {
+                    a.brake = @max(a.brake, recommendation.brake_amount);
+                    b.brake = @max(b.brake, recommendation.brake_amount);
+                }
+                a.throttle = @min(a.throttle, 0.0);
+                b.throttle = @min(b.throttle, 0.0);
+            }
+        }
+    }
+}
+
 /// Check if vehicle is grounded
 pub fn checkGrounded(
     vehicle: *const VehicleState,
     s1024: *scene1024.Scene1024,
     entities: []entity16.Entity16,
 ) bool {
-    const check_y = vehicle.pos_y - 1;
+    const check_y = @as(i32, @intFromFloat(@floor(vehicle.pos_y - 1)));
     const wheel_pos = getWheelPositions(vehicle);
 
     for (wheel_pos) |pos| {
@@ -393,4 +525,137 @@ pub fn attemptFlip(vehicle: *VehicleState) bool {
 /// Get system for external iteration
 pub fn getSystem() *VehicleSystem {
     return &g_vehicle_system;
+}
+
+test "predictVehiclePose advances vehicle along forward speed and yaw rate" {
+    const pose = predictVehiclePose(&.{
+        .pos_x = 0,
+        .pos_y = 1,
+        .pos_z = 10,
+        .yaw = std.math.pi / 2.0,
+        .pitch = 0,
+        .roll = 0,
+        .speed = 5,
+        .angular_velocity = 0.25,
+        .throttle = 0,
+        .steering = 0,
+        .brake = 0,
+        .handbrake = false,
+        .grounded = true,
+        .flipped = false,
+        .vehicle_type = .car,
+        .wheels = undefined,
+        .mass = 1500,
+    }, 2.0);
+    try std.testing.expectApproxEqAbs(@as(f32, 10.0), pose.pos_x, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 10.0), pose.pos_z, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, std.math.pi / 2.0 + 0.5), pose.yaw, 0.0001);
+}
+
+test "predictVehicleOccupancy builds future AABB around predicted pose" {
+    const occupancy = predictVehicleOccupancy(&.{
+        .pos_x = 0,
+        .pos_y = 1,
+        .pos_z = 10,
+        .yaw = 0,
+        .pitch = 0,
+        .roll = 0,
+        .speed = 5,
+        .angular_velocity = 0,
+        .throttle = 0,
+        .steering = 0,
+        .brake = 0,
+        .handbrake = false,
+        .grounded = true,
+        .flipped = false,
+        .vehicle_type = .car,
+        .wheels = undefined,
+        .mass = 1500,
+    }, 2.0);
+    try std.testing.expectApproxEqAbs(@as(f32, -6.0), occupancy.min_x, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), occupancy.min_y, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 12.0), occupancy.min_z, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 6.0), occupancy.max_x, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 5.0), occupancy.max_y, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 28.0), occupancy.max_z, 0.0001);
+}
+
+test "computeVehicleOccupancyConflict detects future overlap window" {
+    const window = computeVehicleOccupancyConflict(&.{
+        .pos_x = -20,
+        .pos_y = 0,
+        .pos_z = 0,
+        .yaw = std.math.pi / 2.0,
+        .pitch = 0,
+        .roll = 0,
+        .speed = 10,
+        .angular_velocity = 0,
+        .throttle = 0,
+        .steering = 0,
+        .brake = 0,
+        .handbrake = false,
+        .grounded = true,
+        .flipped = false,
+        .vehicle_type = .car,
+        .wheels = undefined,
+        .mass = 1500,
+    }, &.{
+        .pos_x = 20,
+        .pos_y = 0,
+        .pos_z = 0,
+        .yaw = -std.math.pi / 2.0,
+        .pitch = 0,
+        .roll = 0,
+        .speed = 10,
+        .angular_velocity = 0,
+        .throttle = 0,
+        .steering = 0,
+        .brake = 0,
+        .handbrake = false,
+        .grounded = true,
+        .flipped = false,
+        .vehicle_type = .car,
+        .wheels = undefined,
+        .mass = 1500,
+    }, 3.0, 0.25);
+    try std.testing.expect(window.valid);
+    try std.testing.expect(window.start_time >= 0.5 and window.start_time <= 1.5);
+}
+
+test "applyPredictiveVehicleAvoidance pre-brakes conflicting vehicles" {
+    init();
+    const a = createCar(-12.0, 0.0, 0.0, std.math.pi / 2.0) orelse return error.TestUnexpectedResult;
+    const b = createCar(12.0, 0.0, 0.0, -std.math.pi / 2.0) orelse return error.TestUnexpectedResult;
+
+    a.speed = 10.0;
+    b.speed = 10.0;
+    a.throttle = 1.0;
+    b.throttle = 1.0;
+    a.brake = 0.0;
+    b.brake = 0.0;
+
+    applyPredictiveVehicleAvoidance(0.25);
+
+    try std.testing.expect(a.brake >= 0.5);
+    try std.testing.expect(b.brake >= 0.5);
+    try std.testing.expect(a.throttle == 0.0);
+    try std.testing.expect(b.throttle == 0.0);
+}
+
+test "applyPredictiveVehicleAvoidance also adds steering bias for conflicting vehicles" {
+    init();
+    const a = createCar(-12.0, 0.0, 0.0, 0.0) orelse return error.TestUnexpectedResult;
+    const b = createCar(-12.0, 0.0, 20.0, std.math.pi) orelse return error.TestUnexpectedResult;
+
+    a.speed = 10.0;
+    b.speed = 10.0;
+    a.throttle = 1.0;
+    b.throttle = 1.0;
+    a.steering = 0.0;
+    b.steering = 0.0;
+
+    applyPredictiveVehicleAvoidance(0.25);
+
+    try std.testing.expect(@abs(a.steering) > 0.01);
+    try std.testing.expect(@abs(b.steering) > 0.01);
 }

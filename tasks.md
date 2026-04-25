@@ -2,90 +2,172 @@
 
 ## 当前主线
 
-当前优先级最高的工作不是继续扩写章节测试，而是重写 `src/chapter*.zig`，把“场景占坑”改成真正能约束实现的测试体系。
+当前主线改回底层优先。
+
+- 以根目录 `physics.md` 为范围基准
+- 先补统一物理内核
+- 再补“可预测 / 可控”的短时预测层
+- 暂不把“重写整批章节测试”作为最高优先级
 
 参考执行计划：
 
-- `todo/chapter_test_rewrite_plan.md`
-- `todo/chapter_tests_improvement_guide.md`
+- `todo/physics_kernel_prediction_plan.md`
 
 ## 本轮目标
 
-1. 抽取统一章节测试基座 `src/chapter_test_support.zig`
-2. 移除每章重复的 `runChapterTest` / `makeInstance` / 弱断言模板
-3. 将章节测试分成三类：
-   - `scene_assert`
-   - `module_contract`
-   - `explicit_skip`
-4. 先把基础章节改成真实断言
-5. 对未落地模块的高级章节显式 `skip`，不再伪装为通过
+1. 继续完成统一物理内核的底层闭环
+2. 优先补齐“可预测 / 可控 / 可回放”的核心能力
+3. 修掉仍停留在近似实现的底层查询与挤出逻辑
+4. 只补内核级最小必要测试，不先重写整批 chapter
 
-## 章节重写策略
+## 执行顺序
 
-### 第一批：先落真实场景断言
+### 第一批：统一命中语义
 
-- chapter01_motion_gravity
-- chapter02_collision_detection
-- chapter03_friction_elasticity
-- chapter04_stacking_sleep
-
-要求：
-
-- 至少断言位置、速度、状态中的一种真实物理结果
-- 禁止只写 `ticks_to_stable > 0`
-
-### 第二批：改成模块契约测试
-
-- chapter05 / chapter19 -> `joint.zig`
-- chapter06 / chapter20 -> `ccd.zig`
-- chapter07 / chapter18 -> raycast / query
-- chapter11 -> `kcc.zig`
-- chapter12 -> `ballistics.zig`
-- chapter13 -> `destruction.zig`
-- chapter14 -> `ragdoll.zig`
-- chapter15 -> `vehicle.zig`
-- chapter16 -> `network.zig`
-- chapter17 -> `crash_defense.zig`
-- chapter24 -> `terrain.zig`
-- chapter25 -> force/explosion capabilities already in `tick_engine.zig`
-
-### 第三批：显式跳过
-
-- chapter22_particles
-- chapter23_softbody
+- `src/query_types.zig`
+- `src/query_world.zig`
+- `src/query_raycast.zig`
+- `src/query_sweep.zig`
+- `src/query_penetration.zig`
+- `src/material_pairing.zig`
+- `src/terrain.zig`
 
 要求：
 
-- 使用稳定、明确的 skip reason
-- 说明缺失的是模块还是集成点
+- 同一次命中必须能说明“碰到了什么”
+- query / vehicle / sensors / ai_traffic 后续必须能共用这套语义
 
-### 第四批：组合与验收章节
+当前状态：
 
-- chapter26_composite
-- chapter27_scalability
-- chapter28_determinism
-- chapter29_realtime
-- chapter30_integration
+- 已完成
+- 已补 environment / instance 命中分类与 telemetry
+- 已补 query 侧回归测试
+
+### 第二批：最小预测基座
+
+- 新增 `src/prediction.zig`
+- 先提供：
+  - 线性短时预测
+  - TTC
+  - 冲突窗口
+  - 红绿灯安全通过窗口
 
 要求：
 
-- 只能组合前面已被证明存在的能力
-- 不引入新的假机制
+- 预测范围以 1-5 秒为主
+- 不允许在多个模块内重复实现相似预测逻辑
+
+当前状态：
+
+- 已完成
+- `sensors` / `network` / `ai_traffic` 已复用统一 prediction
+
+### 第三批：统一状态来源
+
+- snapshot
+- rewind
+- trace
+- determinism
+
+要求：
+
+- prediction 不能建立在零散状态之上
+- 必须有稳定、可复用、可回放的状态输入
+
+当前状态：
+
+- 已完成基础闭环
+- `rewind` / `vm_hook` 已支持 world snapshot / hash / simulate / diff
+
+### 第四批：去掉底层近似实现
+
+- `src/query_sweep.zig`
+- `src/raycast.zig`
+- `src/vm_hook.zig`
+- `src/query_penetration.zig`
+- `src/query.zig`
+
+要求：
+
+- `sphere cast` / `box cast` 不能继续停留在中心点近似
+- penetration 结果要能给出可信的 depenetration 方向和深度
+- 旧入口与新 query 子模块不能行为分裂
+
+当前状态：
+
+- 已完成一轮
+- 已补多采样体积 cast
+- 已补 AABB penetration 最小平移向量
+- 已修负坐标边界崩溃
+
+### 第五批：接触稳定与 KCC 可控挤出
+
+- `src/tick_engine.zig`
+- `src/kcc.zig`
+
+要求：
+
+- 小幅落地反弹要能稳定收敛，不要持续抖动
+- KCC 不能只会“向上抬几格”，需要具备最小阻力挤出能力
+
+当前状态：
+
+- 已完成第一轮
+- 已补 ground settle
+- 已把 penetration 接到 KCC resolveCollision
+
+### 第六批：统一 PhysicsWorld / TickEngine 内核语义
+
+- `src/physics_world.zig`
+- `src/tick_engine.zig`
+- `src/physics.zig`
+- `src/collision_event.zig`
+- `src/contact_response.zig`
+- `src/break_response.zig`
+- `src/sleep_response.zig`
+
+要求：
+
+- `PhysicsWorld` 不能继续停留在骨架
+- `TickEngine` 与 `PhysicsWorld` 不能在基础移动、碰撞发布、break、sleep 上各自维护一套分裂语义
+- blocker-aware 三轴移动、碰撞事件发布、broken 占据移除必须统一到底层 helper
+
+当前状态：
+
+- 已完成当前一轮
+- `PhysicsWorld` 已具备真实 authoritative tick / snapshot / debris / bus event / break / sleep 路径
+- `TickEngine` 已补齐 `vel_x` / `vel_z` / `vel_y>0` 的三轴 sweep 语义
+- `src/physics.zig` 已提供共享 `sweepAxis`
+- `src/collision_event.zig` 已提供共享 pending collision queue
+- `TickEngine` 与 `PhysicsWorld` 已统一为“先收集、后发布”的碰撞事件节奏
+- 已补重复 collision event 去重与重复 BREAK intent 去重
+- 已补 `TickEngine` 的 lateral wall / upward ceiling / MOVE intent 回归测试
+- 已补“支撑消失唤醒”底层语义：支撑体 break 后，上方 resting 物体会被即时唤醒
+- 已补最小 AABB face-contact manifold 基座，可输出 4 点支撑接触
+- `query_penetration` 已开始输出最小 manifold 点集，不再只返回 MTV 深度和方向
+- `vm_hook` 已导出 penetration manifold，外部链路可直接读取 depth / dir / point_count / points
+- 已修重力终端速度钳制，`PhysicsWorld` / `TickEngine` 已统一走共享 vertical velocity clamp
 
 ## 验收条件
 
-1. `zig build test` 继续覆盖全部 30 个章节文件
-2. `src/chapter*.zig` 中清除弱断言：
-   - `ticks_to_stable > 0`
-   - `passed = engine.stable or ticks < max_ticks`
-3. 所有章节测试必须属于以下之一：
-   - 真实场景断言
-   - 真实模块契约断言
-   - 显式跳过
+1. 底层查询能稳定输出统一接触分类与接触参数
+2. 新增测试覆盖环境命中与实例命中的元数据一致性
+3. 后续预测层可以直接复用 query 结果，而不需要再猜表面和介质
+4. cast / penetration / KCC depenetration 不再依赖明显错误的中心点近似
+5. snapshot diff 对外链路能覆盖新增底层子系统
+6. `PhysicsWorld` 与 `TickEngine` 对基础 blocker-aware 三轴运动和碰撞发布不再出现明显分叉
+7. broken 实例不再通过 direct occupancy scan 或 rebuild occupancy 残留阻挡
 
 ## 本轮暂不处理
 
-- Python 测试重写
-- `docs/physics.md` 口径更新
-- `src/physics_tests.zig` 大范围重构
+- 整批 `src/chapter*.zig` 重写
+- Python 测试体系重写
+- 所有高级章节“表面通过”整理
 - 性能专项优化
+
+## 当前下一步
+
+1. 继续补 contact / stacking / manifold 稳定性
+2. 继续抽离 `TickEngine` / `PhysicsWorld` 的接触编排 helper，减少重复 orchestration
+3. 逐步消除 `query.zig` 与 `query_*` 子模块的双轨结构
+4. 继续评估 broadphase / manifold / stacking solver 是否仍是当前最大底层缺口

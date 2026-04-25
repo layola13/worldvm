@@ -4,6 +4,13 @@
 //! Handles: Path following, collision avoidance, lane changing, aggressive maneuvers
 
 const std = @import("std");
+const prediction = @import("prediction.zig");
+
+pub const TrafficLightState = enum(u8) {
+    red = 0,
+    green = 1,
+    yellow = 2,
+};
 
 pub const AIBehavior = enum(u8) {
     cautious = 0,
@@ -35,7 +42,7 @@ pub const TrafficVehicle = struct {
 pub const TrafficLight = struct {
     pos_x: f32,
     pos_z: f32,
-    state: u8,
+    state: TrafficLightState,
     timer: f32,
     yellow_duration: f32,
     cycle_duration: f32,
@@ -44,13 +51,15 @@ pub const TrafficLight = struct {
 pub const MAX_AI_VEHICLES: usize = 32;
 pub const MAX_TRAFFIC_LIGHTS: usize = 16;
 
-var g_traffic_system: struct {
+pub const TrafficSystem = struct {
     vehicles: [MAX_AI_VEHICLES]TrafficVehicle,
     vehicle_count: u8,
     lights: [MAX_TRAFFIC_LIGHTS]TrafficLight,
     light_count: u8,
     global_time: f32,
-} = undefined;
+};
+
+var g_traffic_system: TrafficSystem = undefined;
 
 pub fn init() void {
     g_traffic_system.vehicle_count = 0;
@@ -103,7 +112,7 @@ pub fn addTrafficLight(x: f32, z: f32, cycle_duration: f32) ?*TrafficLight {
     g_traffic_system.lights[idx] = .{
         .pos_x = x,
         .pos_z = z,
-        .state = 0,
+        .state = .red,
         .timer = 0,
         .yellow_duration = 3.0,
         .cycle_duration = cycle_duration,
@@ -146,10 +155,116 @@ pub fn checkRedLight(self: *const TrafficVehicle, _: f32) bool {
         const dz = light.pos_z - self.pos_z;
         const dist = @sqrt(dx * dx + dz * dz);
 
-        if (dist < 100 and light.state == 0) {
+        if (dist < 100 and light.state == .red) {
             return true;
         }
     }
+    return false;
+}
+
+pub fn getTrafficLightState(light: *const TrafficLight) prediction.SignalWindow {
+    return prediction.predictSignalWindow(
+        switch (light.state) {
+            .red => .red,
+            .green => .green,
+            .yellow => .yellow,
+        },
+        light.timer,
+        light.cycle_duration,
+        light.yellow_duration,
+    );
+}
+
+pub fn estimateSafePassForVehicle(self: *const TrafficVehicle, light: *const TrafficLight, vehicle_length: f32) prediction.SafePassResult {
+    const signal = getTrafficLightState(light);
+    const dx = light.pos_x - self.pos_x;
+    const dz = light.pos_z - self.pos_z;
+    const distance = @sqrt(dx * dx + dz * dz);
+    const speed = @max(0.001, @sqrt(self.vel_x * self.vel_x + self.vel_z * self.vel_z));
+    return prediction.estimateSafePass(distance, speed, vehicle_length, signal);
+}
+
+pub fn computeVehicleConflict(self: *const TrafficVehicle, other: *const TrafficVehicle, horizon: f32) prediction.TTCResult {
+    return prediction.computeTTC(.{
+        .pos_x = self.pos_x,
+        .pos_y = self.pos_y,
+        .pos_z = self.pos_z,
+        .vel_x = self.vel_x,
+        .vel_y = 0,
+        .vel_z = self.vel_z,
+    }, .{
+        .pos_x = other.pos_x,
+        .pos_y = other.pos_y,
+        .pos_z = other.pos_z,
+        .vel_x = other.vel_x,
+        .vel_y = 0,
+        .vel_z = other.vel_z,
+    }, 2.5, horizon);
+}
+
+pub fn predictVehiclePose(self: *const TrafficVehicle, time_delta: f32) prediction.PlanarPoseForecast {
+    return prediction.predictPlanarPose(.{
+        .pos_x = self.pos_x,
+        .pos_y = self.pos_y,
+        .pos_z = self.pos_z,
+        .yaw = self.yaw,
+    }, self.vel_x, 0.0, self.vel_z, self.steering_input, time_delta);
+}
+
+fn getVehicleHalfExtents(_: *const TrafficVehicle) struct { x: f32, y: f32, z: f32 } {
+    return .{ .x = 1.25, .y = 1.0, .z = 2.5 };
+}
+
+pub fn computeVehicleOccupancyConflict(self: *const TrafficVehicle, other: *const TrafficVehicle, horizon: f32, step: f32) prediction.OccupancyConflictWindow {
+    const self_extents = getVehicleHalfExtents(self);
+    const other_extents = getVehicleHalfExtents(other);
+    return prediction.computeOccupancyConflictWindow(
+        .{
+            .pos_x = self.pos_x,
+            .pos_y = self.pos_y,
+            .pos_z = self.pos_z,
+            .yaw = self.yaw,
+        },
+        self.vel_x,
+        0.0,
+        self.vel_z,
+        self.steering_input,
+        self_extents.x,
+        self_extents.y,
+        self_extents.z,
+        .{
+            .pos_x = other.pos_x,
+            .pos_y = other.pos_y,
+            .pos_z = other.pos_z,
+            .yaw = other.yaw,
+        },
+        other.vel_x,
+        0.0,
+        other.vel_z,
+        other.steering_input,
+        other_extents.x,
+        other_extents.y,
+        other_extents.z,
+        horizon,
+        step,
+    );
+}
+
+pub fn buildTrafficVehicleAvoidanceRecommendation(self: *const TrafficVehicle, other: *const TrafficVehicle, horizon: f32, step: f32) prediction.AvoidanceRecommendation {
+    const conflict = computeVehicleOccupancyConflict(self, other, horizon, step);
+    const brake_threshold_ratio = @min(1.0, (self.reaction_time + 0.75) / @max(horizon, 0.001));
+    return prediction.buildAvoidanceRecommendation(conflict, horizon, 0.0, brake_threshold_ratio, 0.0, 0.0, 1.0);
+}
+
+fn shouldBrakeForVehicleConflict(self: *const TrafficVehicle, other: *const TrafficVehicle) bool {
+    const dz = other.pos_z - self.pos_z;
+    const required_distance = calculateFollowingDistance(self, self.target_vel);
+    const ttc = computeVehicleConflict(self, other, 5.0);
+    const recommendation = buildTrafficVehicleAvoidanceRecommendation(self, other, 5.0, 0.25);
+
+    if (dz < required_distance) return true;
+    if (ttc.valid and ttc.time < self.reaction_time + 0.5) return true;
+    if (recommendation.should_brake) return true;
     return false;
 }
 
@@ -171,13 +286,13 @@ pub fn updateAI(dt: f32) void {
         const green_duration = light.cycle_duration - light.yellow_duration * 2;
 
         if (cycle_pos < green_duration) {
-            light.state = 1;
+            light.state = .green;
         } else if (cycle_pos < green_duration + light.yellow_duration) {
-            light.state = 2;
+            light.state = .yellow;
         } else if (cycle_pos < green_duration * 2 + light.yellow_duration) {
-            light.state = 0;
+            light.state = .red;
         } else {
-            light.state = 2;
+            light.state = .yellow;
         }
     }
 
@@ -185,14 +300,27 @@ pub fn updateAI(dt: f32) void {
         var vehicle = &g_traffic_system.vehicles[i];
         if (!vehicle.active) continue;
 
-        if (checkRedLight(vehicle, dt)) {
+        var should_brake_for_signal = false;
+        for (g_traffic_system.lights[0..g_traffic_system.light_count]) |*light| {
+            const signal_decision = estimateSafePassForVehicle(vehicle, light, 4.5);
+            const dx = light.pos_x - vehicle.pos_x;
+            const dz = light.pos_z - vehicle.pos_z;
+            const distance = @sqrt(dx * dx + dz * dz);
+            if (distance < 100 and light.state == .red) {
+                should_brake_for_signal = true;
+                break;
+            }
+            if (distance < 40 and light.state == .yellow and !signal_decision.can_pass) {
+                should_brake_for_signal = true;
+                break;
+            }
+        }
+
+        if (should_brake_for_signal or checkRedLight(vehicle, dt)) {
             vehicle.brake_input = 1.0;
             vehicle.throttle_input = 0;
         } else if (checkVehicleAhead(vehicle, dt)) |ahead| {
-            const dz = ahead.pos_z - vehicle.pos_z;
-            const required_distance = calculateFollowingDistance(vehicle, vehicle.target_vel);
-
-            if (dz < required_distance) {
+            if (shouldBrakeForVehicleConflict(vehicle, ahead)) {
                 vehicle.brake_input = 1.0;
                 vehicle.throttle_input = 0;
             } else {
@@ -241,19 +369,153 @@ pub fn triggerEmergencyVehicle(vehicle: *TrafficVehicle) void {
 }
 
 pub fn getTrafficVehicles() []TrafficVehicle {
-    var active: [MAX_AI_VEHICLES]TrafficVehicle = undefined;
-    var count: u8 = 0;
-
-    for (g_traffic_system.vehicles[0..g_traffic_system.vehicle_count]) |vehicle| {
-        if (vehicle.active) {
-            active[count] = vehicle;
-            count += 1;
-        }
-    }
-
-    return active[0..count];
+    return g_traffic_system.vehicles[0..g_traffic_system.vehicle_count];
 }
 
 pub fn getVehicleCount() u8 {
     return g_traffic_system.vehicle_count;
+}
+
+pub fn getTrafficLightCount() u8 {
+    return g_traffic_system.light_count;
+}
+
+pub fn getTrafficLight(idx: u8) ?*const TrafficLight {
+    if (idx >= g_traffic_system.light_count) return null;
+    return &g_traffic_system.lights[idx];
+}
+
+pub fn getSystem() *TrafficSystem {
+    return &g_traffic_system;
+}
+
+test "predictVehiclePose advances traffic vehicle pose with steering yaw rate" {
+    const pose = predictVehiclePose(&.{
+        .vehicle_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 10,
+        .vel_x = 2,
+        .vel_z = 8,
+        .yaw = 0.5,
+        .target_vel = 30,
+        .current_lane = 0,
+        .target_lane = 1,
+        .behavior = .normal,
+        .following_distance = 30,
+        .reaction_time = 0.3,
+        .throttle_input = 0,
+        .brake_input = 0,
+        .steering_input = 0.25,
+        .active = true,
+    }, 2.0);
+    try std.testing.expectApproxEqAbs(@as(f32, 4.0), pose.pos_x, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 26.0), pose.pos_z, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), pose.yaw, 0.0001);
+}
+
+test "computeVehicleOccupancyConflict detects future overlap window" {
+    const window = computeVehicleOccupancyConflict(&.{
+        .vehicle_id = 1,
+        .pos_x = -6,
+        .pos_y = 0,
+        .pos_z = 0,
+        .vel_x = 4,
+        .vel_z = 0,
+        .yaw = 0,
+        .target_vel = 0,
+        .current_lane = 0,
+        .target_lane = 0,
+        .behavior = .normal,
+        .following_distance = 30,
+        .reaction_time = 0.3,
+        .throttle_input = 0,
+        .brake_input = 0,
+        .steering_input = 0,
+        .active = true,
+    }, &.{
+        .vehicle_id = 2,
+        .pos_x = 6,
+        .pos_y = 0,
+        .pos_z = 0,
+        .vel_x = -4,
+        .vel_z = 0,
+        .yaw = 0,
+        .target_vel = 0,
+        .current_lane = 0,
+        .target_lane = 0,
+        .behavior = .normal,
+        .following_distance = 30,
+        .reaction_time = 0.3,
+        .throttle_input = 0,
+        .brake_input = 0,
+        .steering_input = 0,
+        .active = true,
+    }, 3.0, 0.25);
+    try std.testing.expect(window.valid);
+    try std.testing.expect(window.start_time >= 0.75 and window.start_time <= 1.25);
+}
+
+test "shouldBrakeForVehicleConflict triggers on upcoming occupancy overlap" {
+    const should_brake = shouldBrakeForVehicleConflict(&.{
+        .vehicle_id = 1,
+        .pos_x = -6,
+        .pos_y = 0,
+        .pos_z = 0,
+        .vel_x = 4,
+        .vel_z = 0,
+        .yaw = 0,
+        .target_vel = 10,
+        .current_lane = 0,
+        .target_lane = 0,
+        .behavior = .normal,
+        .following_distance = 1,
+        .reaction_time = 0.3,
+        .throttle_input = 0,
+        .brake_input = 0,
+        .steering_input = 0,
+        .active = true,
+    }, &.{
+        .vehicle_id = 2,
+        .pos_x = 6,
+        .pos_y = 0,
+        .pos_z = 0,
+        .vel_x = -4,
+        .vel_z = 0,
+        .yaw = 0,
+        .target_vel = 10,
+        .current_lane = 0,
+        .target_lane = 0,
+        .behavior = .normal,
+        .following_distance = 1,
+        .reaction_time = 0.3,
+        .throttle_input = 0,
+        .brake_input = 0,
+        .steering_input = 0,
+        .active = true,
+    });
+    try std.testing.expect(should_brake);
+}
+
+test "updateAI brakes for upcoming occupancy conflict even before close spacing" {
+    init();
+    const self = spawnAIVehicle(-6.0, 0.0, 0.0, .normal) orelse return error.TestUnexpectedResult;
+    const ahead = spawnAIVehicle(6.0, 0.0, 0.0, .normal) orelse return error.TestUnexpectedResult;
+
+    self.vel_x = 4.0;
+    self.vel_z = 0.0;
+    self.target_vel = 10.0;
+    self.following_distance = 1.0;
+    self.reaction_time = 0.3;
+
+    ahead.vel_x = -4.0;
+    ahead.vel_z = 0.0;
+    ahead.target_vel = 10.0;
+    ahead.following_distance = 1.0;
+    ahead.reaction_time = 0.3;
+
+    updateAI(0.1);
+
+    try std.testing.expect(self.brake_input > 0.99);
+    try std.testing.expect(self.throttle_input == 0.0);
 }

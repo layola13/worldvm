@@ -6,6 +6,7 @@
 const scene1024 = @import("scene1024.zig");
 const scene32 = @import("scene32.zig");
 const entity16 = @import("entity16.zig");
+const terrain = @import("terrain.zig");
 
 /// Body type for collision filtering
 pub const BodyType = enum(u8) {
@@ -17,10 +18,30 @@ pub const BodyType = enum(u8) {
 
 /// Query layer mask - 32 bits for collision layers
 pub const QueryLayerMask = u32;
+pub const QUERY_LAYER_ENVIRONMENT: QueryLayerMask = 1 << 0;
+pub const QUERY_LAYER_STATIC: QueryLayerMask = 1 << 1;
+pub const QUERY_LAYER_DYNAMIC: QueryLayerMask = 1 << 2;
+pub const QUERY_LAYER_KINEMATIC: QueryLayerMask = 1 << 3;
+pub const QUERY_LAYER_SENSOR: QueryLayerMask = 1 << 4;
+pub const QUERY_LAYER_ALL: QueryLayerMask =
+    QUERY_LAYER_ENVIRONMENT |
+    QUERY_LAYER_STATIC |
+    QUERY_LAYER_DYNAMIC |
+    QUERY_LAYER_KINEMATIC |
+    QUERY_LAYER_SENSOR;
+
+pub fn layerMaskForBodyType(body_type: BodyType) QueryLayerMask {
+    return switch (body_type) {
+        .static => QUERY_LAYER_STATIC,
+        .dynamic => QUERY_LAYER_DYNAMIC,
+        .kinematic => QUERY_LAYER_KINEMATIC,
+        .sensor => QUERY_LAYER_SENSOR,
+    };
+}
 
 /// Query filter - controls what objects are hit by queries
 pub const QueryFilter = struct {
-    layer_mask: QueryLayerMask = 0xFFFFFFFF,
+    layer_mask: QueryLayerMask = QUERY_LAYER_ALL,
     include_static: bool = true,
     include_dynamic: bool = true,
     include_kinematic: bool = true,
@@ -28,6 +49,39 @@ pub const QueryFilter = struct {
     ignore_environment: bool = false,
     ignore_instance_idx: ?u8 = null,
     ignore_entity_id: ?u16 = null,
+};
+
+pub const SurfaceCondition = enum(u8) {
+    unknown = 0,
+    dry = 1,
+    wet = 2,
+    loose = 3,
+    deformable = 4,
+    slippery = 5,
+    submerged = 6,
+};
+
+pub const ContactClassification = struct {
+    body_type: BodyType = .static,
+    surface_type: terrain.SurfaceType = .asphalt_dry,
+    medium_type: terrain.MediumType = .solid,
+    material_type: entity16.MaterialType = .solid,
+    surface_condition: SurfaceCondition = .dry,
+    hard_surface: bool = true,
+};
+
+pub const ContactTelemetry = struct {
+    friction: f32 = 0,
+    restitution: f32 = 0,
+    damage_modifier: f32 = 0,
+    penetration_resistance: f32 = 0,
+    buoyancy: f32 = 0,
+};
+
+pub const ContactPoint = struct {
+    x: f32 = 0,
+    y: f32 = 0,
+    z: f32 = 0,
 };
 
 /// Standard hit result for all raycast and sweep queries
@@ -45,6 +99,8 @@ pub const QueryHit = struct {
     entity_id: i16 = -1,
     hit_environment: bool = false,
     hit_sensor: bool = false,
+    classification: ContactClassification = .{},
+    telemetry: ContactTelemetry = .{},
 };
 
 /// Overlap query result
@@ -63,6 +119,8 @@ pub const PenetrationResult = struct {
     dir_y: f32 = 1,
     dir_z: f32 = 0,
     instance_idx: i16 = -1,
+    manifold_point_count: u8 = 0,
+    manifold_points: [4]ContactPoint = [_]ContactPoint{.{}} ** 4,
 };
 
 /// World view for query operations - bundles all world data

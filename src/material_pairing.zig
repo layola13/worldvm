@@ -24,6 +24,19 @@ pub const ContactResponse = struct {
     medium_type: terrain.MediumType, // solid/soft/liquid/vapor
 };
 
+/// Approximate a material-only object to a representative surface class so
+/// query/contact metadata can stay on the same vocabulary as terrain hits.
+pub fn getSurfaceForMaterial(material: entity16.MaterialType) terrain.SurfaceType {
+    return switch (material) {
+        .solid => .concrete,
+        .liquid => .water,
+        .gas => .plastic,
+        .fragile => .plastic,
+        .elastic => .rubber,
+        .composite => .gravel,
+    };
+}
+
 /// Get medium type for a surface
 pub fn getMediumType(surface: terrain.SurfaceType) terrain.MediumType {
     return switch (surface) {

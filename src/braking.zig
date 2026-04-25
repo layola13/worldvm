@@ -169,3 +169,7 @@ pub fn getBrakeState() *BrakeState {
 pub fn enableBrakeAssist(enable: bool) void {
     g_brake_system.brake_assist = enable;
 }
+
+pub fn getSystem() *BrakeSystem {
+    return &g_brake_system;
+}
