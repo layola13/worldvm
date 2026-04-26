@@ -162,6 +162,8 @@ const JointPlanRowSpecEntry = struct {
 };
 
 const JointSolveRuntimeContext = struct {
+    kind: ConstraintRowKind,
+    descriptor: *const JointRuntimeRowDescriptor,
     joint_def: *joint.Joint,
     inst_a: *scene32.Instance,
     inst_b: *scene32.Instance,
@@ -178,6 +180,10 @@ const JointRowSolverFn = *const fn (
     equation: ConstraintRowEquation,
     row_state: ?*const ConstraintRowState,
 ) ConstraintRowExecResult;
+
+const JointPrepareChannelFn = *const fn (
+    ctx: JointSolveRuntimeContext,
+) JointPreparedOutcome(JointPreparedChannel);
 
 const JointEquationBuilderFn = *const fn (
     instances: []scene32.Instance,
@@ -385,6 +391,7 @@ const JointPreparedAnchorChannel = struct {
     axis: JointAxisVector,
     constraint: PreparedJointLinearConstraint,
     damping_scale: f32,
+    postprocess: JointAnchorPostprocess = .none,
 };
 
 const JointAnchorPostprocess = union(enum) {
@@ -393,24 +400,34 @@ const JointAnchorPostprocess = union(enum) {
     slider_limit_damping: JointAxisVector,
 };
 
+const JointPreparedDrivePostprocess = enum {
+    none,
+    velocity_bias,
+};
+
 const JointPreparedDriveChannel = union(enum) {
     linear: struct {
         axis: JointAxisVector,
         constraint: PreparedJointDriveConstraint,
+        postprocess: JointPreparedDrivePostprocess = .none,
     },
     angular: struct {
         axis: JointAxis,
         constraint: PreparedJointAngularDriveConstraint,
+        postprocess: JointPreparedDrivePostprocess = .none,
     },
+};
+
+const JointPreparedChannel = union(enum) {
+    limit: JointPreparedLimitChannel,
+    anchor: JointPreparedAnchorChannel,
+    drive: JointPreparedDriveChannel,
 };
 
 const JointPreparedPostprocess = union(enum) {
     none,
     anchor: JointAnchorPostprocess,
-    drive_velocity_bias: struct {
-        prepared: JointPreparedDriveChannel,
-        desired_velocity: f32,
-    },
+    drive_velocity_bias: JointPreparedDriveChannel,
 };
 
 const JointPreparedSolveResult = struct {
@@ -444,8 +461,7 @@ const JointPreparedSolveResult = struct {
                 inst_b,
                 joint_def,
                 mass_data,
-                drive.prepared,
-                drive.desired_velocity,
+                drive,
             ),
         };
     }
@@ -468,10 +484,99 @@ const JointPreparedSolveResult = struct {
     }
 };
 
+const JointPreparedUnavailablePolicy = enum {
+    finalize_no_change,
+    finalize_exec_state,
+    stalled,
+};
+
+const JointAnchorPostprocessPolicy = enum {
+    none,
+    by_joint_type,
+};
+
+const JointDrivePostprocessPolicy = enum {
+    none,
+    velocity_bias,
+};
+
+const JointSignedCorrectionPolicy = struct {
+    retention_scale: f32 = 0.0,
+    bias_scale: f32 = 1.0,
+    min_abs_correction: f32 = 0.0,
+    planned: bool = false,
+};
+
+const JointImpulseHintPolicy = struct {
+    enabled: bool = false,
+    scale: f32 = 1.0,
+};
+
+const JointRuntimeRowPolicy = struct {
+    residual_scale: f32,
+    warm_impulse_scale: f32,
+    inactive_outcome: JointPreparedUnavailablePolicy,
+    stalled_prepare_outcome: JointPreparedUnavailablePolicy,
+    signed_correction_policy: JointSignedCorrectionPolicy = .{},
+    impulse_hint_policy: JointImpulseHintPolicy = .{},
+    anchor_postprocess_policy: JointAnchorPostprocessPolicy = .none,
+    drive_postprocess_policy: JointDrivePostprocessPolicy = .none,
+};
+
+fn JointPreparedOutcome(comptime T: type) type {
+    return union(enum) {
+        inactive,
+        stalled_prepare,
+        ready: T,
+    };
+}
+
+fn JointPreparedResolution(comptime T: type) type {
+    return union(enum) {
+        ready: T,
+        outcome: JointSolveResultOutcome,
+    };
+}
+
+fn MapJointPreparedOutcomeFn(comptime In: type, comptime Out: type) type {
+    return *const fn (
+        ctx: JointSolveRuntimeContext,
+        prepared: In,
+    ) Out;
+}
+
+fn PrepareResolvedJointSolveResultFn(comptime T: type) type {
+    return *const fn (
+        ctx: JointSolveRuntimeContext,
+        exec_state: *const JointRowExecutionState,
+        row_state: ?*const ConstraintRowState,
+        equation: ConstraintRowEquation,
+        prepared: T,
+    ) JointPreparedSolveResult;
+}
+
+const JointSolveResultOutcome = union(enum) {
+    ready: JointPreparedSolveResult,
+    no_change,
+    finalize_exec_state,
+    stalled,
+};
+
 const JointRuntimeRowDescriptor = struct {
     kind: ConstraintRowKind,
+    policy: JointRuntimeRowPolicy,
     row_enabled: JointRowEnabledFn,
-    solver: JointRowSolverFn,
+    prepare_channel: JointPrepareChannelFn,
+};
+
+const JointRuntimeSolveContext = struct {
+    runtime: JointSolveRuntimeContext,
+};
+
+const JointRuntimeSolveContextOutcome = union(enum) {
+    inactive,
+    stalled,
+    ready: JointRuntimeSolveContext,
 };
 
 const JointRowExecutionState = struct {
@@ -488,6 +593,13 @@ const JointRowExecutionState = struct {
     fn applyStep(state: *JointRowExecutionState, step: ConstraintSolveStep) void {
         state.changed = step.changed or state.changed;
         state.applied_impulse = @max(state.applied_impulse, step.applied_impulse);
+    }
+
+    fn solveStep(state: JointRowExecutionState) ConstraintSolveStep {
+        return .{
+            .changed = state.changed,
+            .applied_impulse = state.applied_impulse,
+        };
     }
 
     fn applyImpulseHint(state: *JointRowExecutionState, impulse_hint: f32) void {
@@ -510,6 +622,7 @@ const PreparedDirectionalConstraint = struct {
     dir_z: f32,
     depth: f32,
     predicted_depth: f32,
+    predictive_residual_hint: f32 = 0.0,
 };
 
 const DirectionalRowPayload = struct {
@@ -523,8 +636,15 @@ const PredictiveConstraintGain = struct {
     impulse_delta: f32,
 };
 
+const PredictiveConstraintPolicy = struct {
+    residual_scale: f32,
+    bias_scale: f32,
+    impulse_scale: f32,
+};
+
 const DirectionalRowPlan = struct {
     residual: f32,
+    predictive_residual_hint: f32 = 0.0,
     equation: ConstraintRowEquation,
 };
 
@@ -545,17 +665,104 @@ const KernelJointDrivePlan = struct {
     desired_velocity: f32,
 };
 
-const ContactConstraintMetrics = struct {
+fn buildPreparedDirectionalConstraint(
+    dir_x: f32,
+    dir_y: f32,
+    dir_z: f32,
+    depth: f32,
+    predicted_depth: f32,
+) PreparedDirectionalConstraint {
+    return .{
+        .dir_x = dir_x,
+        .dir_y = dir_y,
+        .dir_z = dir_z,
+        .depth = depth,
+        .predicted_depth = predicted_depth,
+    };
+}
+
+fn withPredictiveResidualHint(
+    direction: PreparedDirectionalConstraint,
+    predictive_residual_hint: f32,
+) PreparedDirectionalConstraint {
+    var resolved = direction;
+    resolved.predictive_residual_hint = predictive_residual_hint;
+    return resolved;
+}
+
+fn idleKernelJointDrivePlan() KernelJointDrivePlan {
+    return .{
+        .signed_step = 0.0,
+        .desired_velocity = 0.0,
+    };
+}
+
+fn kernelPredictionDt() f32 {
+    return 1.0 / 60.0;
+}
+
+fn predictKernelInstanceState(inst: *const scene32.Instance, dt: f32) prediction.LinearState {
+    return prediction.predictLinearState(prediction.linearStateFromInstance(inst), dt);
+}
+
+const DirectionalConstraintChannel = enum {
+    normal,
+    tangent,
+    stress,
+};
+
+const DirectionalConstraintMetrics = struct {
     penetration_depth: f32,
     normal_speed: f32,
     tangential_speed: f32,
 
-    fn stress(self: ContactConstraintMetrics) f32 {
-        return @max(
-            self.penetration_depth,
-            @max(self.normal_speed * 0.25, self.tangential_speed * 0.125),
-        );
+    fn residual(self: DirectionalConstraintMetrics, channel: DirectionalConstraintChannel) f32 {
+        return switch (channel) {
+            .normal => @max(self.penetration_depth, self.normal_speed * 0.25),
+            .tangent => self.tangential_speed * 0.125,
+            .stress => @max(
+                self.penetration_depth,
+                @max(self.normal_speed * 0.25, self.tangential_speed * 0.125),
+            ),
+        };
     }
+
+    fn stress(self: DirectionalConstraintMetrics) f32 {
+        return self.residual(.stress);
+    }
+};
+
+const ContactConstraintMetrics = DirectionalConstraintMetrics;
+
+const DirectionalVelocityComponents = struct {
+    normal_speed_signed: f32,
+    tangent_x: f32,
+    tangent_y: f32,
+    tangent_z: f32,
+
+    fn normalSpeed(self: DirectionalVelocityComponents) f32 {
+        return @abs(self.normal_speed_signed);
+    }
+
+    fn tangentialSpeed(self: DirectionalVelocityComponents) f32 {
+        return @sqrt(self.tangent_x * self.tangent_x + self.tangent_y * self.tangent_y + self.tangent_z * self.tangent_z);
+    }
+};
+
+const DirectionalTangentFrame = struct {
+    dir_x: f32,
+    dir_y: f32,
+    dir_z: f32,
+    speed: f32,
+};
+
+const ContactConstraintProbe = struct {
+    entity_a: *const entity16.Entity16,
+    entity_b: *const entity16.Entity16,
+    aabb_a: physics.AABB,
+    aabb_b: physics.AABB,
+    manifold: collision.ContactManifold,
+    velocity_components: DirectionalVelocityComponents,
 };
 
 const ContactPreparedPair = struct {
@@ -583,6 +790,147 @@ const ContactPreparedPair = struct {
     }
 };
 
+const ContactSolveAccumulator = struct {
+    changed: bool = false,
+    applied_impulse: f32 = 0.0,
+
+    fn applyStep(accum: *ContactSolveAccumulator, step: ConstraintSolveStep) void {
+        accum.changed = step.changed or accum.changed;
+        accum.applied_impulse = @max(accum.applied_impulse, step.applied_impulse);
+    }
+
+    fn addWarmStart(accum: *ContactSolveAccumulator, step: ConstraintSolveStep) void {
+        accum.changed = step.changed or accum.changed;
+        accum.applied_impulse += step.applied_impulse;
+    }
+
+    fn finish(accum: ContactSolveAccumulator) ConstraintSolveStep {
+        return .{
+            .changed = accum.changed,
+            .applied_impulse = accum.applied_impulse,
+        };
+    }
+};
+
+const ContactPairSolveResult = struct {
+    normal_step: ConstraintSolveStep,
+    friction_step: ConstraintSolveStep,
+
+    fn changed(self: ContactPairSolveResult) bool {
+        return self.normal_step.changed or self.friction_step.changed;
+    }
+
+    fn appliedImpulse(self: ContactPairSolveResult) f32 {
+        return @max(self.normal_step.applied_impulse, self.friction_step.applied_impulse);
+    }
+};
+
+const ContactSolveRequest = struct {
+    equation: ConstraintRowEquation,
+    row_state: ?*const ConstraintRowState = null,
+};
+
+const ContactPairSolveRequest = struct {
+    normal: ?ContactSolveRequest = null,
+    friction: ?ContactSolveRequest = null,
+};
+
+const ContactPreparedPairPlan = struct {
+    request: ContactPairSolveRequest,
+    requires_tangent: bool = false,
+};
+
+const ContactExecutionContext = struct {
+    inst_a: *scene32.Instance,
+    inst_b: *scene32.Instance,
+    prepared: ContactPreparedPair,
+};
+
+const ContactExecutionOutcome = union(enum) {
+    inactive,
+    stalled,
+    ready: ContactExecutionContext,
+};
+
+const ContactSolveChannel = enum(u8) {
+    normal,
+    friction,
+};
+
+const ContactRowPlanBuilderFn = *const fn (
+    equation: ConstraintRowEquation,
+    row_state: ?*const ConstraintRowState,
+) ContactPreparedPairPlan;
+
+const ContactPreparedStepSelectorFn = *const fn (
+    result: ContactPairSolveResult,
+) ConstraintSolveStep;
+
+const ContactRuntimeRowDescriptor = struct {
+    kind: ConstraintRowKind,
+    channel: ContactSolveChannel,
+    settle_after_solve: bool,
+    requires_tangent: bool,
+    build_plan: ContactRowPlanBuilderFn,
+    select_step: ContactPreparedStepSelectorFn,
+};
+
+const ContactRuntimeSolveContext = struct {
+    kind: ConstraintRowKind,
+    descriptor: *const ContactRuntimeRowDescriptor,
+    contact: ContactExecutionContext,
+    before: f32,
+};
+
+const ContactRuntimeSolveContextOutcome = union(enum) {
+    inactive,
+    stalled,
+    ready: ContactRuntimeSolveContext,
+};
+
+const ContactBatchPlanBuilderFn = *const fn (
+    ctx: ContactExecutionContext,
+) ContactPreparedPairPlan;
+
+const ContactBatchSolveDescriptor = struct {
+    settle_after_solve: bool,
+    build_plan: ContactBatchPlanBuilderFn,
+};
+
+const ContactBatchSolveContext = struct {
+    descriptor: *const ContactBatchSolveDescriptor,
+    contact: ContactExecutionContext,
+};
+
+const ContactBatchSolveContextOutcome = union(enum) {
+    inactive,
+    stalled,
+    ready: ContactBatchSolveContext,
+};
+
+const ContactPreparedPairOutcome = union(enum) {
+    ready: ContactPairSolveResult,
+    stalled,
+};
+
+fn MapPreparedContactPairOutcomeReadyFn(comptime Context: type, comptime Out: type) type {
+    return *const fn (ctx: Context, pair_result: ContactPairSolveResult) Out;
+}
+
+fn mapPreparedContactPairOutcome(
+    comptime Context: type,
+    comptime Out: type,
+    ctx: Context,
+    outcome: ContactPreparedPairOutcome,
+    stalled_value: Out,
+    map_ready: MapPreparedContactPairOutcomeReadyFn(Context, Out),
+) Out {
+    return switch (outcome) {
+        .ready => |pair_result| map_ready(ctx, pair_result),
+        .stalled => stalled_value,
+    };
+}
+
 const PreparedEnvironmentConstraint = struct {
     normal: PreparedDirectionalConstraint,
     move_x: i32,
@@ -590,18 +938,144 @@ const PreparedEnvironmentConstraint = struct {
     move_z: i32,
 };
 
-const EnvironmentConstraintMetrics = struct {
-    penetration_depth: f32,
-    normal_speed: f32,
-    tangential_speed: f32,
+const EnvironmentPenetrationProbe = struct {
+    inst: *const scene32.Instance,
+    entity: *const entity16.Entity16,
+    penetration: query_types.PenetrationResult,
+};
 
-    fn stress(self: EnvironmentConstraintMetrics) f32 {
-        return @max(
-            self.penetration_depth,
-            @max(self.normal_speed * 0.25, self.tangential_speed * 0.125),
+const EnvironmentResolvedMotion = struct {
+    move_x: i32,
+    move_y: i32,
+    move_z: i32,
+
+    fn changed(self: EnvironmentResolvedMotion) bool {
+        return self.move_x != 0 or self.move_y != 0 or self.move_z != 0;
+    }
+};
+
+const EnvironmentSolveResult = struct {
+    solve_step: ConstraintSolveStep,
+    resolved_motion: EnvironmentResolvedMotion,
+
+    fn applyResolvedMotion(
+        result: EnvironmentSolveResult,
+        inst: *scene32.Instance,
+        entity: *const entity16.Entity16,
+        previous_vel_x: i16,
+        previous_vel_y: i16,
+        previous_vel_z: i16,
+    ) bool {
+        return applyEnvironmentResolvedMotion(
+            inst,
+            entity,
+            result.resolved_motion.move_x,
+            result.resolved_motion.move_y,
+            result.resolved_motion.move_z,
+            previous_vel_x,
+            previous_vel_y,
+            previous_vel_z,
         );
     }
 };
+
+const EnvironmentConstraintMetrics = DirectionalConstraintMetrics;
+
+const EnvironmentExecutionContext = struct {
+    instance_idx: u8,
+    inst: *scene32.Instance,
+    entity: *const entity16.Entity16,
+    prepared: PreparedEnvironmentConstraint,
+    previous_vel_x: i16,
+    previous_vel_y: i16,
+    previous_vel_z: i16,
+};
+
+const EnvironmentExecutionOutcome = union(enum) {
+    inactive,
+    stalled,
+    ready: EnvironmentExecutionContext,
+};
+
+const EnvironmentRuntimeSolveContext = struct {
+    execution: EnvironmentExecutionContext,
+    before: f32,
+};
+
+const EnvironmentRuntimeSolveContextOutcome = union(enum) {
+    inactive,
+    stalled,
+    ready: EnvironmentRuntimeSolveContext,
+};
+
+const EnvironmentBatchSolveContext = struct {
+    execution: EnvironmentExecutionContext,
+};
+
+const EnvironmentBatchSolveContextOutcome = union(enum) {
+    inactive,
+    stalled,
+    ready: EnvironmentBatchSolveContext,
+};
+
+fn MapPreparedExecutionOutcomeFn(comptime Context: type, comptime InReady: type, comptime OutReady: type) type {
+    return *const fn (ctx: Context, ready: InReady) OutReady;
+}
+
+fn mapPreparedExecutionOutcome(
+    comptime Context: type,
+    comptime InReady: type,
+    comptime OutReady: type,
+    comptime InOutcome: type,
+    comptime OutOutcome: type,
+    ctx: Context,
+    outcome: InOutcome,
+    map_ready: MapPreparedExecutionOutcomeFn(Context, InReady, OutReady),
+) OutOutcome {
+    return switch (outcome) {
+        .inactive => @unionInit(OutOutcome, "inactive", {}),
+        .stalled => @unionInit(OutOutcome, "stalled", {}),
+        .ready => |ready| @unionInit(OutOutcome, "ready", map_ready(ctx, ready)),
+    };
+}
+
+fn ExecutePreparedRuntimeReadyFn(comptime Context: type, comptime Ready: type) type {
+    return *const fn (ctx: Context, ready: Ready) ConstraintRowExecResult;
+}
+
+fn executePreparedRuntimeOutcome(
+    comptime Ready: type,
+    comptime Outcome: type,
+    comptime Context: type,
+    outcome: Outcome,
+    ctx: Context,
+    base_residual: f32,
+    execute_ready: ExecutePreparedRuntimeReadyFn(Context, Ready),
+) ConstraintRowExecResult {
+    return switch (outcome) {
+        .inactive => inactiveConstraintRowResult(),
+        .stalled => stalledConstraintRowResult(base_residual),
+        .ready => |ready| execute_ready(ctx, ready),
+    };
+}
+
+fn ExecutePreparedBatchReadyFn(comptime Context: type, comptime Ready: type) type {
+    return *const fn (ctx: Context, ready: Ready) bool;
+}
+
+fn executePreparedBatchOutcome(
+    comptime Ready: type,
+    comptime Outcome: type,
+    comptime Context: type,
+    outcome: Outcome,
+    ctx: Context,
+    execute_ready: ExecutePreparedBatchReadyFn(Context, Ready),
+) bool {
+    return switch (outcome) {
+        .inactive, .stalled => false,
+        .ready => |ready| execute_ready(ctx, ready),
+    };
+}
 
 pub const ImpactBreakDecision = struct {
     break_self: bool,
@@ -1482,7 +1956,7 @@ fn prepareJointSpringLinearConstraint(
         const extension = distance.len - rest_length;
         const stiffness = @max(0.0, joint_def.stiffness) * 0.01;
         const rel_speed = measureKernelRelativeLinearSpeed(inst_a, inst_b, distance.nx, distance.ny, distance.nz);
-        const prediction_dt = 1.0 / 60.0;
+        const prediction_dt = kernelPredictionDt();
         const predicted_extension = extension + rel_speed * prediction_dt;
         const control_extension = if (extension * predicted_extension < 0.0)
             predicted_extension
@@ -1580,14 +2054,14 @@ fn prepareJointLimitChannel(
     inst_a: *const scene32.Instance,
     inst_b: *const scene32.Instance,
     joint_def: *const joint.Joint,
-) ?JointPreparedLimitChannel {
+) JointPreparedOutcome(JointPreparedLimitChannel) {
     return switch (joint_def.joint_type) {
         .hinge => if (prepareJointHingeLimitAngularConstraint(inst_a, inst_b, joint_def)) |prepared|
-            .{ .angular = .{ .axis = jointDominantAxis(joint_def), .constraint = prepared } }
+            .{ .ready = .{ .angular = .{ .axis = jointDominantAxis(joint_def), .constraint = prepared } } }
         else
-            null,
+            .stalled_prepare,
         .slider => if (prepareJointSliderLimitLinearConstraint(inst_a, inst_b, joint_def)) |prepared|
-            .{
+            .{ .ready = .{
                 .linear = .{
                     .axis = .{
                         .x = prepared.dir_x,
@@ -1596,10 +2070,10 @@ fn prepareJointLimitChannel(
                     },
                     .constraint = prepared,
                 },
-            }
+            } }
         else
-            null,
-        else => null,
+            .stalled_prepare,
+        else => .inactive,
     };
 }
 
@@ -1607,10 +2081,10 @@ fn prepareJointAnchorChannel(
     inst_a: *const scene32.Instance,
     inst_b: *const scene32.Instance,
     joint_def: *const joint.Joint,
-) ?JointPreparedAnchorChannel {
+) JointPreparedOutcome(JointPreparedAnchorChannel) {
     return switch (joint_def.joint_type) {
         .spring => if (prepareJointSpringLinearConstraint(inst_a, inst_b, joint_def)) |prepared|
-            .{
+            .{ .ready = .{
                 .axis = .{
                     .x = prepared.dir_x,
                     .y = prepared.dir_y,
@@ -1618,11 +2092,11 @@ fn prepareJointAnchorChannel(
                 },
                 .constraint = prepared,
                 .damping_scale = @max(0.0, joint_def.damping) * 0.001,
-            }
+            } }
         else
-            null,
+            .stalled_prepare,
         .fixed, .ball_socket, .hinge, .slider => if (prepareJointAnchorLinearConstraint(inst_a, inst_b, joint_def)) |prepared|
-            .{
+            .{ .ready = .{
                 .axis = .{
                     .x = prepared.dir_x,
                     .y = prepared.dir_y,
@@ -1630,9 +2104,9 @@ fn prepareJointAnchorChannel(
                 },
                 .constraint = prepared,
                 .damping_scale = @max(0.05, @min(1.0, @max(0.0, joint_def.damping) * 0.001)),
-            }
+            } }
         else
-            null,
+            .stalled_prepare,
     };
 }
 
@@ -1640,24 +2114,145 @@ fn prepareJointDriveChannel(
     inst_a: *const scene32.Instance,
     inst_b: *const scene32.Instance,
     joint_def: *const joint.Joint,
-) ?JointPreparedDriveChannel {
+) JointPreparedOutcome(JointPreparedDriveChannel) {
     return switch (joint_def.joint_type) {
         .hinge => if (prepareJointHingeDriveAngularConstraint(inst_a, inst_b, joint_def)) |prepared|
-            .{ .angular = .{ .axis = jointDominantAxis(joint_def), .constraint = prepared } }
+            .{ .ready = .{ .angular = .{ .axis = jointDominantAxis(joint_def), .constraint = prepared } } }
         else
-            null,
+            .stalled_prepare,
         .slider => {
-            const axis = getKernelJointAxisVector(joint_def) orelse return null;
-            const prepared = prepareJointDriveConstraint(inst_a, inst_b, joint_def) orelse return null;
-            return .{
+            const axis = getKernelJointAxisVector(joint_def) orelse return .stalled_prepare;
+            const prepared = prepareJointDriveConstraint(inst_a, inst_b, joint_def) orelse return .stalled_prepare;
+            return .{ .ready = .{
                 .linear = .{
                     .axis = axis,
                     .constraint = prepared,
                 },
-            };
+            } };
         },
-        else => null,
+        else => .inactive,
     };
+}
+
+fn mapJointPreparedOutcome(
+    comptime In: type,
+    comptime Out: type,
+    ctx: JointSolveRuntimeContext,
+    outcome: JointPreparedOutcome(In),
+    map_ready: MapJointPreparedOutcomeFn(In, Out),
+) JointPreparedOutcome(Out) {
+    return switch (outcome) {
+        .ready => |prepared| .{ .ready = map_ready(ctx, prepared) },
+        .inactive => .inactive,
+        .stalled_prepare => .stalled_prepare,
+    };
+}
+
+fn prepareMappedJointDescriptorChannel(
+    comptime T: type,
+    ctx: JointSolveRuntimeContext,
+    outcome: JointPreparedOutcome(T),
+    map_ready: MapJointPreparedOutcomeFn(T, JointPreparedChannel),
+) JointPreparedOutcome(JointPreparedChannel) {
+    return mapJointPreparedOutcome(
+        T,
+        JointPreparedChannel,
+        ctx,
+        outcome,
+        map_ready,
+    );
+}
+
+fn mapJointDescriptorLimitChannel(
+    ctx: JointSolveRuntimeContext,
+    prepared: JointPreparedLimitChannel,
+) JointPreparedChannel {
+    _ = ctx;
+    return .{ .limit = prepared };
+}
+
+fn prepareJointDescriptorLimitChannel(ctx: JointSolveRuntimeContext) JointPreparedOutcome(JointPreparedChannel) {
+    return prepareMappedJointDescriptorChannel(
+        JointPreparedLimitChannel,
+        ctx,
+        prepareJointLimitChannel(ctx.inst_a, ctx.inst_b, ctx.joint_def),
+        mapJointDescriptorLimitChannel,
+    );
+}
+
+fn prepareJointDescriptorAnchorPostprocess(ctx: JointSolveRuntimeContext) JointAnchorPostprocess {
+    return switch (ctx.descriptor.policy.anchor_postprocess_policy) {
+        .none => .none,
+        .by_joint_type => prepareJointAnchorPostprocess(ctx.joint_def),
+    };
+}
+
+fn withPreparedJointAnchorPostprocess(
+    prepared: JointPreparedAnchorChannel,
+    postprocess: JointAnchorPostprocess,
+) JointPreparedAnchorChannel {
+    var result = prepared;
+    result.postprocess = postprocess;
+    return result;
+}
+
+fn mapJointDescriptorAnchorChannel(
+    ctx: JointSolveRuntimeContext,
+    prepared: JointPreparedAnchorChannel,
+) JointPreparedChannel {
+    return .{ .anchor = withPreparedJointAnchorPostprocess(prepared, prepareJointDescriptorAnchorPostprocess(ctx)) };
+}
+
+fn prepareJointDescriptorAnchorChannel(ctx: JointSolveRuntimeContext) JointPreparedOutcome(JointPreparedChannel) {
+    return prepareMappedJointDescriptorChannel(
+        JointPreparedAnchorChannel,
+        ctx,
+        prepareJointAnchorChannel(ctx.inst_a, ctx.inst_b, ctx.joint_def),
+        mapJointDescriptorAnchorChannel,
+    );
+}
+
+fn prepareJointDescriptorDrivePostprocessPolicy(
+    ctx: JointSolveRuntimeContext,
+) JointPreparedDrivePostprocess {
+    return switch (ctx.descriptor.policy.drive_postprocess_policy) {
+        .none => .none,
+        .velocity_bias => .velocity_bias,
+    };
+}
+
+fn withPreparedJointDrivePostprocess(
+    prepared: JointPreparedDriveChannel,
+    postprocess: JointPreparedDrivePostprocess,
+) JointPreparedDriveChannel {
+    return switch (prepared) {
+        .angular => |angular| .{ .angular = .{
+            .axis = angular.axis,
+            .constraint = angular.constraint,
+            .postprocess = postprocess,
+        } },
+        .linear => |linear| .{ .linear = .{
+            .axis = linear.axis,
+            .constraint = linear.constraint,
+            .postprocess = postprocess,
+        } },
+    };
+}
+
+fn mapJointDescriptorDriveChannel(
+    ctx: JointSolveRuntimeContext,
+    prepared: JointPreparedDriveChannel,
+) JointPreparedChannel {
+    return .{ .drive = withPreparedJointDrivePostprocess(prepared, prepareJointDescriptorDrivePostprocessPolicy(ctx)) };
+}
+
+fn prepareJointDescriptorDriveChannel(ctx: JointSolveRuntimeContext) JointPreparedOutcome(JointPreparedChannel) {
+    return prepareMappedJointDescriptorChannel(
+        JointPreparedDriveChannel,
+        ctx,
+        prepareJointDriveChannel(ctx.inst_a, ctx.inst_b, ctx.joint_def),
+        mapJointDescriptorDriveChannel,
+    );
 }
 
 fn prepareJointAnchorPostprocess(joint_def: *const joint.Joint) JointAnchorPostprocess {
@@ -1805,6 +2400,25 @@ fn finalizePairRowResult(
     return finalizeConstraintRowResult(before, measure_after, changed, applied_impulse, equation);
 }
 
+fn finalizePairSolveStepResult(
+    measure_after: f32,
+    inst_a: *scene32.Instance,
+    inst_b: *scene32.Instance,
+    before: f32,
+    solve_step: ConstraintSolveStep,
+    equation: ConstraintRowEquation,
+) ConstraintRowExecResult {
+    return finalizePairRowResult(
+        measure_after,
+        inst_a,
+        inst_b,
+        before,
+        solve_step.changed,
+        solve_step.applied_impulse,
+        equation,
+    );
+}
+
 fn finalizeSingleRowResult(
     measure_after: f32,
     inst: *scene32.Instance,
@@ -1815,6 +2429,23 @@ fn finalizeSingleRowResult(
 ) ConstraintRowExecResult {
     wakeSingleInstance(inst, changed);
     return finalizeConstraintRowResult(before, measure_after, changed, applied_impulse, equation);
+}
+
+fn finalizeSingleSolveStepResult(
+    measure_after: f32,
+    inst: *scene32.Instance,
+    before: f32,
+    solve_step: ConstraintSolveStep,
+    equation: ConstraintRowEquation,
+) ConstraintRowExecResult {
+    return finalizeSingleRowResult(
+        measure_after,
+        inst,
+        before,
+        solve_step.changed,
+        solve_step.applied_impulse,
+        equation,
+    );
 }
 
 fn settleAndWakeContactPair(
@@ -1829,62 +2460,630 @@ fn settleAndWakeContactPair(
     wakeJointPair(inst_a, inst_b, changed);
 }
 
-fn finalizeJointRowResult(
-    kind: ConstraintRowKind,
-    instances: []scene32.Instance,
-    joints: []joint.Joint,
-    joint_idx: usize,
-    entities: []entity16.Entity16,
-    inst_a: *scene32.Instance,
-    inst_b: *scene32.Instance,
-    before: f32,
-    changed: bool,
-    applied_impulse: f32,
-    equation: ConstraintRowEquation,
-) ConstraintRowExecResult {
-    const after = measureJointRowResidual(kind, instances, joints, joint_idx, entities);
-    return finalizePairRowResult(after, inst_a, inst_b, before, changed, applied_impulse, equation);
-}
-
 fn finalizeJointRowNoChange(
+    ctx: JointSolveRuntimeContext,
+    instances: []scene32.Instance,
+    joints: []joint.Joint,
+    joint_idx: usize,
+    entities: []entity16.Entity16,
+    equation: ConstraintRowEquation,
+) ConstraintRowExecResult {
+    const after = measureJointRowResidual(ctx.kind, instances, joints, joint_idx, entities);
+    return finalizeConstraintRowResult(ctx.before, after, false, 0.0, equation);
+}
+
+fn initJointExecutionState(
+    ctx: JointSolveRuntimeContext,
+    row_state: ?*const ConstraintRowState,
+    equation: ConstraintRowEquation,
+) JointRowExecutionState {
+    return JointRowExecutionState.init(
+        constraintRowWarmImpulse(row_state, ctx.descriptor.policy.warm_impulse_scale, equation, 1.0),
+    );
+}
+
+fn finalizeJointExecutionState(
+    ctx: JointSolveRuntimeContext,
+    instances: []scene32.Instance,
+    joints: []joint.Joint,
+    joint_idx: usize,
+    entities: []entity16.Entity16,
+    exec_state: JointRowExecutionState,
+    equation: ConstraintRowEquation,
+) ConstraintRowExecResult {
+    const after = measureJointRowResidual(ctx.kind, instances, joints, joint_idx, entities);
+    return finalizePairSolveStepResult(after, ctx.inst_a, ctx.inst_b, ctx.before, exec_state.solveStep(), equation);
+}
+
+fn jointPreparedUnavailableOutcome(policy: JointPreparedUnavailablePolicy) JointSolveResultOutcome {
+    return switch (policy) {
+        .finalize_no_change => .no_change,
+        .finalize_exec_state => .finalize_exec_state,
+        .stalled => .stalled,
+    };
+}
+
+fn resolveJointPreparedChannel(
+    comptime T: type,
+    ctx: JointSolveRuntimeContext,
+    outcome: JointPreparedOutcome(T),
+) JointPreparedResolution(T) {
+    return switch (outcome) {
+        .ready => |prepared| .{ .ready = prepared },
+        .inactive => .{ .outcome = jointPreparedUnavailableOutcome(ctx.descriptor.policy.inactive_outcome) },
+        .stalled_prepare => .{ .outcome = jointPreparedUnavailableOutcome(ctx.descriptor.policy.stalled_prepare_outcome) },
+    };
+}
+
+fn prepareResolvedJointSolveResult(
+    comptime T: type,
+    ctx: JointSolveRuntimeContext,
+    exec_state: *const JointRowExecutionState,
+    row_state: ?*const ConstraintRowState,
+    equation: ConstraintRowEquation,
+    prepared_outcome: JointPreparedOutcome(T),
+    build_ready: PrepareResolvedJointSolveResultFn(T),
+) JointSolveResultOutcome {
+    return switch (resolveJointPreparedChannel(T, ctx, prepared_outcome)) {
+        .ready => |prepared| .{ .ready = build_ready(ctx, exec_state, row_state, equation, prepared) },
+        .outcome => |outcome| outcome,
+    };
+}
+
+fn buildReadyJointSolveResultFromPreparedChannel(
+    ctx: JointSolveRuntimeContext,
+    exec_state: *const JointRowExecutionState,
+    row_state: ?*const ConstraintRowState,
+    equation: ConstraintRowEquation,
+    prepared: JointPreparedChannel,
+) JointPreparedSolveResult {
+    return switch (prepared) {
+        .limit => |limit| applyPreparedJointLimitChannel(
+            ctx.inst_a,
+            ctx.inst_b,
+            ctx.mass_data,
+            limit,
+            row_state,
+            equation,
+            ctx.descriptor.policy.signed_correction_policy,
+            ctx.descriptor.policy.impulse_hint_policy,
+        ),
+        .anchor => |anchor| applyPreparedJointAnchorChannel(
+            ctx.inst_a,
+            ctx.inst_b,
+            ctx.mass_data,
+            anchor,
+            exec_state.applied_impulse,
+            equation,
+        ),
+        .drive => |drive| applyPreparedJointDriveChannel(
+            ctx.inst_a,
+            ctx.inst_b,
+            ctx.mass_data,
+            drive,
+            row_state,
+            equation,
+            ctx.descriptor.policy.signed_correction_policy,
+            ctx.descriptor.policy.impulse_hint_policy,
+        ),
+    };
+}
+
+fn prepareJointRuntimeSolveContext(
     kind: ConstraintRowKind,
     instances: []scene32.Instance,
     joints: []joint.Joint,
     joint_idx: usize,
     entities: []entity16.Entity16,
-    before: f32,
-    equation: ConstraintRowEquation,
-) ConstraintRowExecResult {
-    const after = measureJointRowResidual(kind, instances, joints, joint_idx, entities);
-    return finalizeConstraintRowResult(before, after, false, 0.0, equation);
+    base_residual: f32,
+) JointRuntimeSolveContextOutcome {
+    const descriptor = jointRuntimeRowDescriptor(kind) orelse return .inactive;
+    if (joint_idx >= joints.len) return .inactive;
+    if (base_residual <= 0.0) return .inactive;
+
+    const joint_def = &joints[joint_idx];
+    if (!descriptor.row_enabled(joint_def)) return .inactive;
+    if (joint_def.entity_a >= instances.len or joint_def.entity_b >= instances.len) return .inactive;
+
+    const inst_a = &instances[joint_def.entity_a];
+    const inst_b = &instances[joint_def.entity_b];
+    if (inst_a.state == .broken or inst_b.state == .broken) return .inactive;
+
+    const mass_data = computeJointMassData(inst_a, inst_b, entities) orelse return .stalled;
+
+    return .{
+        .ready = .{ .runtime = .{
+            .kind = kind,
+            .descriptor = descriptor,
+            .joint_def = joint_def,
+            .inst_a = inst_a,
+            .inst_b = inst_b,
+            .before = base_residual,
+            .mass_data = mass_data,
+        } },
+    };
 }
 
-fn finalizeContactRowResult(
+fn executePreparedJointRuntimeRow(
+    ctx: JointRuntimeSolveContext,
+    instances: []scene32.Instance,
+    joints: []joint.Joint,
+    joint_idx: usize,
+    entities: []entity16.Entity16,
+    equation: ConstraintRowEquation,
+    row_state: ?*const ConstraintRowState,
+) ConstraintRowExecResult {
+    var exec_state = initJointExecutionState(ctx.runtime, row_state, equation);
+    return switch (prepareResolvedJointSolveResult(
+        JointPreparedChannel,
+        ctx.runtime,
+        &exec_state,
+        row_state,
+        equation,
+        ctx.runtime.descriptor.prepare_channel(ctx.runtime),
+        buildReadyJointSolveResultFromPreparedChannel,
+    )) {
+        .ready => |solve_result| blk: {
+            solve_result.applyAll(&exec_state, ctx.runtime.inst_a, ctx.runtime.inst_b, ctx.runtime.joint_def, ctx.runtime.mass_data);
+            break :blk finalizeJointExecutionState(
+                ctx.runtime,
+                instances,
+                joints,
+                joint_idx,
+                entities,
+                exec_state,
+                equation,
+            );
+        },
+        .no_change => finalizeJointRowNoChange(
+            ctx.runtime,
+            instances,
+            joints,
+            joint_idx,
+            entities,
+            equation,
+        ),
+        .finalize_exec_state => finalizeJointExecutionState(
+            ctx.runtime,
+            instances,
+            joints,
+            joint_idx,
+            entities,
+            exec_state,
+            equation,
+        ),
+        .stalled => stalledConstraintRowResult(ctx.runtime.before),
+    };
+}
+
+const ExecutePreparedJointRuntimeRowContext = struct {
+    instances: []scene32.Instance,
+    joints: []joint.Joint,
+    joint_idx: usize,
+    entities: []entity16.Entity16,
+    equation: ConstraintRowEquation,
+    row_state: ?*const ConstraintRowState,
+};
+
+fn runPreparedJointRuntimeRow(
+    ctx: ExecutePreparedJointRuntimeRowContext,
+    ready: JointRuntimeSolveContext,
+) ConstraintRowExecResult {
+    return executePreparedJointRuntimeRow(
+        ready,
+        ctx.instances,
+        ctx.joints,
+        ctx.joint_idx,
+        ctx.entities,
+        ctx.equation,
+        ctx.row_state,
+    );
+}
+
+fn executePreparedJointRuntimeOutcome(
+    outcome: JointRuntimeSolveContextOutcome,
+    instances: []scene32.Instance,
+    joints: []joint.Joint,
+    joint_idx: usize,
+    entities: []entity16.Entity16,
+    base_residual: f32,
+    equation: ConstraintRowEquation,
+    row_state: ?*const ConstraintRowState,
+) ConstraintRowExecResult {
+    return executePreparedRuntimeOutcome(
+        JointRuntimeSolveContext,
+        JointRuntimeSolveContextOutcome,
+        ExecutePreparedJointRuntimeRowContext,
+        outcome,
+        .{
+            .instances = instances,
+            .joints = joints,
+            .joint_idx = joint_idx,
+            .entities = entities,
+            .equation = equation,
+            .row_state = row_state,
+        },
+        base_residual,
+        runPreparedJointRuntimeRow,
+    );
+}
+
+fn settleContactExecutionContext(
+    ctx: ContactExecutionContext,
+    changed: bool,
+) void {
+    settleAndWakeContactPair(
+        ctx.inst_a,
+        ctx.inst_b,
+        ctx.prepared.inv_mass_a,
+        ctx.prepared.inv_mass_b,
+        ctx.prepared.normal.dir_y,
+        changed,
+    );
+}
+
+fn finishSettledContactPairChanged(
+    settle_after_solve: bool,
+    ctx: ContactExecutionContext,
+    changed: bool,
+) bool {
+    if (settle_after_solve) {
+        settleContactExecutionContext(ctx, changed);
+    }
+    return changed;
+}
+
+fn finalizePreparedContactRowResult(
     kind: ConstraintRowKind,
-    inst_a: *scene32.Instance,
-    inst_b: *scene32.Instance,
+    ctx: ContactExecutionContext,
     entities: []entity16.Entity16,
     before: f32,
-    changed: bool,
-    applied_impulse: f32,
+    solve_step: ConstraintSolveStep,
     equation: ConstraintRowEquation,
 ) ConstraintRowExecResult {
-    const after = measureContactRowResidual(kind, inst_a, inst_b, entities);
-    return finalizePairRowResult(after, inst_a, inst_b, before, changed, applied_impulse, equation);
+    const after = measureContactRowResidual(kind, ctx.inst_a, ctx.inst_b, entities);
+    return finalizePairSolveStepResult(after, ctx.inst_a, ctx.inst_b, before, solve_step, equation);
 }
 
-fn finalizeEnvironmentRowResult(
+const FinishContactSolveResultOutcomeContext = struct {
+    descriptor: *const ContactRuntimeRowDescriptor,
+    kind: ConstraintRowKind,
+    ctx: ContactExecutionContext,
+    entities: []entity16.Entity16,
+    before: f32,
+    equation: ConstraintRowEquation,
+};
+
+fn finishPreparedContactSolveResultReady(
+    ctx: FinishContactSolveResultOutcomeContext,
+    pair_result: ContactPairSolveResult,
+) ConstraintRowExecResult {
+    const solve_step = ctx.descriptor.select_step(pair_result);
+    _ = finishSettledContactPairChanged(ctx.descriptor.settle_after_solve, ctx.ctx, solve_step.changed);
+    return finalizePreparedContactRowResult(ctx.kind, ctx.ctx, ctx.entities, ctx.before, solve_step, ctx.equation);
+}
+
+fn finishContactSolveResultOutcome(
+    descriptor: *const ContactRuntimeRowDescriptor,
+    kind: ConstraintRowKind,
+    ctx: ContactExecutionContext,
+    entities: []entity16.Entity16,
+    before: f32,
+    outcome: ContactPreparedPairOutcome,
+    equation: ConstraintRowEquation,
+) ConstraintRowExecResult {
+    return mapPreparedContactPairOutcome(
+        FinishContactSolveResultOutcomeContext,
+        ConstraintRowExecResult,
+        .{
+            .descriptor = descriptor,
+            .kind = kind,
+            .ctx = ctx,
+            .entities = entities,
+            .before = before,
+            .equation = equation,
+        },
+        outcome,
+        stalledConstraintRowResult(before),
+        finishPreparedContactSolveResultReady,
+    );
+}
+
+const FinishContactBatchSolveOutcomeContext = struct {
+    descriptor: *const ContactBatchSolveDescriptor,
+    ctx: ContactExecutionContext,
+};
+
+fn finishPreparedContactBatchSolveReady(
+    ctx: FinishContactBatchSolveOutcomeContext,
+    pair_result: ContactPairSolveResult,
+) bool {
+    return finishSettledContactPairChanged(ctx.descriptor.settle_after_solve, ctx.ctx, pair_result.changed());
+}
+
+fn finishContactBatchSolveOutcome(
+    descriptor: *const ContactBatchSolveDescriptor,
+    ctx: ContactExecutionContext,
+    outcome: ContactPreparedPairOutcome,
+) bool {
+    return mapPreparedContactPairOutcome(
+        FinishContactBatchSolveOutcomeContext,
+        bool,
+        .{
+            .descriptor = descriptor,
+            .ctx = ctx,
+        },
+        outcome,
+        false,
+        finishPreparedContactBatchSolveReady,
+    );
+}
+
+fn prepareContactExecutionContext(
     s1024: *scene1024.Scene1024,
     entities: []entity16.Entity16,
-    instance_idx: u8,
-    inst: *scene32.Instance,
+    pair: BroadPhasePair,
+) ContactExecutionOutcome {
+    if (pair.a >= s1024.instance_count or pair.b >= s1024.instance_count) return .inactive;
+
+    const inst_a = &s1024.instances[pair.a];
+    const inst_b = &s1024.instances[pair.b];
+    if (inst_a.state == .broken or inst_b.state == .broken) return .inactive;
+    if (inst_a.entity_id >= entities.len or inst_b.entity_id >= entities.len) return .inactive;
+
+    const prepared = prepareContactConstraintPair(inst_a, inst_b, entities) orelse return .stalled;
+    return .{
+        .ready = .{
+            .inst_a = inst_a,
+            .inst_b = inst_b,
+            .prepared = prepared,
+        },
+    };
+}
+
+const ContactRuntimeSolveContextMapContext = struct {
+    kind: ConstraintRowKind,
+    descriptor: *const ContactRuntimeRowDescriptor,
     before: f32,
-    changed: bool,
-    applied_impulse: f32,
+};
+
+fn buildContactRuntimeSolveContext(
+    ctx: ContactRuntimeSolveContextMapContext,
+    ready: ContactExecutionContext,
+) ContactRuntimeSolveContext {
+    return .{
+        .kind = ctx.kind,
+        .descriptor = ctx.descriptor,
+        .contact = ready,
+        .before = ctx.before,
+    };
+}
+
+fn buildContactBatchSolveContext(
+    descriptor: *const ContactBatchSolveDescriptor,
+    ready: ContactExecutionContext,
+) ContactBatchSolveContext {
+    return .{
+        .descriptor = descriptor,
+        .contact = ready,
+    };
+}
+
+fn prepareContactRuntimeSolveContext(
+    kind: ConstraintRowKind,
+    s1024: *scene1024.Scene1024,
+    entities: []entity16.Entity16,
+    pair: BroadPhasePair,
+    base_residual: f32,
+) ContactRuntimeSolveContextOutcome {
+    const descriptor = contactRuntimeRowDescriptor(kind) orelse return .inactive;
+    if (base_residual <= 0.0) return .inactive;
+    return mapPreparedExecutionOutcome(
+        ContactRuntimeSolveContextMapContext,
+        ContactExecutionContext,
+        ContactRuntimeSolveContext,
+        ContactExecutionOutcome,
+        ContactRuntimeSolveContextOutcome,
+        .{
+            .kind = kind,
+            .descriptor = descriptor,
+            .before = base_residual,
+        },
+        prepareContactExecutionContext(s1024, entities, pair),
+        buildContactRuntimeSolveContext,
+    );
+}
+
+fn prepareContactBatchSolveContext(
+    s1024: *scene1024.Scene1024,
+    entities: []entity16.Entity16,
+    pair: BroadPhasePair,
+) ContactBatchSolveContextOutcome {
+    return mapPreparedExecutionOutcome(
+        *const ContactBatchSolveDescriptor,
+        ContactExecutionContext,
+        ContactBatchSolveContext,
+        ContactExecutionOutcome,
+        ContactBatchSolveContextOutcome,
+        &contact_batch_descriptor,
+        prepareContactExecutionContext(s1024, entities, pair),
+        buildContactBatchSolveContext,
+    );
+}
+
+fn solvePreparedContactPair(
+    ctx: ContactExecutionContext,
+    request: ContactPairSolveRequest,
+) ContactPairSolveResult {
+    return .{
+        .normal_step = if (request.normal) |normal|
+            solvePreparedContactNormalSteps(
+                ctx.inst_a,
+                ctx.inst_b,
+                ctx.prepared,
+                normal.equation,
+                normal.row_state,
+            )
+        else
+            .{ .changed = false, .applied_impulse = 0.0 },
+        .friction_step = if (request.friction) |friction|
+            solvePreparedContactFrictionSteps(
+                ctx.inst_a,
+                ctx.inst_b,
+                ctx.prepared,
+                friction.equation,
+                friction.row_state,
+            )
+        else
+            .{ .changed = false, .applied_impulse = 0.0 },
+    };
+}
+
+fn buildContactNormalSolvePlan(
     equation: ConstraintRowEquation,
+    row_state: ?*const ConstraintRowState,
+) ContactPreparedPairPlan {
+    return .{
+        .request = .{
+            .normal = .{
+                .equation = equation,
+                .row_state = row_state,
+            },
+        },
+        .requires_tangent = false,
+    };
+}
+
+fn buildContactFrictionSolvePlan(
+    equation: ConstraintRowEquation,
+    row_state: ?*const ConstraintRowState,
+) ContactPreparedPairPlan {
+    return .{
+        .request = .{
+            .friction = .{
+                .equation = equation,
+                .row_state = row_state,
+            },
+        },
+        .requires_tangent = true,
+    };
+}
+
+fn selectContactNormalSolveStep(result: ContactPairSolveResult) ConstraintSolveStep {
+    return result.normal_step;
+}
+
+fn selectContactFrictionSolveStep(result: ContactPairSolveResult) ConstraintSolveStep {
+    return result.friction_step;
+}
+
+fn buildContactBatchSolvePlan(
+    ctx: ContactExecutionContext,
+) ContactPreparedPairPlan {
+    return .{
+        .request = .{
+            .normal = .{ .equation = ctx.prepared.normal_equation },
+            .friction = .{ .equation = ctx.prepared.friction_equation },
+        },
+        .requires_tangent = false,
+    };
+}
+
+fn solvePreparedContactPlan(
+    ctx: ContactExecutionContext,
+    plan: ContactPreparedPairPlan,
+) ContactPreparedPairOutcome {
+    if (plan.requires_tangent and !ctx.prepared.has_tangent) return .stalled;
+    return .{
+        .ready = solvePreparedContactPair(ctx, plan.request),
+    };
+}
+
+fn executePreparedContactRuntimeRow(
+    ctx: ContactRuntimeSolveContext,
+    entities: []entity16.Entity16,
+    equation: ConstraintRowEquation,
+    row_state: ?*const ConstraintRowState,
 ) ConstraintRowExecResult {
-    const after = measureEnvironmentRowResidual(s1024, entities, instance_idx);
-    return finalizeSingleRowResult(after, inst, before, changed, applied_impulse, equation);
+    return finishContactSolveResultOutcome(
+        ctx.descriptor,
+        ctx.kind,
+        ctx.contact,
+        entities,
+        ctx.before,
+        solvePreparedContactPlan(ctx.contact, ctx.descriptor.build_plan(equation, row_state)),
+        equation,
+    );
+}
+
+const ExecutePreparedContactRuntimeRowContext = struct {
+    entities: []entity16.Entity16,
+    equation: ConstraintRowEquation,
+    row_state: ?*const ConstraintRowState,
+};
+
+fn runPreparedContactRuntimeRow(
+    ctx: ExecutePreparedContactRuntimeRowContext,
+    ready: ContactRuntimeSolveContext,
+) ConstraintRowExecResult {
+    return executePreparedContactRuntimeRow(
+        ready,
+        ctx.entities,
+        ctx.equation,
+        ctx.row_state,
+    );
+}
+
+fn executePreparedContactRuntimeOutcome(
+    outcome: ContactRuntimeSolveContextOutcome,
+    entities: []entity16.Entity16,
+    base_residual: f32,
+    equation: ConstraintRowEquation,
+    row_state: ?*const ConstraintRowState,
+) ConstraintRowExecResult {
+    return executePreparedRuntimeOutcome(
+        ContactRuntimeSolveContext,
+        ContactRuntimeSolveContextOutcome,
+        ExecutePreparedContactRuntimeRowContext,
+        outcome,
+        .{
+            .entities = entities,
+            .equation = equation,
+            .row_state = row_state,
+        },
+        base_residual,
+        runPreparedContactRuntimeRow,
+    );
+}
+
+fn executePreparedContactBatch(
+    ctx: ContactBatchSolveContext,
+) bool {
+    return finishContactBatchSolveOutcome(
+        ctx.descriptor,
+        ctx.contact,
+        solvePreparedContactPlan(ctx.contact, ctx.descriptor.build_plan(ctx.contact)),
+    );
+}
+
+fn runPreparedContactBatch(
+    _: void,
+    ready: ContactBatchSolveContext,
+) bool {
+    return executePreparedContactBatch(ready);
+}
+
+fn executePreparedContactBatchOutcome(
+    outcome: ContactBatchSolveContextOutcome,
+) bool {
+    return executePreparedBatchOutcome(
+        ContactBatchSolveContext,
+        ContactBatchSolveContextOutcome,
+        void,
+        outcome,
+        {},
+        runPreparedContactBatch,
+    );
 }
 
 fn applyEnvironmentSurfaceResponse(
@@ -1981,6 +3180,55 @@ fn solvePrimitiveMagnitude(raw_magnitude: f32, primitive: ConstraintApplyPrimiti
     return solve_magnitude;
 }
 
+const DirectionalDisplacementBodies = union(enum) {
+    single: *scene32.Instance,
+    pair: struct {
+        inst_a: *scene32.Instance,
+        inst_b: *scene32.Instance,
+    },
+};
+
+fn applyDirectionalDisplacementPrimitive(
+    bodies: DirectionalDisplacementBodies,
+    dir_x: f32,
+    dir_y: f32,
+    dir_z: f32,
+    raw_magnitude: f32,
+    primitive: ConstraintApplyPrimitive,
+) ConstraintSolveStep {
+    const solve_magnitude = solvePrimitiveMagnitude(raw_magnitude, primitive);
+    return switch (bodies) {
+        .single => |inst| .{
+            .changed = applyKernelSingleDisplacement(inst, dir_x, dir_y, dir_z, solve_magnitude),
+            .applied_impulse = solve_magnitude,
+        },
+        .pair => |pair| blk: {
+            const pair_bodies = primitive.pair_bodies orelse break :blk .{ .changed = false, .applied_impulse = 0.0 };
+            if (solve_magnitude <= 0.0 and primitive.magnitude_slop <= 0.0) {
+                break :blk .{ .changed = false, .applied_impulse = 0.0 };
+            }
+
+            break :blk .{
+                .changed = applyKernelPairDirectionalDisplacement(
+                    pair.inst_a,
+                    pair.inst_b,
+                    .{
+                        .inv_mass_a = pair_bodies.inv_mass_a,
+                        .inv_mass_b = pair_bodies.inv_mass_b,
+                        .ratio_a = pair_bodies.ratio_a,
+                        .ratio_b = pair_bodies.ratio_b,
+                    },
+                    dir_x,
+                    dir_y,
+                    dir_z,
+                    solve_magnitude + primitive.magnitude_slop,
+                ),
+                .applied_impulse = solve_magnitude,
+            };
+        },
+    };
+}
+
 fn applySingleDisplacementRowStep(
     inst: *scene32.Instance,
     dir_x: f32,
@@ -1989,11 +3237,14 @@ fn applySingleDisplacementRowStep(
     raw_magnitude: f32,
     primitive: ConstraintApplyPrimitive,
 ) ConstraintSolveStep {
-    const solve_magnitude = solvePrimitiveMagnitude(raw_magnitude, primitive);
-    return .{
-        .changed = applyKernelSingleDisplacement(inst, dir_x, dir_y, dir_z, solve_magnitude),
-        .applied_impulse = solve_magnitude,
-    };
+    return applyDirectionalDisplacementPrimitive(
+        .{ .single = inst },
+        dir_x,
+        dir_y,
+        dir_z,
+        raw_magnitude,
+        primitive,
+    );
 }
 
 fn applyPairDirectionalDisplacementRowStep(
@@ -2005,28 +3256,17 @@ fn applyPairDirectionalDisplacementRowStep(
     raw_magnitude: f32,
     primitive: ConstraintApplyPrimitive,
 ) ConstraintSolveStep {
-    const pair_bodies = primitive.pair_bodies orelse return .{ .changed = false, .applied_impulse = 0.0 };
-
-    const solve_magnitude = solvePrimitiveMagnitude(raw_magnitude, primitive);
-    if (solve_magnitude <= 0.0 and primitive.magnitude_slop <= 0.0) return .{ .changed = false, .applied_impulse = 0.0 };
-
-    return .{
-        .changed = applyKernelPairDirectionalDisplacement(
-            inst_a,
-            inst_b,
-            .{
-                .inv_mass_a = pair_bodies.inv_mass_a,
-                .inv_mass_b = pair_bodies.inv_mass_b,
-                .ratio_a = pair_bodies.ratio_a,
-                .ratio_b = pair_bodies.ratio_b,
-            },
-            dir_x,
-            dir_y,
-            dir_z,
-            solve_magnitude + primitive.magnitude_slop,
-        ),
-        .applied_impulse = solve_magnitude,
-    };
+    return applyDirectionalDisplacementPrimitive(
+        .{ .pair = .{
+            .inst_a = inst_a,
+            .inst_b = inst_b,
+        } },
+        dir_x,
+        dir_y,
+        dir_z,
+        raw_magnitude,
+        primitive,
+    );
 }
 
 fn applyEnvironmentSolveDisplacement(
@@ -2053,6 +3293,289 @@ fn applyEnvironmentSolveDisplacement(
             .axis_y = dir_y,
             .axis_z = dir_z,
         },
+    );
+}
+
+fn solvePreparedEnvironmentMotion(
+    inst: *scene32.Instance,
+    prepared: PreparedEnvironmentConstraint,
+    equation: ConstraintRowEquation,
+) EnvironmentSolveResult {
+    const solve_step = applyEnvironmentSolveDisplacement(
+        inst,
+        prepared.normal.dir_x,
+        prepared.normal.dir_y,
+        prepared.normal.dir_z,
+        prepared.normal.depth,
+        equation,
+    );
+    return .{
+        .solve_step = solve_step,
+        .resolved_motion = .{
+            .move_x = @as(i32, @intFromFloat(@round(prepared.normal.dir_x * solve_step.applied_impulse))),
+            .move_y = @as(i32, @intFromFloat(@round(prepared.normal.dir_y * solve_step.applied_impulse))),
+            .move_z = @as(i32, @intFromFloat(@round(prepared.normal.dir_z * solve_step.applied_impulse))),
+        },
+    };
+}
+
+fn prepareEnvironmentResolvedMotion(prepared: PreparedEnvironmentConstraint) EnvironmentResolvedMotion {
+    return .{
+        .move_x = prepared.move_x,
+        .move_y = prepared.move_y,
+        .move_z = prepared.move_z,
+    };
+}
+
+fn buildPreparedEnvironmentBatchSolveResult(
+    prepared: PreparedEnvironmentConstraint,
+) EnvironmentSolveResult {
+    const resolved_motion = prepareEnvironmentResolvedMotion(prepared);
+    return .{
+        .solve_step = .{
+            .changed = resolved_motion.changed(),
+            .applied_impulse = prepared.normal.depth,
+        },
+        .resolved_motion = resolved_motion,
+    };
+}
+
+fn prepareEnvironmentExecutionContext(
+    s1024: *scene1024.Scene1024,
+    entities: []entity16.Entity16,
+    instance_idx: u8,
+) EnvironmentExecutionOutcome {
+    if (instance_idx >= s1024.instance_count) return .inactive;
+
+    const inst = &s1024.instances[instance_idx];
+    if (inst.state == .broken) return .stalled;
+    if (inst.entity_id >= entities.len) return .stalled;
+
+    const entity = &entities[inst.entity_id];
+    if ((entity.physics.flags & 0x01) != 0 or entity.physics.mass == 0) return .stalled;
+    const prepared = prepareEnvironmentConstraint(s1024, entities, instance_idx) orelse return .stalled;
+
+    return .{
+        .ready = .{
+            .instance_idx = instance_idx,
+            .inst = inst,
+            .entity = entity,
+            .prepared = prepared,
+            .previous_vel_x = inst.vel_x,
+            .previous_vel_y = inst.vel_y,
+            .previous_vel_z = inst.vel_z,
+        },
+    };
+}
+
+fn buildEnvironmentRuntimeSolveContext(
+    before: f32,
+    ready: EnvironmentExecutionContext,
+) EnvironmentRuntimeSolveContext {
+    return .{
+        .execution = ready,
+        .before = before,
+    };
+}
+
+fn prepareEnvironmentRuntimeSolveContext(
+    s1024: *scene1024.Scene1024,
+    entities: []entity16.Entity16,
+    instance_idx: u8,
+    base_residual: f32,
+) EnvironmentRuntimeSolveContextOutcome {
+    if (base_residual <= 0.0) return .inactive;
+    return mapPreparedExecutionOutcome(
+        f32,
+        EnvironmentExecutionContext,
+        EnvironmentRuntimeSolveContext,
+        EnvironmentExecutionOutcome,
+        EnvironmentRuntimeSolveContextOutcome,
+        base_residual,
+        prepareEnvironmentExecutionContext(s1024, entities, instance_idx),
+        buildEnvironmentRuntimeSolveContext,
+    );
+}
+
+fn buildEnvironmentBatchSolveContext(
+    _: void,
+    ready: EnvironmentExecutionContext,
+) EnvironmentBatchSolveContext {
+    return .{
+        .execution = ready,
+    };
+}
+
+fn prepareEnvironmentBatchSolveContext(
+    s1024: *scene1024.Scene1024,
+    entities: []entity16.Entity16,
+    instance_idx: u8,
+) EnvironmentBatchSolveContextOutcome {
+    return mapPreparedExecutionOutcome(
+        void,
+        EnvironmentExecutionContext,
+        EnvironmentBatchSolveContext,
+        EnvironmentExecutionOutcome,
+        EnvironmentBatchSolveContextOutcome,
+        {},
+        prepareEnvironmentExecutionContext(s1024, entities, instance_idx),
+        buildEnvironmentBatchSolveContext,
+    );
+}
+
+fn executePreparedEnvironmentResolvedMotion(
+    ctx: EnvironmentExecutionContext,
+    result: EnvironmentSolveResult,
+) bool {
+    const moved = result.applyResolvedMotion(
+        ctx.inst,
+        ctx.entity,
+        ctx.previous_vel_x,
+        ctx.previous_vel_y,
+        ctx.previous_vel_z,
+    );
+    if (moved) wakeInstance(ctx.inst);
+    return moved;
+}
+
+fn executePreparedEnvironmentBatch(
+    ctx: EnvironmentBatchSolveContext,
+) bool {
+    return executePreparedEnvironmentResolvedMotion(
+        ctx.execution,
+        buildPreparedEnvironmentBatchSolveResult(ctx.execution.prepared),
+    );
+}
+
+fn runPreparedEnvironmentBatch(
+    _: void,
+    ready: EnvironmentBatchSolveContext,
+) bool {
+    return executePreparedEnvironmentBatch(ready);
+}
+
+fn executePreparedEnvironmentBatchOutcome(
+    outcome: EnvironmentBatchSolveContextOutcome,
+) bool {
+    return executePreparedBatchOutcome(
+        EnvironmentBatchSolveContext,
+        EnvironmentBatchSolveContextOutcome,
+        void,
+        outcome,
+        {},
+        runPreparedEnvironmentBatch,
+    );
+}
+
+const ExecutePreparedEnvironmentRuntimeRowContext = struct {
+    s1024: *scene1024.Scene1024,
+    entities: []entity16.Entity16,
+    equation: ConstraintRowEquation,
+    row_state: ?*const ConstraintRowState,
+};
+
+fn runPreparedEnvironmentRuntimeRow(
+    ctx: ExecutePreparedEnvironmentRuntimeRowContext,
+    ready: EnvironmentRuntimeSolveContext,
+) ConstraintRowExecResult {
+    return executePreparedEnvironmentRow(
+        ctx.s1024,
+        ctx.entities,
+        ready.execution,
+        ready.before,
+        ctx.equation,
+        ctx.row_state,
+    );
+}
+
+fn finalizePreparedEnvironmentRowResult(
+    s1024: *scene1024.Scene1024,
+    entities: []entity16.Entity16,
+    ctx: EnvironmentExecutionContext,
+    before: f32,
+    solve_result: EnvironmentSolveResult,
+    applied_impulse: f32,
+    equation: ConstraintRowEquation,
+) ConstraintRowExecResult {
+    const after = measureEnvironmentRowResidual(s1024, entities, ctx.instance_idx);
+    return finalizeSingleSolveStepResult(
+        after,
+        ctx.inst,
+        before,
+        .{
+            .changed = solve_result.solve_step.changed,
+            .applied_impulse = applied_impulse,
+        },
+        equation,
+    );
+}
+
+fn executePreparedEnvironmentRuntimeOutcome(
+    outcome: EnvironmentRuntimeSolveContextOutcome,
+    s1024: *scene1024.Scene1024,
+    entities: []entity16.Entity16,
+    base_residual: f32,
+    equation: ConstraintRowEquation,
+    row_state: ?*const ConstraintRowState,
+) ConstraintRowExecResult {
+    return executePreparedRuntimeOutcome(
+        EnvironmentRuntimeSolveContext,
+        EnvironmentRuntimeSolveContextOutcome,
+        ExecutePreparedEnvironmentRuntimeRowContext,
+        outcome,
+        .{
+            .s1024 = s1024,
+            .entities = entities,
+            .equation = equation,
+            .row_state = row_state,
+        },
+        base_residual,
+        runPreparedEnvironmentRuntimeRow,
+    );
+}
+
+fn executePreparedEnvironmentRow(
+    s1024: *scene1024.Scene1024,
+    entities: []entity16.Entity16,
+    ctx: EnvironmentExecutionContext,
+    before: f32,
+    equation: ConstraintRowEquation,
+    row_state: ?*const ConstraintRowState,
+) ConstraintRowExecResult {
+    var applied_impulse: f32 = 0.0;
+
+    if (row_state) |_| {
+        const warm_move = @min(
+            constraintRowWarmImpulse(row_state, 0.25, equation, 1.0),
+            @min(ctx.prepared.normal.depth * 0.5, equation.max_impulse),
+        );
+        const warm_step = applyEnvironmentWarmStartDisplacement(
+            ctx.inst,
+            ctx.prepared.normal.dir_x,
+            ctx.prepared.normal.dir_y,
+            ctx.prepared.normal.dir_z,
+            warm_move,
+            equation,
+        );
+        applied_impulse += warm_step.applied_impulse;
+    }
+
+    const solve_result = solvePreparedEnvironmentMotion(
+        ctx.inst,
+        ctx.prepared,
+        equation,
+    );
+    applied_impulse = @max(applied_impulse, solve_result.solve_step.applied_impulse);
+
+    _ = executePreparedEnvironmentResolvedMotion(ctx, solve_result);
+    return finalizePreparedEnvironmentRowResult(
+        s1024,
+        entities,
+        ctx,
+        before,
+        solve_result,
+        applied_impulse,
+        equation,
     );
 }
 
@@ -2248,6 +3771,99 @@ fn applyJointDirectionalConstraint(
     };
 }
 
+fn jointRowSignedCorrection(
+    row_state: ?*const ConstraintRowState,
+    equation: ConstraintRowEquation,
+    value: f32,
+    policy: JointSignedCorrectionPolicy,
+) f32 {
+    return if (policy.planned)
+        constraintRowPlannedSignedCorrection(
+            row_state,
+            policy.retention_scale,
+            equation,
+            policy.bias_scale,
+            value,
+        )
+    else
+        constraintRowSignedCorrection(
+            row_state,
+            policy.retention_scale,
+            equation,
+            policy.bias_scale,
+            value,
+            policy.min_abs_correction,
+        );
+}
+
+fn prepareJointDriveSolvePostprocess(
+    prepared: JointPreparedDriveChannel,
+    postprocess: JointPreparedDrivePostprocess,
+) JointPreparedPostprocess {
+    return switch (postprocess) {
+        .none => .none,
+        .velocity_bias => .{ .drive_velocity_bias = prepared },
+    };
+}
+
+fn jointImpulseHint(value: f32, policy: JointImpulseHintPolicy) f32 {
+    if (!policy.enabled) return 0.0;
+    return value * policy.scale;
+}
+
+fn prepareJointAnchorSolvePostprocess(
+    postprocess: JointAnchorPostprocess,
+) JointPreparedPostprocess {
+    return .{ .anchor = postprocess };
+}
+
+fn withJointSolveResultMetadata(
+    result: JointPreparedSolveResult,
+    impulse_hint: f32,
+    postprocess: JointPreparedPostprocess,
+) JointPreparedSolveResult {
+    var updated = result;
+    updated.impulse_hint = impulse_hint;
+    updated.postprocess = postprocess;
+    return updated;
+}
+
+fn buildJointAngularPositionSolveResult(
+    inst_a: *scene32.Instance,
+    inst_b: *scene32.Instance,
+    mass_data: JointMassData,
+    axis: JointAxis,
+    angle_a: f32,
+    angle_b: f32,
+    correction: f32,
+    equation: ConstraintRowEquation,
+) JointPreparedSolveResult {
+    return .{
+        .solve_step = applyPairAngularPositionRowStep(
+            inst_a,
+            inst_b,
+            axis,
+            angle_a,
+            angle_b,
+            correction,
+            makePairPrimitiveFromJointMassData(mass_data, .angular_position, equation, 0.35, 0.0, 0.0, 0.0),
+        ),
+    };
+}
+
+fn buildJointLinearAxisSolveResult(
+    inst_a: *scene32.Instance,
+    inst_b: *scene32.Instance,
+    mass_data: JointMassData,
+    axis: JointAxisVector,
+    correction: f32,
+    equation: ConstraintRowEquation,
+) JointPreparedSolveResult {
+    return .{
+        .solve_step = applyJointAxisScalarCorrection(inst_a, inst_b, mass_data, axis, correction, equation),
+    };
+}
+
 fn applyPreparedJointLimitChannel(
     inst_a: *scene32.Instance,
     inst_b: *scene32.Instance,
@@ -2255,41 +3871,34 @@ fn applyPreparedJointLimitChannel(
     prepared: JointPreparedLimitChannel,
     row_state: ?*const ConstraintRowState,
     equation: ConstraintRowEquation,
+    correction_policy: JointSignedCorrectionPolicy,
+    impulse_hint_policy: JointImpulseHintPolicy,
 ) JointPreparedSolveResult {
+    _ = impulse_hint_policy;
     return switch (prepared) {
         .angular => |angular| blk: {
-            const correction = constraintRowSignedCorrection(
-                row_state,
-                0.1,
+            const correction = jointRowSignedCorrection(row_state, equation, angular.constraint.magnitude, correction_policy);
+            break :blk buildJointAngularPositionSolveResult(
+                inst_a,
+                inst_b,
+                mass_data,
+                angular.axis,
+                angular.constraint.angle_a,
+                angular.constraint.angle_b,
+                correction,
                 equation,
-                1.0,
-                angular.constraint.magnitude,
-                0.0001,
             );
-            break :blk .{
-                .solve_step = applyPairAngularPositionRowStep(
-                    inst_a,
-                    inst_b,
-                    angular.axis,
-                    angular.constraint.angle_a,
-                    angular.constraint.angle_b,
-                    correction,
-                    makePairPrimitiveFromJointMassData(mass_data, .angular_position, equation, 0.35, 0.0, 0.0, 0.0),
-                ),
-            };
         },
         .linear => |linear| blk: {
-            const correction = constraintRowSignedCorrection(
-                row_state,
-                0.1,
+            const correction = jointRowSignedCorrection(row_state, equation, linear.constraint.magnitude, correction_policy);
+            break :blk buildJointLinearAxisSolveResult(
+                inst_a,
+                inst_b,
+                mass_data,
+                linear.axis,
+                correction,
                 equation,
-                1.0,
-                linear.constraint.magnitude,
-                0.0001,
             );
-            break :blk .{
-                .solve_step = applyJointAxisScalarCorrection(inst_a, inst_b, mass_data, linear.axis, correction, equation),
-            };
         },
     };
 }
@@ -2301,9 +3910,8 @@ fn applyPreparedJointAnchorChannel(
     prepared: JointPreparedAnchorChannel,
     warm_impulse: f32,
     equation: ConstraintRowEquation,
-    postprocess: JointAnchorPostprocess,
 ) JointPreparedSolveResult {
-    return .{
+    return withJointSolveResultMetadata(.{
         .solve_step = applyJointDirectionalConstraint(
             inst_a,
             inst_b,
@@ -2316,8 +3924,7 @@ fn applyPreparedJointAnchorChannel(
             prepared.damping_scale,
             equation,
         ),
-        .postprocess = .{ .anchor = postprocess },
-    };
+    }, 0.0, prepareJointAnchorSolvePostprocess(prepared.postprocess));
 }
 
 fn applyPreparedJointDriveChannel(
@@ -2327,53 +3934,33 @@ fn applyPreparedJointDriveChannel(
     prepared: JointPreparedDriveChannel,
     row_state: ?*const ConstraintRowState,
     equation: ConstraintRowEquation,
+    correction_policy: JointSignedCorrectionPolicy,
+    impulse_hint_policy: JointImpulseHintPolicy,
 ) JointPreparedSolveResult {
     return switch (prepared) {
         .angular => |angular| blk: {
-            const signed_step = constraintRowPlannedSignedCorrection(
-                row_state,
-                0.35,
+            const signed_step = jointRowSignedCorrection(row_state, equation, angular.constraint.signed_step, correction_policy);
+            break :blk withJointSolveResultMetadata(buildJointAngularPositionSolveResult(
+                inst_a,
+                inst_b,
+                mass_data,
+                angular.axis,
+                angular.constraint.angle_a,
+                angular.constraint.angle_b,
+                -signed_step,
                 equation,
-                1.0,
-                angular.constraint.signed_step,
-            );
-            break :blk .{
-                .solve_step = applyPairAngularPositionRowStep(
-                    inst_a,
-                    inst_b,
-                    angular.axis,
-                    angular.constraint.angle_a,
-                    angular.constraint.angle_b,
-                    -signed_step,
-                    makePairPrimitiveFromJointMassData(mass_data, .angular_position, equation, 0.35, 0.0, 0.0, 0.0),
-                ),
-                .impulse_hint = angular.constraint.signed_step,
-                .postprocess = .{
-                    .drive_velocity_bias = .{
-                        .prepared = prepared,
-                        .desired_velocity = angular.constraint.desired_velocity,
-                    },
-                },
-            };
+            ), jointImpulseHint(angular.constraint.signed_step, impulse_hint_policy), prepareJointDriveSolvePostprocess(prepared, angular.postprocess));
         },
         .linear => |linear| blk: {
-            const signed_step = constraintRowPlannedSignedCorrection(
-                row_state,
-                0.35,
+            const signed_step = jointRowSignedCorrection(row_state, equation, linear.constraint.signed_step, correction_policy);
+            break :blk withJointSolveResultMetadata(buildJointLinearAxisSolveResult(
+                inst_a,
+                inst_b,
+                mass_data,
+                linear.axis,
+                -signed_step,
                 equation,
-                1.0,
-                linear.constraint.signed_step,
-            );
-            break :blk .{
-                .solve_step = applyJointAxisScalarCorrection(inst_a, inst_b, mass_data, linear.axis, -signed_step, equation),
-                .impulse_hint = linear.constraint.signed_step,
-                .postprocess = .{
-                    .drive_velocity_bias = .{
-                        .prepared = prepared,
-                        .desired_velocity = linear.constraint.desired_velocity,
-                    },
-                },
-            };
+            ), jointImpulseHint(linear.constraint.signed_step, impulse_hint_policy), prepareJointDriveSolvePostprocess(prepared, linear.postprocess));
         },
     };
 }
@@ -2414,15 +4001,14 @@ fn applyPreparedJointDriveVelocityBias(
     joint_def: *const joint.Joint,
     mass_data: JointMassData,
     prepared: JointPreparedDriveChannel,
-    desired_velocity: f32,
 ) bool {
     return switch (prepared) {
-        .angular => applyKernelAngularMotorVelocityBias(
+        .angular => |angular| applyKernelAngularMotorVelocityBias(
             inst_a,
             inst_b,
             joint_def,
             mass_data,
-            desired_velocity,
+            angular.constraint.desired_velocity,
         ),
         .linear => |linear| applyKernelLinearMotorVelocityBias(
             inst_a,
@@ -2432,7 +4018,7 @@ fn applyPreparedJointDriveVelocityBias(
             linear.axis.x,
             linear.axis.y,
             linear.axis.z,
-            desired_velocity,
+            linear.constraint.desired_velocity,
         ),
     };
 }
@@ -2535,7 +4121,7 @@ fn computeKernelJointDrivePlan(
     drive_state: KernelJointDriveState,
     min_step: f32,
 ) ?KernelJointDrivePlan {
-    const prediction_dt = 1.0 / 60.0;
+    const prediction_dt = kernelPredictionDt();
     const max_drive_velocity = @max(1.0, joint_def.motor_speed);
     const min_limit = @min(joint_def.limit_min, joint_def.limit_max);
     const max_limit = @max(joint_def.limit_min, joint_def.limit_max);
@@ -2543,19 +4129,13 @@ fn computeKernelJointDrivePlan(
     const position_error = target - drive_state.position;
     if (@abs(position_error) <= 0.0001) {
         if (@abs(drive_state.relative_velocity) <= 0.0001) return null;
-        return .{
-            .signed_step = 0.0,
-            .desired_velocity = 0.0,
-        };
+        return idleKernelJointDrivePlan();
     }
 
     const predicted_position = drive_state.position + drive_state.relative_velocity * prediction_dt;
     const predicted_error = target - predicted_position;
     if (@abs(predicted_error) <= 0.0001) {
-        return .{
-            .signed_step = 0.0,
-            .desired_velocity = 0.0,
-        };
+        return idleKernelJointDrivePlan();
     }
 
     const use_predictive_brake = position_error * predicted_error < 0.0 or @abs(predicted_error) < @abs(position_error);
@@ -2664,14 +4244,15 @@ fn buildContactNormalEquation(
     penetration_depth: f32,
     relative_normal_speed: f32,
 ) ConstraintRowEquation {
-    const total_inv_mass = inv_mass_a + inv_mass_b;
-    const effective_mass = if (total_inv_mass > 0.0001) 1.0 / total_inv_mass else 0.0;
-    const bias = penetration_depth * 0.2 + @max(0.0, -relative_normal_speed) * 0.05;
-    return .{
-        .effective_mass = effective_mass,
-        .bias = bias,
-        .max_impulse = @max(0.5, penetration_depth * 8.0 + @abs(relative_normal_speed) * 0.5),
-    };
+    return buildNormalConstraintEquation(
+        effectiveMassFromPairInverseMasses(inv_mass_a, inv_mass_b),
+        penetration_depth,
+        relative_normal_speed,
+        0.2,
+        0.05,
+        8.0,
+        0.5,
+    );
 }
 
 fn buildContactFrictionEquation(
@@ -2681,8 +4262,7 @@ fn buildContactFrictionEquation(
     friction_coeff: f32,
     normal_impulse_limit: f32,
 ) ConstraintRowEquation {
-    const total_inv_mass = inv_mass_a + inv_mass_b;
-    const effective_mass = if (total_inv_mass > 0.0001) 1.0 / total_inv_mass else 0.0;
+    const effective_mass = effectiveMassFromPairInverseMasses(inv_mass_a, inv_mass_b);
     return .{
         .effective_mass = effective_mass,
         .bias = @abs(tangential_speed) * 0.05,
@@ -2705,9 +4285,7 @@ fn buildContactNormalRowPlan(
             relative_normal_speed,
         ),
         direction,
-        0.75,
-        0.15,
-        0.5,
+        contactNormalPredictiveConstraintPolicy(),
     );
 }
 
@@ -2719,16 +4297,17 @@ fn buildContactFrictionRowPlan(
     normal_impulse_limit: f32,
     direction: PreparedDirectionalConstraint,
 ) DirectionalRowPlan {
-    return .{
-        .residual = direction.depth * 0.125,
-        .equation = buildContactFrictionEquation(
+    return buildDirectionalResidualRowPlan(
+        .tangent,
+        direction,
+        buildContactFrictionEquation(
             inv_mass_a,
             inv_mass_b,
             tangential_speed,
             friction_coeff,
             normal_impulse_limit,
         ),
-    };
+    );
 }
 
 fn buildEnvironmentEquation(
@@ -2736,13 +4315,15 @@ fn buildEnvironmentEquation(
     penetration_depth: f32,
     relative_normal_speed: f32,
 ) ConstraintRowEquation {
-    const effective_mass = if (inverse_mass > 0.0001) 1.0 / inverse_mass else 0.0;
-    const bias = penetration_depth * 0.25 + @max(0.0, -relative_normal_speed) * 0.05;
-    return .{
-        .effective_mass = effective_mass,
-        .bias = bias,
-        .max_impulse = @max(0.5, penetration_depth * 6.0 + @abs(relative_normal_speed) * 0.5),
-    };
+    return buildNormalConstraintEquation(
+        effectiveMassFromInverseMass(inverse_mass),
+        penetration_depth,
+        relative_normal_speed,
+        0.25,
+        0.05,
+        6.0,
+        0.5,
+    );
 }
 
 fn buildEnvironmentDirectionalRowPlan(
@@ -2757,9 +4338,7 @@ fn buildEnvironmentDirectionalRowPlan(
             metrics.normal_speed,
         ),
         direction,
-        0.75,
-        0.2,
-        0.5,
+        environmentPredictiveConstraintPolicy(),
     );
 }
 
@@ -2767,10 +4346,19 @@ fn buildJointRowPlan(
     base_residual: f32,
     equation: ConstraintRowEquation,
 ) DirectionalRowPlan {
+    return makeDirectionalRowPlan(base_residual, equation, 0.0);
+}
+
+fn zeroConstraintEquation() ConstraintRowEquation {
     return .{
-        .residual = base_residual,
-        .equation = equation,
+        .effective_mass = 0.0,
+        .bias = 0.0,
+        .max_impulse = 0.0,
     };
+}
+
+fn zeroDirectionalRowPlan() DirectionalRowPlan {
+    return makeDirectionalRowPlan(0.0, zeroConstraintEquation(), 0.0);
 }
 
 fn buildJointEquation(
@@ -2780,23 +4368,14 @@ fn buildJointEquation(
     entities: []entity16.Entity16,
 ) ConstraintRowEquation {
     const priority = joint.measureJointSolvePriorityForIndex(instances, joints, joint_idx, entities);
-    if (priority <= 0.0 or joint_idx >= joints.len) return .{
-        .effective_mass = 0.0,
-        .bias = 0.0,
-        .max_impulse = 0.0,
-    };
+    if (priority <= 0.0 or joint_idx >= joints.len) return zeroConstraintEquation();
 
     const joint_def = &joints[joint_idx];
-    if (joint_def.entity_a >= instances.len or joint_def.entity_b >= instances.len) return .{
-        .effective_mass = 0.0,
-        .bias = 0.0,
-        .max_impulse = 0.0,
-    };
+    if (joint_def.entity_a >= instances.len or joint_def.entity_b >= instances.len) return zeroConstraintEquation();
 
     const inv_mass_a = instanceInverseMass(&instances[joint_def.entity_a], entities);
     const inv_mass_b = instanceInverseMass(&instances[joint_def.entity_b], entities);
-    const total_inv_mass = inv_mass_a + inv_mass_b;
-    const effective_mass = if (total_inv_mass > 0.0001) 1.0 / total_inv_mass else 0.0;
+    const effective_mass = effectiveMassFromPairInverseMasses(inv_mass_a, inv_mass_b);
 
     return .{
         .effective_mass = effective_mass,
@@ -2812,28 +4391,15 @@ fn buildJointDriveEquation(
     entities: []entity16.Entity16,
 ) ConstraintRowEquation {
     const priority = joint.measureJointSolvePriorityForIndex(instances, joints, joint_idx, entities);
-    if (priority <= 0.0 or joint_idx >= joints.len) return .{
-        .effective_mass = 0.0,
-        .bias = 0.0,
-        .max_impulse = 0.0,
-    };
+    if (priority <= 0.0 or joint_idx >= joints.len) return zeroConstraintEquation();
 
     const joint_def = &joints[joint_idx];
-    if (!joint_def.motor_enabled or joint_def.motor_speed <= 0.0) return .{
-        .effective_mass = 0.0,
-        .bias = 0.0,
-        .max_impulse = 0.0,
-    };
-    if (joint_def.entity_a >= instances.len or joint_def.entity_b >= instances.len) return .{
-        .effective_mass = 0.0,
-        .bias = 0.0,
-        .max_impulse = 0.0,
-    };
+    if (!joint_def.motor_enabled or joint_def.motor_speed <= 0.0) return zeroConstraintEquation();
+    if (joint_def.entity_a >= instances.len or joint_def.entity_b >= instances.len) return zeroConstraintEquation();
 
     const inv_mass_a = instanceInverseMass(&instances[joint_def.entity_a], entities);
     const inv_mass_b = instanceInverseMass(&instances[joint_def.entity_b], entities);
-    const total_inv_mass = inv_mass_a + inv_mass_b;
-    const effective_mass = if (total_inv_mass > 0.0001) 1.0 / total_inv_mass else 0.0;
+    const effective_mass = effectiveMassFromPairInverseMasses(inv_mass_a, inv_mass_b);
 
     return .{
         .effective_mass = effective_mass,
@@ -2941,15 +4507,17 @@ fn buildJointDriveRowPlan(
     );
 }
 
-fn measureContactConstraintMetrics(
+fn probeContactConstraint(
     inst_a: *const scene32.Instance,
     inst_b: *const scene32.Instance,
     entities: []entity16.Entity16,
-) ?ContactConstraintMetrics {
+) ?ContactConstraintProbe {
     if (inst_a.entity_id >= entities.len or inst_b.entity_id >= entities.len) return null;
 
-    const aabb_a = physics.computeEntityWorldAABB(inst_a, &entities[inst_a.entity_id]) orelse return null;
-    const aabb_b = physics.computeEntityWorldAABB(inst_b, &entities[inst_b.entity_id]) orelse return null;
+    const entity_a = &entities[inst_a.entity_id];
+    const entity_b = &entities[inst_b.entity_id];
+    const aabb_a = physics.computeEntityWorldAABB(inst_a, entity_a) orelse return null;
+    const aabb_b = physics.computeEntityWorldAABB(inst_b, entity_b) orelse return null;
     if (!physics.aabbHit(aabb_a, aabb_b)) return null;
 
     const manifold = collision.buildAABBContactManifold(aabb_a, aabb_b);
@@ -2958,17 +4526,36 @@ fn measureContactConstraintMetrics(
     const rel_vel_x = @as(f32, @floatFromInt(inst_b.vel_x - inst_a.vel_x));
     const rel_vel_y = @as(f32, @floatFromInt(inst_b.vel_y - inst_a.vel_y));
     const rel_vel_z = @as(f32, @floatFromInt(inst_b.vel_z - inst_a.vel_z));
-    const rel_normal_vel = rel_vel_x * manifold.normal_x +
-        rel_vel_y * manifold.normal_y +
-        rel_vel_z * manifold.normal_z;
-    const tangent_x = rel_vel_x - rel_normal_vel * manifold.normal_x;
-    const tangent_y = rel_vel_y - rel_normal_vel * manifold.normal_y;
-    const tangent_z = rel_vel_z - rel_normal_vel * manifold.normal_z;
+    const velocity_components = measureDirectionalVelocityComponents(
+        rel_vel_x,
+        rel_vel_y,
+        rel_vel_z,
+        manifold.normal_x,
+        manifold.normal_y,
+        manifold.normal_z,
+    );
 
     return .{
-        .penetration_depth = manifold.penetration_depth,
-        .normal_speed = @abs(rel_normal_vel),
-        .tangential_speed = @sqrt(tangent_x * tangent_x + tangent_y * tangent_y + tangent_z * tangent_z),
+        .entity_a = entity_a,
+        .entity_b = entity_b,
+        .aabb_a = aabb_a,
+        .aabb_b = aabb_b,
+        .manifold = manifold,
+        .velocity_components = velocity_components,
+    };
+}
+
+fn measureContactConstraintMetrics(
+    inst_a: *const scene32.Instance,
+    inst_b: *const scene32.Instance,
+    entities: []entity16.Entity16,
+) ?ContactConstraintMetrics {
+    const probe = probeContactConstraint(inst_a, inst_b, entities) orelse return null;
+
+    return .{
+        .penetration_depth = probe.manifold.penetration_depth,
+        .normal_speed = probe.velocity_components.normalSpeed(),
+        .tangential_speed = probe.velocity_components.tangentialSpeed(),
     };
 }
 
@@ -2977,91 +4564,48 @@ fn prepareContactConstraintPair(
     inst_b: *const scene32.Instance,
     entities: []entity16.Entity16,
 ) ?ContactPreparedPair {
-    if (inst_a.entity_id >= entities.len or inst_b.entity_id >= entities.len) return null;
-
-    const aabb_a = physics.computeEntityWorldAABB(inst_a, &entities[inst_a.entity_id]) orelse return null;
-    const aabb_b = physics.computeEntityWorldAABB(inst_b, &entities[inst_b.entity_id]) orelse return null;
-    if (!physics.aabbHit(aabb_a, aabb_b)) return null;
-
-    const manifold = collision.buildAABBContactManifold(aabb_a, aabb_b);
-    if (manifold.point_count == 0 or manifold.penetration_depth <= 0.0) return null;
-
-    const entity_a = &entities[inst_a.entity_id];
-    const entity_b = &entities[inst_b.entity_id];
+    const probe = probeContactConstraint(inst_a, inst_b, entities) orelse return null;
     const response = material_pairing.getPairedResponse(
-        material_pairing.getSurfaceForMaterial(entity_a.physics.material),
-        entity_a.physics.material,
-        material_pairing.getSurfaceForMaterial(entity_b.physics.material),
-        entity_b.physics.material,
+        material_pairing.getSurfaceForMaterial(probe.entity_a.physics.material),
+        probe.entity_a.physics.material,
+        material_pairing.getSurfaceForMaterial(probe.entity_b.physics.material),
+        probe.entity_b.physics.material,
     );
     const inv_mass_a = instanceInverseMass(inst_a, entities);
     const inv_mass_b = instanceInverseMass(inst_b, entities);
-    const rel_vel_x = @as(f32, @floatFromInt(inst_b.vel_x - inst_a.vel_x));
-    const rel_vel_y = @as(f32, @floatFromInt(inst_b.vel_y - inst_a.vel_y));
-    const rel_vel_z = @as(f32, @floatFromInt(inst_b.vel_z - inst_a.vel_z));
-    const rel_normal_vel = rel_vel_x * manifold.normal_x +
-        rel_vel_y * manifold.normal_y +
-        rel_vel_z * manifold.normal_z;
-    const tangent_x = rel_vel_x - rel_normal_vel * manifold.normal_x;
-    const tangent_y = rel_vel_y - rel_normal_vel * manifold.normal_y;
-    const tangent_z = rel_vel_z - rel_normal_vel * manifold.normal_z;
-    const tangential_speed = @sqrt(tangent_x * tangent_x + tangent_y * tangent_y + tangent_z * tangent_z);
-    const has_tangent = tangential_speed > 0.0001;
-    const tangent_dir_x = if (has_tangent) tangent_x / tangential_speed else 0.0;
-    const tangent_dir_y = if (has_tangent) tangent_y / tangential_speed else 0.0;
-    const tangent_dir_z = if (has_tangent) tangent_z / tangential_speed else 0.0;
-    const prediction_dt: f32 = 1.0 / 60.0;
-    const predicted_pos_a = prediction.predictLinearState(.{
-        .pos_x = @as(f32, @floatFromInt(inst_a.pos_x)),
-        .pos_y = @as(f32, @floatFromInt(inst_a.pos_y)),
-        .pos_z = @as(f32, @floatFromInt(inst_a.pos_z)),
-        .vel_x = @as(f32, @floatFromInt(inst_a.vel_x)),
-        .vel_y = @as(f32, @floatFromInt(inst_a.vel_y)),
-        .vel_z = @as(f32, @floatFromInt(inst_a.vel_z)),
-    }, prediction_dt);
-    const predicted_pos_b = prediction.predictLinearState(.{
-        .pos_x = @as(f32, @floatFromInt(inst_b.pos_x)),
-        .pos_y = @as(f32, @floatFromInt(inst_b.pos_y)),
-        .pos_z = @as(f32, @floatFromInt(inst_b.pos_z)),
-        .vel_x = @as(f32, @floatFromInt(inst_b.vel_x)),
-        .vel_y = @as(f32, @floatFromInt(inst_b.vel_y)),
-        .vel_z = @as(f32, @floatFromInt(inst_b.vel_z)),
-    }, prediction_dt);
-    const predicted_min_ax = predicted_pos_a.pos_x + @as(f32, @floatFromInt(aabb_a.min_x - inst_a.pos_x));
-    const predicted_max_ax = predicted_pos_a.pos_x + @as(f32, @floatFromInt(aabb_a.max_x - inst_a.pos_x));
-    const predicted_min_ay = predicted_pos_a.pos_y + @as(f32, @floatFromInt(aabb_a.min_y - inst_a.pos_y));
-    const predicted_max_ay = predicted_pos_a.pos_y + @as(f32, @floatFromInt(aabb_a.max_y - inst_a.pos_y));
-    const predicted_min_az = predicted_pos_a.pos_z + @as(f32, @floatFromInt(aabb_a.min_z - inst_a.pos_z));
-    const predicted_max_az = predicted_pos_a.pos_z + @as(f32, @floatFromInt(aabb_a.max_z - inst_a.pos_z));
-    const predicted_min_bx = predicted_pos_b.pos_x + @as(f32, @floatFromInt(aabb_b.min_x - inst_b.pos_x));
-    const predicted_max_bx = predicted_pos_b.pos_x + @as(f32, @floatFromInt(aabb_b.max_x - inst_b.pos_x));
-    const predicted_min_by = predicted_pos_b.pos_y + @as(f32, @floatFromInt(aabb_b.min_y - inst_b.pos_y));
-    const predicted_max_by = predicted_pos_b.pos_y + @as(f32, @floatFromInt(aabb_b.max_y - inst_b.pos_y));
-    const predicted_min_bz = predicted_pos_b.pos_z + @as(f32, @floatFromInt(aabb_b.min_z - inst_b.pos_z));
-    const predicted_max_bz = predicted_pos_b.pos_z + @as(f32, @floatFromInt(aabb_b.max_z - inst_b.pos_z));
-    const predicted_overlap_x = @min(predicted_max_ax, predicted_max_bx) - @max(predicted_min_ax, predicted_min_bx);
-    const predicted_overlap_y = @min(predicted_max_ay, predicted_max_by) - @max(predicted_min_ay, predicted_min_by);
-    const predicted_overlap_z = @min(predicted_max_az, predicted_max_bz) - @max(predicted_min_az, predicted_min_bz);
-    const predicted_penetration_depth = @max(0.0, @min(predicted_overlap_x, @min(predicted_overlap_y, predicted_overlap_z)));
-    const normal_direction: PreparedDirectionalConstraint = .{
-        .dir_x = manifold.normal_x,
-        .dir_y = manifold.normal_y,
-        .dir_z = manifold.normal_z,
-        .depth = manifold.penetration_depth,
-        .predicted_depth = predicted_penetration_depth,
-    };
-    const tangent_direction: PreparedDirectionalConstraint = .{
-        .dir_x = tangent_dir_x,
-        .dir_y = tangent_dir_y,
-        .dir_z = tangent_dir_z,
-        .depth = tangential_speed,
-        .predicted_depth = tangential_speed,
-    };
+    const tangent_frame = buildDirectionalTangentFrame(probe.velocity_components);
+    const has_tangent = tangent_frame != null;
+    const tangential_speed = if (tangent_frame) |frame| frame.speed else 0.0;
+    const prediction_dt = kernelPredictionDt();
+    const predicted_pos_a = predictKernelInstanceState(inst_a, prediction_dt);
+    const predicted_pos_b = predictKernelInstanceState(inst_b, prediction_dt);
+    const predicted_penetration_depth = computePredictedAABBOverlapDepth(
+        probe.aabb_a,
+        inst_a,
+        predicted_pos_a,
+        probe.aabb_b,
+        inst_b,
+        predicted_pos_b,
+    );
+    const normal_direction = buildPreparedDirectionalConstraint(
+        probe.manifold.normal_x,
+        probe.manifold.normal_y,
+        probe.manifold.normal_z,
+        probe.manifold.penetration_depth,
+        predicted_penetration_depth,
+    );
+    const tangent_direction = buildPreparedDirectionalConstraint(
+        if (tangent_frame) |frame| frame.dir_x else 0.0,
+        if (tangent_frame) |frame| frame.dir_y else 0.0,
+        if (tangent_frame) |frame| frame.dir_z else 0.0,
+        tangential_speed,
+        tangential_speed,
+    );
     const normal_row_plan = buildContactNormalRowPlan(
         inv_mass_a,
         inv_mass_b,
-        manifold.penetration_depth,
-        @abs(rel_normal_vel),
+        probe.manifold.penetration_depth,
+        probe.velocity_components.normalSpeed(),
         normal_direction,
     );
     const friction_row_plan = buildContactFrictionRowPlan(
@@ -3076,13 +4620,7 @@ fn prepareContactConstraintPair(
     return .{
         .inv_mass_a = inv_mass_a,
         .inv_mass_b = inv_mass_b,
-        .normal = .{
-            .dir_x = normal_direction.dir_x,
-            .dir_y = normal_direction.dir_y,
-            .dir_z = normal_direction.dir_z,
-            .depth = normal_direction.depth,
-            .predicted_depth = normal_row_plan.residual,
-        },
+        .normal = withPredictiveResidualHint(normal_direction, normal_row_plan.predictive_residual_hint),
         .restitution = response.restitution,
         .friction = response.friction,
         .tangent = tangent_direction,
@@ -3142,142 +4680,15 @@ fn computeContactSettleThreshold(max_stress: f32) f32 {
     return 0.05;
 }
 
-fn measureEnvironmentConstraintMetrics(
+fn queryEnvironmentPenetrationForAABB(
     s1024: *scene1024.Scene1024,
     entities: []entity16.Entity16,
     instance_idx: u8,
-) ?EnvironmentConstraintMetrics {
-    if (instance_idx >= s1024.instance_count) return null;
-    const inst = &s1024.instances[instance_idx];
-    if (inst.state == .broken) return null;
-    if (inst.entity_id >= entities.len) return null;
-
-    const entity = &entities[inst.entity_id];
-    if ((entity.physics.flags & 0x01) != 0 or entity.physics.mass == 0) return null;
-
-    const aabb = physics.computeEntityWorldAABB(inst, entity) orelse return null;
-    const world_view: query_types.QueryWorldView = .{
-        .s1024 = s1024,
-        .instances = s1024.instances[0..s1024.instance_count],
-        .entities = entities,
-    };
-    const penetration = query_penetration.computePenetrationAABB(
-        &world_view,
-        @floatFromInt(aabb.min_x),
-        @floatFromInt(aabb.min_y),
-        @floatFromInt(aabb.min_z),
-        @floatFromInt(aabb.max_x),
-        @floatFromInt(aabb.max_y),
-        @floatFromInt(aabb.max_z),
-        .{
-            .include_static = false,
-            .include_dynamic = false,
-            .include_kinematic = false,
-            .include_sensors = false,
-            .ignore_environment = false,
-            .ignore_instance_idx = instance_idx,
-        },
-    );
-    if (!penetration.overlapping or penetration.depth <= 0.0 or penetration.instance_idx != -1) return null;
-
-    const rel_normal_vel =
-        @as(f32, @floatFromInt(inst.vel_x)) * penetration.dir_x +
-        @as(f32, @floatFromInt(inst.vel_y)) * penetration.dir_y +
-        @as(f32, @floatFromInt(inst.vel_z)) * penetration.dir_z;
-    const tangent_x = @as(f32, @floatFromInt(inst.vel_x)) - rel_normal_vel * penetration.dir_x;
-    const tangent_y = @as(f32, @floatFromInt(inst.vel_y)) - rel_normal_vel * penetration.dir_y;
-    const tangent_z = @as(f32, @floatFromInt(inst.vel_z)) - rel_normal_vel * penetration.dir_z;
-
-    return .{
-        .penetration_depth = penetration.depth,
-        .normal_speed = @abs(rel_normal_vel),
-        .tangential_speed = @sqrt(tangent_x * tangent_x + tangent_y * tangent_y + tangent_z * tangent_z),
-    };
-}
-
-fn prepareEnvironmentConstraint(
-    s1024: *scene1024.Scene1024,
-    entities: []entity16.Entity16,
-    instance_idx: u8,
-) ?PreparedEnvironmentConstraint {
-    if (instance_idx >= s1024.instance_count) return null;
-    const inst = &s1024.instances[instance_idx];
-    if (inst.state == .broken) return null;
-    if (inst.entity_id >= entities.len) return null;
-
-    const entity = &entities[inst.entity_id];
-    if ((entity.physics.flags & 0x01) != 0 or entity.physics.mass == 0) return null;
-
-    const aabb = physics.computeEntityWorldAABB(inst, entity) orelse return null;
-    const world_view: query_types.QueryWorldView = .{
-        .s1024 = s1024,
-        .instances = s1024.instances[0..s1024.instance_count],
-        .entities = entities,
-    };
-    const penetration = query_penetration.computePenetrationAABB(
-        &world_view,
-        @floatFromInt(aabb.min_x),
-        @floatFromInt(aabb.min_y),
-        @floatFromInt(aabb.min_z),
-        @floatFromInt(aabb.max_x),
-        @floatFromInt(aabb.max_y),
-        @floatFromInt(aabb.max_z),
-        .{
-            .include_static = false,
-            .include_dynamic = false,
-            .include_kinematic = false,
-            .include_sensors = false,
-            .ignore_environment = false,
-            .ignore_instance_idx = instance_idx,
-        },
-    );
-    if (!penetration.overlapping or penetration.depth <= 0.0 or penetration.instance_idx != -1) return null;
-
-    const move_x = @as(i32, @intFromFloat(@round(penetration.dir_x * penetration.depth)));
-    const move_y = @as(i32, @intFromFloat(@round(penetration.dir_y * penetration.depth)));
-    const move_z = @as(i32, @intFromFloat(@round(penetration.dir_z * penetration.depth)));
-    if (move_x == 0 and move_y == 0 and move_z == 0) return null;
-
-    return .{
-        .normal = .{
-            .dir_x = penetration.dir_x,
-            .dir_y = penetration.dir_y,
-            .dir_z = penetration.dir_z,
-            .depth = penetration.depth,
-            .predicted_depth = measurePredictiveEnvironmentDepth(s1024, entities, instance_idx, 1.0 / 60.0),
-        },
-        .move_x = move_x,
-        .move_y = move_y,
-        .move_z = move_z,
-    };
-}
-
-fn measurePredictiveEnvironmentDepth(
-    s1024: *scene1024.Scene1024,
-    entities: []entity16.Entity16,
-    instance_idx: u8,
-    prediction_dt: f32,
-) f32 {
-    if (instance_idx >= s1024.instance_count) return 0.0;
-    const inst = &s1024.instances[instance_idx];
-    if (inst.state == .broken) return 0.0;
-    if (inst.entity_id >= entities.len) return 0.0;
-
-    const entity = &entities[inst.entity_id];
-    if ((entity.physics.flags & 0x01) != 0 or entity.physics.mass == 0) return 0.0;
-
-    const aabb = physics.computeEntityWorldAABB(inst, entity) orelse return 0.0;
-    const predicted_state = prediction.predictLinearState(.{
-        .pos_x = @as(f32, @floatFromInt(inst.pos_x)),
-        .pos_y = @as(f32, @floatFromInt(inst.pos_y)),
-        .pos_z = @as(f32, @floatFromInt(inst.pos_z)),
-        .vel_x = @as(f32, @floatFromInt(inst.vel_x)),
-        .vel_y = @as(f32, @floatFromInt(inst.vel_y)),
-        .vel_z = @as(f32, @floatFromInt(inst.vel_z)),
-    }, prediction_dt);
-    const dx = @as(i32, @intFromFloat(@round(predicted_state.pos_x))) - inst.pos_x;
-    const dy = @as(i32, @intFromFloat(@round(predicted_state.pos_y))) - inst.pos_y;
-    const dz = @as(i32, @intFromFloat(@round(predicted_state.pos_z))) - inst.pos_z;
+    aabb: physics.AABB,
+    dx: i32,
+    dy: i32,
+    dz: i32,
+) ?query_types.PenetrationResult {
     const world_view: query_types.QueryWorldView = .{
         .s1024 = s1024,
         .instances = s1024.instances[0..s1024.instance_count],
@@ -3300,7 +4711,102 @@ fn measurePredictiveEnvironmentDepth(
             .ignore_instance_idx = instance_idx,
         },
     );
-    if (!penetration.overlapping or penetration.depth <= 0.0 or penetration.instance_idx != -1) return 0.0;
+    if (!penetration.overlapping or penetration.depth <= 0.0 or penetration.instance_idx != -1) return null;
+    return penetration;
+}
+
+fn probeEnvironmentPenetration(
+    s1024: *scene1024.Scene1024,
+    entities: []entity16.Entity16,
+    instance_idx: u8,
+) ?EnvironmentPenetrationProbe {
+    if (instance_idx >= s1024.instance_count) return null;
+    const inst = &s1024.instances[instance_idx];
+    if (inst.state == .broken) return null;
+    if (inst.entity_id >= entities.len) return null;
+
+    const entity = &entities[inst.entity_id];
+    if ((entity.physics.flags & 0x01) != 0 or entity.physics.mass == 0) return null;
+
+    const aabb = physics.computeEntityWorldAABB(inst, entity) orelse return null;
+    const penetration = queryEnvironmentPenetrationForAABB(s1024, entities, instance_idx, aabb, 0, 0, 0) orelse return null;
+
+    return .{
+        .inst = inst,
+        .entity = entity,
+        .penetration = penetration,
+    };
+}
+
+fn measureEnvironmentConstraintMetrics(
+    s1024: *scene1024.Scene1024,
+    entities: []entity16.Entity16,
+    instance_idx: u8,
+) ?EnvironmentConstraintMetrics {
+    const probe = probeEnvironmentPenetration(s1024, entities, instance_idx) orelse return null;
+
+    const velocity_components = measureDirectionalVelocityComponents(
+        @as(f32, @floatFromInt(probe.inst.vel_x)),
+        @as(f32, @floatFromInt(probe.inst.vel_y)),
+        @as(f32, @floatFromInt(probe.inst.vel_z)),
+        probe.penetration.dir_x,
+        probe.penetration.dir_y,
+        probe.penetration.dir_z,
+    );
+
+    return .{
+        .penetration_depth = probe.penetration.depth,
+        .normal_speed = velocity_components.normalSpeed(),
+        .tangential_speed = velocity_components.tangentialSpeed(),
+    };
+}
+
+fn prepareEnvironmentConstraint(
+    s1024: *scene1024.Scene1024,
+    entities: []entity16.Entity16,
+    instance_idx: u8,
+) ?PreparedEnvironmentConstraint {
+    const probe = probeEnvironmentPenetration(s1024, entities, instance_idx) orelse return null;
+
+    const move_x = @as(i32, @intFromFloat(@round(probe.penetration.dir_x * probe.penetration.depth)));
+    const move_y = @as(i32, @intFromFloat(@round(probe.penetration.dir_y * probe.penetration.depth)));
+    const move_z = @as(i32, @intFromFloat(@round(probe.penetration.dir_z * probe.penetration.depth)));
+    if (move_x == 0 and move_y == 0 and move_z == 0) return null;
+
+    return .{
+        .normal = buildPreparedDirectionalConstraint(
+            probe.penetration.dir_x,
+            probe.penetration.dir_y,
+            probe.penetration.dir_z,
+            probe.penetration.depth,
+            measurePredictiveEnvironmentDepth(s1024, entities, instance_idx, kernelPredictionDt()),
+        ),
+        .move_x = move_x,
+        .move_y = move_y,
+        .move_z = move_z,
+    };
+}
+
+fn measurePredictiveEnvironmentDepth(
+    s1024: *scene1024.Scene1024,
+    entities: []entity16.Entity16,
+    instance_idx: u8,
+    prediction_dt: f32,
+) f32 {
+    if (instance_idx >= s1024.instance_count) return 0.0;
+    const inst = &s1024.instances[instance_idx];
+    if (inst.state == .broken) return 0.0;
+    if (inst.entity_id >= entities.len) return 0.0;
+
+    const entity = &entities[inst.entity_id];
+    if ((entity.physics.flags & 0x01) != 0 or entity.physics.mass == 0) return 0.0;
+
+    const aabb = physics.computeEntityWorldAABB(inst, entity) orelse return 0.0;
+    const predicted_state = predictKernelInstanceState(inst, prediction_dt);
+    const dx = @as(i32, @intFromFloat(@round(predicted_state.pos_x))) - inst.pos_x;
+    const dy = @as(i32, @intFromFloat(@round(predicted_state.pos_y))) - inst.pos_y;
+    const dz = @as(i32, @intFromFloat(@round(predicted_state.pos_z))) - inst.pos_z;
+    const penetration = queryEnvironmentPenetrationForAABB(s1024, entities, instance_idx, aabb, dx, dy, dz) orelse return 0.0;
     return penetration.depth;
 }
 
@@ -3310,9 +4816,74 @@ fn computeEnvironmentSolvePriorityMagnitude(
     instance_idx: u8,
 ) f32 {
     const metrics = measureEnvironmentConstraintMetrics(s1024, entities, instance_idx) orelse return 0.0;
-    const predicted_depth = measurePredictiveEnvironmentDepth(s1024, entities, instance_idx, 1.0 / 60.0);
-    const predictive_gain = makePredictiveConstraintGain(predicted_depth, metrics.penetration_depth, 0.75, 0.2, 0.5);
-    return @max(metrics.stress(), predictive_gain.residual_hint);
+    const direction = buildPreparedDirectionalConstraint(
+        0.0,
+        0.0,
+        0.0,
+        metrics.penetration_depth,
+        measurePredictiveEnvironmentDepth(s1024, entities, instance_idx, kernelPredictionDt()),
+    );
+    return computeDirectionalPredictiveSolvePriorityMagnitude(
+        metrics.stress(),
+        direction,
+        environmentPredictiveConstraintPolicy(),
+    );
+}
+
+fn measureDirectionalVelocityComponents(
+    rel_vel_x: f32,
+    rel_vel_y: f32,
+    rel_vel_z: f32,
+    dir_x: f32,
+    dir_y: f32,
+    dir_z: f32,
+) DirectionalVelocityComponents {
+    const normal_speed_signed = rel_vel_x * dir_x + rel_vel_y * dir_y + rel_vel_z * dir_z;
+    return .{
+        .normal_speed_signed = normal_speed_signed,
+        .tangent_x = rel_vel_x - normal_speed_signed * dir_x,
+        .tangent_y = rel_vel_y - normal_speed_signed * dir_y,
+        .tangent_z = rel_vel_z - normal_speed_signed * dir_z,
+    };
+}
+
+fn buildDirectionalTangentFrame(
+    velocity_components: DirectionalVelocityComponents,
+) ?DirectionalTangentFrame {
+    const tangential_speed = velocity_components.tangentialSpeed();
+    if (tangential_speed <= 0.0001) return null;
+    return .{
+        .dir_x = velocity_components.tangent_x / tangential_speed,
+        .dir_y = velocity_components.tangent_y / tangential_speed,
+        .dir_z = velocity_components.tangent_z / tangential_speed,
+        .speed = tangential_speed,
+    };
+}
+
+fn computePredictedAABBOverlapDepth(
+    aabb_a: physics.AABB,
+    origin_a: *const scene32.Instance,
+    predicted_a: prediction.LinearState,
+    aabb_b: physics.AABB,
+    origin_b: *const scene32.Instance,
+    predicted_b: prediction.LinearState,
+) f32 {
+    const predicted_min_ax = predicted_a.pos_x + @as(f32, @floatFromInt(aabb_a.min_x - origin_a.pos_x));
+    const predicted_max_ax = predicted_a.pos_x + @as(f32, @floatFromInt(aabb_a.max_x - origin_a.pos_x));
+    const predicted_min_ay = predicted_a.pos_y + @as(f32, @floatFromInt(aabb_a.min_y - origin_a.pos_y));
+    const predicted_max_ay = predicted_a.pos_y + @as(f32, @floatFromInt(aabb_a.max_y - origin_a.pos_y));
+    const predicted_min_az = predicted_a.pos_z + @as(f32, @floatFromInt(aabb_a.min_z - origin_a.pos_z));
+    const predicted_max_az = predicted_a.pos_z + @as(f32, @floatFromInt(aabb_a.max_z - origin_a.pos_z));
+    const predicted_min_bx = predicted_b.pos_x + @as(f32, @floatFromInt(aabb_b.min_x - origin_b.pos_x));
+    const predicted_max_bx = predicted_b.pos_x + @as(f32, @floatFromInt(aabb_b.max_x - origin_b.pos_x));
+    const predicted_min_by = predicted_b.pos_y + @as(f32, @floatFromInt(aabb_b.min_y - origin_b.pos_y));
+    const predicted_max_by = predicted_b.pos_y + @as(f32, @floatFromInt(aabb_b.max_y - origin_b.pos_y));
+    const predicted_min_bz = predicted_b.pos_z + @as(f32, @floatFromInt(aabb_b.min_z - origin_b.pos_z));
+    const predicted_max_bz = predicted_b.pos_z + @as(f32, @floatFromInt(aabb_b.max_z - origin_b.pos_z));
+    const predicted_overlap_x = @min(predicted_max_ax, predicted_max_bx) - @max(predicted_min_ax, predicted_min_bx);
+    const predicted_overlap_y = @min(predicted_max_ay, predicted_max_by) - @max(predicted_min_ay, predicted_min_by);
+    const predicted_overlap_z = @min(predicted_max_az, predicted_max_bz) - @max(predicted_min_az, predicted_min_bz);
+    return @max(0.0, @min(predicted_overlap_x, @min(predicted_overlap_y, predicted_overlap_z)));
 }
 
 fn buildEnvironmentPreparedRowPlan(
@@ -3320,31 +4891,10 @@ fn buildEnvironmentPreparedRowPlan(
     entities: []entity16.Entity16,
     instance_idx: u8,
 ) DirectionalRowPlan {
-    if (instance_idx >= s1024.instance_count) return .{
-        .residual = 0.0,
-        .equation = .{
-            .effective_mass = 0.0,
-            .bias = 0.0,
-            .max_impulse = 0.0,
-        },
-    };
+    if (instance_idx >= s1024.instance_count) return zeroDirectionalRowPlan();
     const inst = &s1024.instances[instance_idx];
-    const prepared = prepareEnvironmentConstraint(s1024, entities, instance_idx) orelse return .{
-        .residual = 0.0,
-        .equation = .{
-            .effective_mass = 0.0,
-            .bias = 0.0,
-            .max_impulse = 0.0,
-        },
-    };
-    const metrics = measureEnvironmentConstraintMetrics(s1024, entities, instance_idx) orelse return .{
-        .residual = 0.0,
-        .equation = .{
-            .effective_mass = 0.0,
-            .bias = 0.0,
-            .max_impulse = 0.0,
-        },
-    };
+    const prepared = prepareEnvironmentConstraint(s1024, entities, instance_idx) orelse return zeroDirectionalRowPlan();
+    const metrics = measureEnvironmentConstraintMetrics(s1024, entities, instance_idx) orelse return zeroDirectionalRowPlan();
     return buildEnvironmentDirectionalRowPlan(
         instanceInverseMass(inst, entities),
         metrics,
@@ -3700,6 +5250,69 @@ fn makePredictiveConstraintGain(predicted_depth: f32, current_depth: f32, residu
     };
 }
 
+fn makePredictiveConstraintGainWithPolicy(
+    predicted_depth: f32,
+    current_depth: f32,
+    policy: PredictiveConstraintPolicy,
+) PredictiveConstraintGain {
+    return makePredictiveConstraintGain(
+        predicted_depth,
+        current_depth,
+        policy.residual_scale,
+        policy.bias_scale,
+        policy.impulse_scale,
+    );
+}
+
+fn environmentPredictiveConstraintPolicy() PredictiveConstraintPolicy {
+    return .{
+        .residual_scale = 0.75,
+        .bias_scale = 0.2,
+        .impulse_scale = 0.5,
+    };
+}
+
+fn environmentPredictiveConstraintGain(predicted_depth: f32, current_depth: f32) PredictiveConstraintGain {
+    return makePredictiveConstraintGainWithPolicy(
+        predicted_depth,
+        current_depth,
+        environmentPredictiveConstraintPolicy(),
+    );
+}
+
+fn contactNormalPredictiveConstraintPolicy() PredictiveConstraintPolicy {
+    return .{
+        .residual_scale = 0.75,
+        .bias_scale = 0.15,
+        .impulse_scale = 0.5,
+    };
+}
+
+fn effectiveMassFromInverseMass(inverse_mass: f32) f32 {
+    return if (inverse_mass > 0.0001) 1.0 / inverse_mass else 0.0;
+}
+
+fn effectiveMassFromPairInverseMasses(inv_mass_a: f32, inv_mass_b: f32) f32 {
+    return effectiveMassFromInverseMass(inv_mass_a + inv_mass_b);
+}
+
+fn buildNormalConstraintEquation(
+    effective_mass: f32,
+    penetration_depth: f32,
+    relative_normal_speed: f32,
+    penetration_bias_scale: f32,
+    velocity_bias_scale: f32,
+    impulse_depth_scale: f32,
+    impulse_speed_scale: f32,
+) ConstraintRowEquation {
+    const bias = penetration_depth * penetration_bias_scale + @max(0.0, -relative_normal_speed) * velocity_bias_scale;
+    return .{
+        .effective_mass = effective_mass,
+        .bias = bias,
+        .max_impulse = @max(0.5, penetration_depth * impulse_depth_scale + @abs(relative_normal_speed) * impulse_speed_scale),
+    };
+}
+
 fn applyPredictiveConstraintGain(equation: ConstraintRowEquation, gain: PredictiveConstraintGain) ConstraintRowEquation {
     return .{
         .effective_mass = equation.effective_mass,
@@ -3708,19 +5321,81 @@ fn applyPredictiveConstraintGain(equation: ConstraintRowEquation, gain: Predicti
     };
 }
 
-fn buildDirectionalRowPlan(base_equation: ConstraintRowEquation, direction: PreparedDirectionalConstraint, residual_scale: f32, bias_scale: f32, impulse_scale: f32) DirectionalRowPlan {
-    const gain = makePredictiveConstraintGain(
+fn makeDirectionalPredictiveConstraintGain(
+    direction: PreparedDirectionalConstraint,
+    policy: PredictiveConstraintPolicy,
+) PredictiveConstraintGain {
+    return makePredictiveConstraintGainWithPolicy(
         direction.predicted_depth,
         direction.depth,
-        residual_scale,
-        bias_scale,
-        impulse_scale,
+        policy,
     );
-    const equation = applyPredictiveConstraintGain(base_equation, gain);
+}
+
+fn finalizeDirectionalResidual(predictive_hint: f32, equation: ConstraintRowEquation) f32 {
+    return @max(predictive_hint, equation.bias * 1.25);
+}
+
+fn resolveDirectionalPredictiveResidualHint(direction: PreparedDirectionalConstraint) f32 {
+    return if (direction.predictive_residual_hint > 0.0) direction.predictive_residual_hint else direction.predicted_depth;
+}
+
+fn computeDirectionalPredictiveSolvePriorityMagnitude(
+    current_stress: f32,
+    direction: PreparedDirectionalConstraint,
+    policy: PredictiveConstraintPolicy,
+) f32 {
+    const gain = makeDirectionalPredictiveConstraintGain(direction, policy);
+    return @max(current_stress, gain.residual_hint);
+}
+
+fn makeDirectionalRowPlan(
+    residual: f32,
+    equation: ConstraintRowEquation,
+    predictive_residual_hint: f32,
+) DirectionalRowPlan {
     return .{
-        .residual = @max(gain.residual_hint, equation.bias * 1.25),
+        .residual = residual,
+        .predictive_residual_hint = predictive_residual_hint,
         .equation = equation,
     };
+}
+
+fn buildDirectionalRowPlan(
+    base_equation: ConstraintRowEquation,
+    direction: PreparedDirectionalConstraint,
+    policy: PredictiveConstraintPolicy,
+) DirectionalRowPlan {
+    const gain = makeDirectionalPredictiveConstraintGain(direction, policy);
+    const equation = applyPredictiveConstraintGain(base_equation, gain);
+    return makeDirectionalRowPlan(
+        finalizeDirectionalResidual(gain.residual_hint, equation),
+        equation,
+        gain.residual_hint,
+    );
+}
+
+fn buildDirectionalNormalResidual(direction: PreparedDirectionalConstraint, equation: ConstraintRowEquation) f32 {
+    return finalizeDirectionalResidual(resolveDirectionalPredictiveResidualHint(direction), equation);
+}
+
+fn buildDirectionalTangentResidual(direction: PreparedDirectionalConstraint) f32 {
+    return direction.depth * 0.125;
+}
+
+fn buildDirectionalResidualRowPlan(
+    mode: DirectionalRowSpecMode,
+    direction: PreparedDirectionalConstraint,
+    equation: ConstraintRowEquation,
+) DirectionalRowPlan {
+    return makeDirectionalRowPlan(
+        switch (mode) {
+            .normal => buildDirectionalNormalResidual(direction, equation),
+            .tangent => buildDirectionalTangentResidual(direction),
+        },
+        equation,
+        0.0,
+    );
 }
 
 fn buildConstraintRow(
@@ -3755,7 +5430,7 @@ fn makeConstraintRowBuildSpec(
     };
 }
 
-fn buildDirectionalRowSpec(
+fn makeConstraintRowBuildSpecFromPlan(
     kind: ConstraintRowKind,
     index: usize,
     row_plan: DirectionalRowPlan,
@@ -3763,36 +5438,34 @@ fn buildDirectionalRowSpec(
     return makeConstraintRowBuildSpec(kind, index, row_plan.residual, row_plan.equation);
 }
 
-fn buildDirectionalNormalRowSpec(
+fn buildDirectionalRowSpec(
     kind: ConstraintRowKind,
     index: usize,
+    row_plan: DirectionalRowPlan,
+) ConstraintRowBuildSpec {
+    return makeConstraintRowBuildSpecFromPlan(kind, index, row_plan);
+}
+
+fn buildDirectionalModeRowSpec(
+    kind: ConstraintRowKind,
+    index: usize,
+    mode: DirectionalRowSpecMode,
     direction: PreparedDirectionalConstraint,
     equation: ConstraintRowEquation,
 ) ConstraintRowBuildSpec {
     return buildDirectionalRowSpec(
         kind,
         index,
-        .{
-            .residual = @max(direction.predicted_depth, equation.bias * 1.25),
-            .equation = equation,
-        },
+        buildDirectionalResidualRowPlan(mode, direction, equation),
     );
 }
 
-fn buildDirectionalTangentRowSpec(
-    kind: ConstraintRowKind,
-    index: usize,
-    direction: PreparedDirectionalConstraint,
-    equation: ConstraintRowEquation,
-) ConstraintRowBuildSpec {
-    return buildDirectionalRowSpec(
-        kind,
-        index,
-        .{
-            .residual = direction.depth * 0.125,
-            .equation = equation,
-        },
-    );
+fn makeOptionalConstraintRowSpec(
+    enabled: bool,
+    row_spec: ConstraintRowBuildSpec,
+) ?ConstraintRowBuildSpec {
+    if (!enabled) return null;
+    return row_spec;
 }
 
 fn buildOptionalConstraintRowSpecFromPlan(
@@ -3801,12 +5474,9 @@ fn buildOptionalConstraintRowSpecFromPlan(
     enabled: bool,
     row_plan: DirectionalRowPlan,
 ) ?ConstraintRowBuildSpec {
-    if (!enabled) return null;
-    return makeConstraintRowBuildSpec(
-        kind,
-        index,
-        row_plan.residual,
-        row_plan.equation,
+    return makeOptionalConstraintRowSpec(
+        enabled,
+        makeConstraintRowBuildSpecFromPlan(kind, index, row_plan),
     );
 }
 
@@ -3817,11 +5487,10 @@ fn buildOptionalDirectionalRowSpec(
     payload: DirectionalRowPayload,
     mode: DirectionalRowSpecMode,
 ) ?ConstraintRowBuildSpec {
-    if (!enabled) return null;
-    return switch (mode) {
-        .normal => buildDirectionalNormalRowSpec(kind, index, payload.direction, payload.equation),
-        .tangent => buildDirectionalTangentRowSpec(kind, index, payload.direction, payload.equation),
-    };
+    return makeOptionalConstraintRowSpec(
+        enabled,
+        buildDirectionalModeRowSpec(kind, index, mode, payload.direction, payload.equation),
+    );
 }
 
 fn finalizeConstraintRowResult(
@@ -3869,21 +5538,9 @@ fn measureJointRowResidual(
 ) f32 {
     if (joint_idx >= joints.len) return 0.0;
     const joint_def = &joints[joint_idx];
-    return switch (kind) {
-        .joint_anchor => if (jointHasAnchorRow(joint_def))
-            joint.measureJointSolvePriorityForIndex(instances, joints, joint_idx, entities)
-        else
-            0.0,
-        .joint_limit => if (jointHasLimitRow(joint_def))
-            joint.measureJointSolvePriorityForIndex(instances, joints, joint_idx, entities) * 0.9
-        else
-            0.0,
-        .joint_drive => if (joint_def.motor_enabled and joint_def.motor_speed > 0.0)
-            joint.measureJointSolvePriorityForIndex(instances, joints, joint_idx, entities) * 0.75
-        else
-            0.0,
-        else => 0.0,
-    };
+    const descriptor = jointRuntimeRowDescriptor(kind) orelse return 0.0;
+    if (!descriptor.row_enabled(joint_def)) return 0.0;
+    return joint.measureJointSolvePriorityForIndex(instances, joints, joint_idx, entities) * descriptor.policy.residual_scale;
 }
 
 fn measureContactRowResidual(
@@ -3894,8 +5551,8 @@ fn measureContactRowResidual(
 ) f32 {
     const metrics = measureContactConstraintMetrics(inst_a, inst_b, entities) orelse return 0.0;
     return switch (kind) {
-        .contact_normal => @max(metrics.penetration_depth, metrics.normal_speed * 0.25),
-        .contact_friction => metrics.tangential_speed * 0.125,
+        .contact_normal => metrics.residual(.normal),
+        .contact_friction => metrics.residual(.tangent),
         else => 0.0,
     };
 }
@@ -4196,28 +5853,104 @@ const environment_row_spec_builder_entries = [_]RowSpecBuilderEntry{
     .{ .environment_plan = .{ .kind = .environment, .enabled = true, .plan_builder = buildEnvironmentPreparedRowPlan } },
 };
 
-fn buildJointRowSpecFromPlan(
-    ctx: *const JointRowSpecBuildContext,
-    kind: ConstraintRowKind,
-    enabled: bool,
-    row_plan: DirectionalRowPlan,
-) ?ConstraintRowBuildSpec {
-    if (ctx.joint_idx >= ctx.joints.len) return null;
-    return buildOptionalConstraintRowSpecFromPlan(kind, ctx.joint_idx, enabled, row_plan);
-}
-
 fn jointHasDriveRow(joint_def: *const joint.Joint) bool {
     return joint_def.motor_enabled and joint_def.motor_speed > 0.0;
 }
 
 const joint_runtime_rows = [_]JointRuntimeRowDescriptor{
-    .{ .kind = .joint_anchor, .row_enabled = jointHasAnchorRow, .solver = solveJointAnchorRow },
-    .{ .kind = .joint_limit, .row_enabled = jointHasLimitRow, .solver = solveJointLimitRow },
-    .{ .kind = .joint_drive, .row_enabled = jointHasDriveRow, .solver = solveJointDriveRow },
+    .{
+        .kind = .joint_anchor,
+        .policy = .{
+            .residual_scale = 1.0,
+            .warm_impulse_scale = 0.25,
+            .inactive_outcome = .finalize_exec_state,
+            .stalled_prepare_outcome = .stalled,
+            .signed_correction_policy = .{},
+            .impulse_hint_policy = .{},
+            .anchor_postprocess_policy = .by_joint_type,
+            .drive_postprocess_policy = .none,
+        },
+        .row_enabled = jointHasAnchorRow,
+        .prepare_channel = prepareJointDescriptorAnchorChannel,
+    },
+    .{
+        .kind = .joint_limit,
+        .policy = .{
+            .residual_scale = 0.9,
+            .warm_impulse_scale = 0.0,
+            .inactive_outcome = .finalize_no_change,
+            .stalled_prepare_outcome = .stalled,
+            .signed_correction_policy = .{
+                .retention_scale = 0.1,
+                .bias_scale = 1.0,
+                .min_abs_correction = 0.0001,
+                .planned = false,
+            },
+            .impulse_hint_policy = .{},
+            .anchor_postprocess_policy = .none,
+            .drive_postprocess_policy = .none,
+        },
+        .row_enabled = jointHasLimitRow,
+        .prepare_channel = prepareJointDescriptorLimitChannel,
+    },
+    .{
+        .kind = .joint_drive,
+        .policy = .{
+            .residual_scale = 0.75,
+            .warm_impulse_scale = 0.35,
+            .inactive_outcome = .stalled,
+            .stalled_prepare_outcome = .stalled,
+            .signed_correction_policy = .{
+                .retention_scale = 0.35,
+                .bias_scale = 1.0,
+                .min_abs_correction = 0.0,
+                .planned = true,
+            },
+            .impulse_hint_policy = .{
+                .enabled = true,
+                .scale = 1.0,
+            },
+            .anchor_postprocess_policy = .none,
+            .drive_postprocess_policy = .velocity_bias,
+        },
+        .row_enabled = jointHasDriveRow,
+        .prepare_channel = prepareJointDescriptorDriveChannel,
+    },
+};
+
+const contact_runtime_rows = [_]ContactRuntimeRowDescriptor{
+    .{
+        .kind = .contact_normal,
+        .channel = .normal,
+        .settle_after_solve = true,
+        .requires_tangent = false,
+        .build_plan = buildContactNormalSolvePlan,
+        .select_step = selectContactNormalSolveStep,
+    },
+    .{
+        .kind = .contact_friction,
+        .channel = .friction,
+        .settle_after_solve = false,
+        .requires_tangent = true,
+        .build_plan = buildContactFrictionSolvePlan,
+        .select_step = selectContactFrictionSolveStep,
+    },
+};
+
+const contact_batch_descriptor = ContactBatchSolveDescriptor{
+    .settle_after_solve = true,
+    .build_plan = buildContactBatchSolvePlan,
 };
 
 fn jointRuntimeRowDescriptor(kind: ConstraintRowKind) ?*const JointRuntimeRowDescriptor {
     inline for (&joint_runtime_rows) |*entry| {
+        if (entry.kind == kind) return entry;
+    }
+    return null;
+}
+
+fn contactRuntimeRowDescriptor(kind: ConstraintRowKind) ?*const ContactRuntimeRowDescriptor {
+    inline for (&contact_runtime_rows) |*entry| {
         if (entry.kind == kind) return entry;
     }
     return null;
@@ -4239,15 +5972,34 @@ fn buildJointRowSpecForJoint(
         &joint_ctx.joints[joint_ctx.joint_idx]
     else
         return null;
-    return buildJointRowSpecFromPlan(
-        joint_ctx,
+    return buildOptionalConstraintRowSpecFromPlan(
         kind,
+        joint_ctx.joint_idx,
         jointRowEnabled(enabled, row_enabled, joint_def),
         plan_builder(
             joint_ctx.s1024.instances[0..joint_ctx.s1024.instance_count],
             joint_ctx.joints,
             joint_ctx.joint_idx,
             joint_ctx.entities,
+        ),
+    );
+}
+
+fn buildEnvironmentRowSpecForInstance(
+    ctx: *const RowSpecBuildContext,
+    kind: ConstraintRowKind,
+    enabled: bool,
+    plan_builder: EnvironmentRowPlanBuilderFn,
+) ?ConstraintRowBuildSpec {
+    const environment = environmentRowSpecContext(ctx) orelse return null;
+    return buildOptionalConstraintRowSpecFromPlan(
+        kind,
+        environment.local_idx,
+        enabled,
+        plan_builder(
+            environment.s1024,
+            environment.entities,
+            environment.instance_idx,
         ),
     );
 }
@@ -4270,20 +6022,12 @@ fn buildConstraintRowSpecFromEntry(
             contact_entry.enabled,
             contact_entry.payload_selector,
         ),
-        .environment_plan => |environment_entry| blk: {
-            const environment = environmentRowSpecContext(ctx) orelse break :blk null;
-            const environment_plan = environment_entry.plan_builder(
-                environment.s1024,
-                environment.entities,
-                environment.instance_idx,
-            );
-            break :blk buildOptionalConstraintRowSpecFromPlan(
-                environment_entry.kind,
-                environment.local_idx,
-                environment_entry.enabled,
-                environment_plan,
-            );
-        },
+        .environment_plan => |environment_entry| buildEnvironmentRowSpecForInstance(
+            ctx,
+            environment_entry.kind,
+            environment_entry.enabled,
+            environment_entry.plan_builder,
+        ),
         .joint_plan => |joint_entry| buildJointRowSpecForJoint(
             ctx,
             joint_entry.kind,
@@ -4699,6 +6443,37 @@ fn applyContactFrictionRowStep(
     inst_b: *scene32.Instance,
     inv_mass_a: f32,
     inv_mass_b: f32,
+    tangent_x: f32,
+    tangent_y: f32,
+    tangent_z: f32,
+    equation: ConstraintRowEquation,
+    signed_impulse: f32,
+) ConstraintSolveStep {
+    return applyPairVelocityImpulseRowStep(
+        inst_a,
+        inst_b,
+        tangent_x,
+        tangent_y,
+        tangent_z,
+        signed_impulse,
+        makePairPrimitiveFromInverseMasses(
+            inv_mass_a,
+            inv_mass_b,
+            .linear_velocity,
+            equation,
+            0.1,
+            tangent_x,
+            tangent_y,
+            tangent_z,
+        ),
+    );
+}
+
+fn solveContactFrictionRowStep(
+    inst_a: *scene32.Instance,
+    inst_b: *scene32.Instance,
+    inv_mass_a: f32,
+    inv_mass_b: f32,
     normal_x: f32,
     normal_y: f32,
     normal_z: f32,
@@ -4708,27 +6483,30 @@ fn applyContactFrictionRowStep(
     const rel_vel_x = @as(f32, @floatFromInt(inst_b.vel_x - inst_a.vel_x));
     const rel_vel_y = @as(f32, @floatFromInt(inst_b.vel_y - inst_a.vel_y));
     const rel_vel_z = @as(f32, @floatFromInt(inst_b.vel_z - inst_a.vel_z));
-    const rel_normal_vel = rel_vel_x * normal_x + rel_vel_y * normal_y + rel_vel_z * normal_z;
-    const tangent_x = rel_vel_x - rel_normal_vel * normal_x;
-    const tangent_y = rel_vel_y - rel_normal_vel * normal_y;
-    const tangent_z = rel_vel_z - rel_normal_vel * normal_z;
-    const tangent_len = @sqrt(tangent_x * tangent_x + tangent_y * tangent_y + tangent_z * tangent_z);
-    if (tangent_len <= 0.0001) return .{ .changed = false, .applied_impulse = 0.0 };
-    const tx = tangent_x / tangent_len;
-    const ty = tangent_y / tangent_len;
-    const tz = tangent_z / tangent_len;
-    const tangential_speed = rel_vel_x * tx + rel_vel_y * ty + rel_vel_z * tz;
-    if (@abs(tangential_speed) <= 0.0001) return .{ .changed = false, .applied_impulse = 0.0 };
-    const raw_impulse = @min(@abs(tangential_speed) / @max(inv_mass_a + inv_mass_b, 0.0001), friction_coeff * 8.0);
-    const signed_impulse = if (tangential_speed > 0.0) -raw_impulse else raw_impulse;
-    return applyPairVelocityImpulseRowStep(
+    const velocity_components = measureDirectionalVelocityComponents(
+        rel_vel_x,
+        rel_vel_y,
+        rel_vel_z,
+        normal_x,
+        normal_y,
+        normal_z,
+    );
+    const tangent_frame = buildDirectionalTangentFrame(velocity_components) orelse return .{
+        .changed = false,
+        .applied_impulse = 0.0,
+    };
+    const raw_impulse = @min(tangent_frame.speed / @max(inv_mass_a + inv_mass_b, 0.0001), friction_coeff * 8.0);
+    const signed_impulse = -raw_impulse;
+    return applyContactFrictionRowStep(
         inst_a,
         inst_b,
-        tx,
-        ty,
-        tz,
+        inv_mass_a,
+        inv_mass_b,
+        tangent_frame.dir_x,
+        tangent_frame.dir_y,
+        tangent_frame.dir_z,
+        equation,
         signed_impulse,
-        makePairPrimitiveFromInverseMasses(inv_mass_a, inv_mass_b, .linear_velocity, equation, 0.1, tx, ty, tz),
     );
 }
 
@@ -4749,14 +6527,16 @@ fn applyContactFrictionWarmStartRowStep(
         -@max(0.0, accumulated_impulse)
     else
         @max(0.0, accumulated_impulse);
-    return applyPairVelocityImpulseRowStep(
+    return applyContactFrictionRowStep(
         inst_a,
         inst_b,
+        inv_mass_a,
+        inv_mass_b,
         tangent_x,
         tangent_y,
         tangent_z,
+        equation,
         signed_impulse,
-        makePairPrimitiveFromInverseMasses(inv_mass_a, inv_mass_b, .linear_velocity, equation, 0.1, tangent_x, tangent_y, tangent_z),
     );
 }
 
@@ -4767,8 +6547,7 @@ fn solvePreparedContactNormalSteps(
     equation: ConstraintRowEquation,
     row_state: ?*const ConstraintRowState,
 ) ConstraintSolveStep {
-    var changed = false;
-    var applied_impulse: f32 = 0.0;
+    var accum = ContactSolveAccumulator{};
     if (row_state) |_| {
         const warm_impulse = constraintRowWarmImpulse(row_state, 0.35, equation, 0.0);
         const warm_step = applyContactWarmStartRowStep(
@@ -4782,8 +6561,7 @@ fn solvePreparedContactNormalSteps(
             equation,
             warm_impulse,
         );
-        applied_impulse += warm_step.applied_impulse;
-        changed = warm_step.changed or changed;
+        accum.addWarmStart(warm_step);
     }
     const position_step = applyContactPositionRowStep(
         inst_a,
@@ -4796,8 +6574,7 @@ fn solvePreparedContactNormalSteps(
         prepared.normal.depth,
         equation,
     );
-    changed = position_step.changed or changed;
-    applied_impulse = @max(applied_impulse, position_step.applied_impulse);
+    accum.applyStep(position_step);
     const velocity_step = applyContactVelocityRowStep(
         inst_a,
         inst_b,
@@ -4809,12 +6586,8 @@ fn solvePreparedContactNormalSteps(
         prepared.restitution,
         equation,
     );
-    changed = velocity_step.changed or changed;
-    applied_impulse = @max(applied_impulse, velocity_step.applied_impulse);
-    return .{
-        .changed = changed,
-        .applied_impulse = applied_impulse,
-    };
+    accum.applyStep(velocity_step);
+    return accum.finish();
 }
 
 fn solvePreparedContactFrictionSteps(
@@ -4826,8 +6599,7 @@ fn solvePreparedContactFrictionSteps(
 ) ConstraintSolveStep {
     if (!prepared.has_tangent) return .{ .changed = false, .applied_impulse = 0.0 };
 
-    var changed = false;
-    var applied_impulse: f32 = 0.0;
+    var accum = ContactSolveAccumulator{};
     if (row_state) |_| {
         const friction_hint = constraintRowWarmImpulse(row_state, 0.35, equation, 0.0);
         const warm_step = applyContactFrictionWarmStartRowStep(
@@ -4842,10 +6614,9 @@ fn solvePreparedContactFrictionSteps(
             friction_hint,
             prepared.tangent.depth,
         );
-        applied_impulse += warm_step.applied_impulse;
-        changed = warm_step.changed or changed;
+        accum.addWarmStart(warm_step);
     }
-    const friction_step = applyContactFrictionRowStep(
+    const friction_step = solveContactFrictionRowStep(
         inst_a,
         inst_b,
         prepared.inv_mass_a,
@@ -4856,12 +6627,8 @@ fn solvePreparedContactFrictionSteps(
         prepared.friction,
         equation,
     );
-    changed = friction_step.changed or changed;
-    applied_impulse = @max(applied_impulse, friction_step.applied_impulse);
-    return .{
-        .changed = changed,
-        .applied_impulse = applied_impulse,
-    };
+    accum.applyStep(friction_step);
+    return accum.finish();
 }
 
 fn settleContactRestState(
@@ -4915,36 +6682,9 @@ fn solveContactConstraintsForPairs(
         var order_idx: usize = 0;
         while (order_idx < active_count) : (order_idx += 1) {
             const pair = broadphase_pairs[priority_order[order_idx]];
-            if (pair.a >= s1024.instance_count or pair.b >= s1024.instance_count) continue;
-
-            const inst_a = &s1024.instances[pair.a];
-            const inst_b = &s1024.instances[pair.b];
-            if (inst_a.state == .broken or inst_b.state == .broken) continue;
-            const prepared = prepareContactConstraintPair(inst_a, inst_b, entities) orelse continue;
-            const normal_step = solvePreparedContactNormalSteps(
-                inst_a,
-                inst_b,
-                prepared,
-                prepared.normal_equation,
-                null,
-            );
-            const friction_step = solvePreparedContactFrictionSteps(
-                inst_a,
-                inst_b,
-                prepared,
-                prepared.friction_equation,
-                null,
-            );
-            const pair_changed = normal_step.changed or friction_step.changed;
-            changed = pair_changed or changed;
-            settleAndWakeContactPair(
-                inst_a,
-                inst_b,
-                prepared.inv_mass_a,
-                prepared.inv_mass_b,
-                prepared.normal.dir_y,
-                pair_changed,
-            );
+            changed = executePreparedContactBatchOutcome(
+                prepareContactBatchSolveContext(s1024, entities, pair),
+            ) or changed;
         }
 
         if (computeMaxActiveContactConstraintMagnitude(s1024, entities, broadphase_pairs) <= settle_threshold) break;
@@ -4953,7 +6693,8 @@ fn solveContactConstraintsForPairs(
     return changed;
 }
 
-fn solveContactNormalRow(
+fn solveContactRuntimeRow(
+    kind: ConstraintRowKind,
     s1024: *scene1024.Scene1024,
     entities: []entity16.Entity16,
     pair: BroadPhasePair,
@@ -4961,183 +6702,12 @@ fn solveContactNormalRow(
     equation: ConstraintRowEquation,
     row_state: ?*const ConstraintRowState,
 ) ConstraintRowExecResult {
-    if (pair.a >= s1024.instance_count or pair.b >= s1024.instance_count) return inactiveConstraintRowResult();
-
-    const inst_a = &s1024.instances[pair.a];
-    const inst_b = &s1024.instances[pair.b];
-    if (inst_a.state == .broken or inst_b.state == .broken) return inactiveConstraintRowResult();
-    if (inst_a.entity_id >= entities.len or inst_b.entity_id >= entities.len) return inactiveConstraintRowResult();
-
-    const before = base_residual;
-    if (before <= 0.0) return inactiveConstraintRowResult();
-    const prepared = prepareContactConstraintPair(inst_a, inst_b, entities) orelse return stalledConstraintRowResult(before);
-    const solve_step = solvePreparedContactNormalSteps(inst_a, inst_b, prepared, equation, row_state);
-    settleAndWakeContactPair(
-        inst_a,
-        inst_b,
-        prepared.inv_mass_a,
-        prepared.inv_mass_b,
-        prepared.normal.dir_y,
-        solve_step.changed,
-    );
-    return finalizeContactRowResult(.contact_normal, inst_a, inst_b, entities, before, solve_step.changed, solve_step.applied_impulse, equation);
-}
-
-fn solveContactFrictionRow(
-    s1024: *scene1024.Scene1024,
-    entities: []entity16.Entity16,
-    pair: BroadPhasePair,
-    base_residual: f32,
-    equation: ConstraintRowEquation,
-    row_state: ?*const ConstraintRowState,
-) ConstraintRowExecResult {
-    if (pair.a >= s1024.instance_count or pair.b >= s1024.instance_count) return inactiveConstraintRowResult();
-
-    const inst_a = &s1024.instances[pair.a];
-    const inst_b = &s1024.instances[pair.b];
-    if (inst_a.state == .broken or inst_b.state == .broken) return inactiveConstraintRowResult();
-    if (inst_a.entity_id >= entities.len or inst_b.entity_id >= entities.len) return inactiveConstraintRowResult();
-    const before = base_residual;
-    if (before <= 0.0) return inactiveConstraintRowResult();
-    const prepared = prepareContactConstraintPair(inst_a, inst_b, entities) orelse return stalledConstraintRowResult(before);
-    if (!prepared.has_tangent) return stalledConstraintRowResult(before);
-    const solve_step = solvePreparedContactFrictionSteps(inst_a, inst_b, prepared, equation, row_state);
-    return finalizeContactRowResult(.contact_friction, inst_a, inst_b, entities, before, solve_step.changed, solve_step.applied_impulse, equation);
-}
-
-fn solveJointLimitRow(
-    ctx: JointSolveRuntimeContext,
-    instances: []scene32.Instance,
-    joints: []joint.Joint,
-    joint_idx: usize,
-    entities: []entity16.Entity16,
-    equation: ConstraintRowEquation,
-    row_state: ?*const ConstraintRowState,
-) ConstraintRowExecResult {
-    const joint_def = ctx.joint_def;
-    const inst_a = ctx.inst_a;
-    const inst_b = ctx.inst_b;
-    const before = ctx.before;
-    if (before <= 0.0) return inactiveConstraintRowResult();
-
-    var exec_state = JointRowExecutionState.init(0.0);
-
-    const prepared = prepareJointLimitChannel(inst_a, inst_b, joint_def) orelse {
-        return finalizeJointRowNoChange(
-            .joint_limit,
-            instances,
-            joints,
-            joint_idx,
-            entities,
-            before,
-            equation,
-        );
-    };
-    const limit_result = applyPreparedJointLimitChannel(inst_a, inst_b, ctx.mass_data, prepared, row_state, equation);
-    limit_result.applyAll(&exec_state, inst_a, inst_b, joint_def, ctx.mass_data);
-
-    return finalizeJointRowResult(
-        .joint_limit,
-        instances,
-        joints,
-        joint_idx,
+    return executePreparedContactRuntimeOutcome(
+        prepareContactRuntimeSolveContext(kind, s1024, entities, pair, base_residual),
         entities,
-        inst_a,
-        inst_b,
-        before,
-        exec_state.changed,
-        exec_state.applied_impulse,
+        base_residual,
         equation,
-    );
-}
-
-fn solveJointAnchorRow(
-    ctx: JointSolveRuntimeContext,
-    instances: []scene32.Instance,
-    joints: []joint.Joint,
-    joint_idx: usize,
-    entities: []entity16.Entity16,
-    equation: ConstraintRowEquation,
-    row_state: ?*const ConstraintRowState,
-) ConstraintRowExecResult {
-    const joint_def = ctx.joint_def;
-    const inst_a = ctx.inst_a;
-    const inst_b = ctx.inst_b;
-    const before = ctx.before;
-    if (before <= 0.0) return inactiveConstraintRowResult();
-
-    const warm_impulse = constraintRowWarmImpulse(row_state, 0.25, equation, 1.0);
-    var exec_state = JointRowExecutionState.init(warm_impulse);
-
-    if (prepareJointAnchorChannel(inst_a, inst_b, joint_def)) |prepared| {
-        const anchor_result = applyPreparedJointAnchorChannel(
-            inst_a,
-            inst_b,
-            ctx.mass_data,
-            prepared,
-            warm_impulse,
-            equation,
-            prepareJointAnchorPostprocess(joint_def),
-        );
-        anchor_result.applyAll(&exec_state, inst_a, inst_b, joint_def, ctx.mass_data);
-    }
-
-    return finalizeJointRowResult(
-        .joint_anchor,
-        instances,
-        joints,
-        joint_idx,
-        entities,
-        inst_a,
-        inst_b,
-        before,
-        exec_state.changed,
-        exec_state.applied_impulse,
-        equation,
-    );
-}
-
-fn solveJointDriveRow(
-    ctx: JointSolveRuntimeContext,
-    instances: []scene32.Instance,
-    joints: []joint.Joint,
-    joint_idx: usize,
-    entities: []entity16.Entity16,
-    equation: ConstraintRowEquation,
-    row_state: ?*const ConstraintRowState,
-) ConstraintRowExecResult {
-    const joint_def = ctx.joint_def;
-    const inst_a = ctx.inst_a;
-    const inst_b = ctx.inst_b;
-    const before = ctx.before;
-    if (before <= 0.0) return inactiveConstraintRowResult();
-
-    const warm_impulse = constraintRowWarmImpulse(row_state, 0.35, equation, 1.0);
-    var exec_state = JointRowExecutionState.init(warm_impulse);
-
-    const prepared = prepareJointDriveChannel(inst_a, inst_b, joint_def) orelse return stalledConstraintRowResult(before);
-    const drive_result = applyPreparedJointDriveChannel(
-        inst_a,
-        inst_b,
-        ctx.mass_data,
-        prepared,
         row_state,
-        equation,
-    );
-    drive_result.applyAll(&exec_state, inst_a, inst_b, joint_def, ctx.mass_data);
-
-    return finalizeJointRowResult(
-        .joint_drive,
-        instances,
-        joints,
-        joint_idx,
-        entities,
-        inst_a,
-        inst_b,
-        before,
-        exec_state.changed,
-        exec_state.applied_impulse,
-        equation,
     );
 }
 
@@ -5151,32 +6721,20 @@ fn solveJointRuntimeRow(
     equation: ConstraintRowEquation,
     row_state: ?*const ConstraintRowState,
 ) ConstraintRowExecResult {
-    const descriptor = jointRuntimeRowDescriptor(kind) orelse return inactiveConstraintRowResult();
-    if (joint_idx >= joints.len) return inactiveConstraintRowResult();
-    if (base_residual <= 0.0) return inactiveConstraintRowResult();
-
-    const joint_def = &joints[joint_idx];
-    if (!descriptor.row_enabled(joint_def)) return inactiveConstraintRowResult();
-    if (joint_def.entity_a >= instances.len or joint_def.entity_b >= instances.len) return inactiveConstraintRowResult();
-
-    const inst_a = &instances[joint_def.entity_a];
-    const inst_b = &instances[joint_def.entity_b];
-    if (inst_a.state == .broken or inst_b.state == .broken) return inactiveConstraintRowResult();
-
-    const mass_data = computeJointMassData(inst_a, inst_b, entities) orelse return stalledConstraintRowResult(base_residual);
-
-    return descriptor.solver(
-        .{
-            .joint_def = joint_def,
-            .inst_a = inst_a,
-            .inst_b = inst_b,
-            .before = base_residual,
-            .mass_data = mass_data,
-        },
+    return executePreparedJointRuntimeOutcome(
+        prepareJointRuntimeSolveContext(
+            kind,
+            instances,
+            joints,
+            joint_idx,
+            entities,
+            base_residual,
+        ),
         instances,
         joints,
         joint_idx,
         entities,
+        base_residual,
         equation,
         row_state,
     );
@@ -5202,15 +6760,6 @@ fn solveEnvironmentConstraintsForIndices(
     var priority_order: [scene32.MAX_INSTANCES]u8 = undefined;
     var iter: u8 = 0;
     while (iter < iterations) : (iter += 1) {
-        const active_count = buildEnvironmentPriorityOrder(
-            s1024,
-            entities,
-            settle_threshold,
-            (iter & 1) != 0,
-            priority_order[0..],
-        );
-        if (active_count == 0) break;
-
         const subset_active_count = buildEnvironmentPriorityOrderForIndices(
             s1024,
             entities,
@@ -5224,28 +6773,9 @@ fn solveEnvironmentConstraintsForIndices(
         var order_idx: usize = 0;
         while (order_idx < subset_active_count) : (order_idx += 1) {
             const i = priority_order[order_idx];
-            const inst = &s1024.instances[i];
-            if (inst.state == .broken) continue;
-            if (inst.entity_id >= entities.len) continue;
-
-            const entity = &entities[inst.entity_id];
-            if ((entity.physics.flags & 0x01) != 0 or entity.physics.mass == 0) continue;
-            const prepared = prepareEnvironmentConstraint(s1024, entities, i) orelse continue;
-
-            const previous_vel_x = inst.vel_x;
-            const previous_vel_y = inst.vel_y;
-            const previous_vel_z = inst.vel_z;
-            const moved = applyEnvironmentResolvedMotion(
-                inst,
-                entity,
-                prepared.move_x,
-                prepared.move_y,
-                prepared.move_z,
-                previous_vel_x,
-                previous_vel_y,
-                previous_vel_z,
+            const moved = executePreparedEnvironmentBatchOutcome(
+                prepareEnvironmentBatchSolveContext(s1024, entities, i),
             );
-            if (moved) wakeInstance(inst);
             changed = moved or changed;
         }
 
@@ -5263,73 +6793,13 @@ fn solveEnvironmentRow(
     equation: ConstraintRowEquation,
     row_state: ?*const ConstraintRowState,
 ) ConstraintRowExecResult {
-    if (instance_idx >= s1024.instance_count) return inactiveConstraintRowResult();
-
-    const before = base_residual;
-    if (before <= 0.0) return inactiveConstraintRowResult();
-
-    const inst = &s1024.instances[instance_idx];
-    if (inst.state == .broken) return stalledConstraintRowResult(before);
-    if (inst.entity_id >= entities.len) return stalledConstraintRowResult(before);
-
-    const entity = &entities[inst.entity_id];
-    if ((entity.physics.flags & 0x01) != 0 or entity.physics.mass == 0) return stalledConstraintRowResult(before);
-    const prepared = prepareEnvironmentConstraint(s1024, entities, instance_idx) orelse return stalledConstraintRowResult(before);
-
-    const previous_vel_x = inst.vel_x;
-    const previous_vel_y = inst.vel_y;
-    const previous_vel_z = inst.vel_z;
-    var applied_impulse: f32 = 0.0;
-
-    if (row_state) |_| {
-        const warm_move = @min(
-            constraintRowWarmImpulse(row_state, 0.25, equation, 1.0),
-            @min(prepared.normal.depth * 0.5, equation.max_impulse),
-        );
-        const warm_step = applyEnvironmentWarmStartDisplacement(
-            inst,
-            prepared.normal.dir_x,
-            prepared.normal.dir_y,
-            prepared.normal.dir_z,
-            warm_move,
-            equation,
-        );
-        applied_impulse += warm_step.applied_impulse;
-    }
-
-    const solve_step = applyEnvironmentSolveDisplacement(
-        inst,
-        prepared.normal.dir_x,
-        prepared.normal.dir_y,
-        prepared.normal.dir_z,
-        prepared.normal.depth,
-        equation,
-    );
-    applied_impulse = @max(applied_impulse, solve_step.applied_impulse);
-
-    const solve_move_x = @as(i32, @intFromFloat(@round(prepared.normal.dir_x * solve_step.applied_impulse)));
-    const solve_move_y = @as(i32, @intFromFloat(@round(prepared.normal.dir_y * solve_step.applied_impulse)));
-    const solve_move_z = @as(i32, @intFromFloat(@round(prepared.normal.dir_z * solve_step.applied_impulse)));
-
-    _ = applyEnvironmentResolvedMotion(
-        inst,
-        entity,
-        solve_move_x,
-        solve_move_y,
-        solve_move_z,
-        previous_vel_x,
-        previous_vel_y,
-        previous_vel_z,
-    );
-    return finalizeEnvironmentRowResult(
+    return executePreparedEnvironmentRuntimeOutcome(
+        prepareEnvironmentRuntimeSolveContext(s1024, entities, instance_idx, base_residual),
         s1024,
         entities,
-        instance_idx,
-        inst,
-        before,
-        solve_step.changed,
-        applied_impulse,
+        base_residual,
         equation,
+        row_state,
     );
 }
 
@@ -5491,8 +6961,8 @@ pub fn solveConstraintBlock(
                             row_state,
                         );
                     },
-                    .contact_normal => solveContactNormalRow(s1024, entities, pair_subset[row.index], row.base_residual, row.equation, row_state),
-                    .contact_friction => solveContactFrictionRow(s1024, entities, pair_subset[row.index], row.base_residual, row.equation, row_state),
+                    .contact_normal => solveContactRuntimeRow(.contact_normal, s1024, entities, pair_subset[row.index], row.base_residual, row.equation, row_state),
+                    .contact_friction => solveContactRuntimeRow(.contact_friction, s1024, entities, pair_subset[row.index], row.base_residual, row.equation, row_state),
                     .environment => solveEnvironmentRow(
                         s1024,
                         entities,
@@ -6034,4 +7504,281 @@ test "sortConstraintIslandsByStress prioritizes higher stress island first" {
 
     try std.testing.expectEqual(@as(usize, 0), island_order[0]);
     try std.testing.expectEqual(@as(usize, 1), island_order[1]);
+}
+
+test "prepareJointDriveChannel distinguishes inactive from stalled_prepare" {
+    var inst_a = scene32.Instance{
+        .entity_id = 0,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .moving,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    var inst_b = scene32.Instance{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .moving,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+
+    const inactive_joint = joint.Joint{
+        .joint_type = .fixed,
+        .entity_a = 0,
+        .entity_b = 1,
+        .anchor_a_x = 0,
+        .anchor_a_y = 0,
+        .anchor_a_z = 0,
+        .anchor_b_x = 0,
+        .anchor_b_y = 0,
+        .anchor_b_z = 0,
+    };
+    try std.testing.expectEqual(
+        JointPreparedOutcome(JointPreparedDriveChannel).inactive,
+        prepareJointDriveChannel(&inst_a, &inst_b, &inactive_joint),
+    );
+
+    const stalled_joint = joint.Joint{
+        .joint_type = .slider,
+        .entity_a = 0,
+        .entity_b = 1,
+        .anchor_a_x = 0,
+        .anchor_a_y = 0,
+        .anchor_a_z = 0,
+        .anchor_b_x = 0,
+        .anchor_b_y = 0,
+        .anchor_b_z = 0,
+        .axis_x = 0,
+        .axis_y = 0,
+        .axis_z = 0,
+        .limit_min = -10.0,
+        .limit_max = 10.0,
+        .motor_enabled = true,
+        .motor_target = 5.0,
+        .motor_speed = 6.0,
+        .motor_max_torque = 10.0,
+    };
+    try std.testing.expectEqual(
+        JointPreparedOutcome(JointPreparedDriveChannel).stalled_prepare,
+        prepareJointDriveChannel(&inst_a, &inst_b, &stalled_joint),
+    );
+}
+
+test "prepareResolvedJointSolveResult maps stalled_prepare to stalled outcome" {
+    var entities = [_]entity16.Entity16{
+        entity16.initEntity16(),
+        entity16.initEntity16(),
+    };
+    entities[0].physics.mass = 10;
+    entities[1].physics.mass = 10;
+
+    var inst_a = scene32.Instance{
+        .entity_id = 0,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .moving,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    var inst_b = scene32.Instance{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .moving,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    var stalled_joint = joint.Joint{
+        .joint_type = .slider,
+        .entity_a = 0,
+        .entity_b = 1,
+        .anchor_a_x = 0,
+        .anchor_a_y = 0,
+        .anchor_a_z = 0,
+        .anchor_b_x = 0,
+        .anchor_b_y = 0,
+        .anchor_b_z = 0,
+        .axis_x = 0,
+        .axis_y = 0,
+        .axis_z = 0,
+        .limit_min = -10.0,
+        .limit_max = 10.0,
+        .motor_enabled = true,
+        .motor_target = 5.0,
+        .motor_speed = 6.0,
+        .motor_max_torque = 10.0,
+    };
+
+    const mass_data = computeJointMassData(&inst_a, &inst_b, entities[0..]).?;
+    const descriptor = jointRuntimeRowDescriptor(.joint_drive).?;
+    const ctx = JointSolveRuntimeContext{
+        .kind = .joint_drive,
+        .descriptor = descriptor,
+        .joint_def = &stalled_joint,
+        .inst_a = &inst_a,
+        .inst_b = &inst_b,
+        .before = 1.0,
+        .mass_data = mass_data,
+    };
+
+    const outcome = prepareResolvedJointSolveResult(
+        JointPreparedChannel,
+        ctx,
+        &JointRowExecutionState.init(0.0),
+        null,
+        .{
+            .effective_mass = 1.0,
+            .bias = 0.0,
+            .max_impulse = 1.0,
+        },
+        descriptor.prepare_channel(ctx),
+        buildReadyJointSolveResultFromPreparedChannel,
+    );
+
+    try std.testing.expectEqual(JointSolveResultOutcome.stalled, outcome);
+}
+
+test "jointPreparedUnavailableOutcome maps stalled_prepare policy to solve outcome" {
+    const outcome = jointPreparedUnavailableOutcome(.finalize_exec_state);
+
+    try std.testing.expectEqual(JointSolveResultOutcome.finalize_exec_state, outcome);
+}
+
+test "resolveJointPreparedChannel maps inactive and stalled via descriptor policy" {
+    const descriptor = JointRuntimeRowDescriptor{
+        .kind = .joint_limit,
+        .policy = .{
+            .residual_scale = 1.0,
+            .warm_impulse_scale = 0.0,
+            .inactive_outcome = .finalize_no_change,
+            .stalled_prepare_outcome = .finalize_exec_state,
+            .anchor_postprocess_policy = .none,
+            .drive_postprocess_policy = .none,
+        },
+        .row_enabled = jointHasLimitRow,
+        .prepare_channel = prepareJointDescriptorLimitChannel,
+    };
+    var joint_def = joint.Joint{
+        .joint_type = .hinge,
+        .entity_a = 0,
+        .entity_b = 1,
+        .anchor_a_x = 0,
+        .anchor_a_y = 0,
+        .anchor_a_z = 0,
+        .anchor_b_x = 0,
+        .anchor_b_y = 0,
+        .anchor_b_z = 0,
+    };
+    var inst_a = scene32.Instance{
+        .entity_id = 0,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .moving,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    var inst_b = scene32.Instance{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .moving,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    const ctx = JointSolveRuntimeContext{
+        .kind = .joint_limit,
+        .descriptor = &descriptor,
+        .joint_def = &joint_def,
+        .inst_a = &inst_a,
+        .inst_b = &inst_b,
+        .before = 1.0,
+        .mass_data = .{
+            .inv_mass_a = 0.1,
+            .inv_mass_b = 0.1,
+            .ratio_a = 0.5,
+            .ratio_b = 0.5,
+        },
+    };
+
+    const inactive = resolveJointPreparedChannel(
+        JointPreparedLimitChannel,
+        ctx,
+        JointPreparedOutcome(JointPreparedLimitChannel).inactive,
+    );
+    try std.testing.expectEqual(
+        JointPreparedResolution(JointPreparedLimitChannel){ .outcome = .no_change },
+        inactive,
+    );
+
+    const stalled = resolveJointPreparedChannel(
+        JointPreparedLimitChannel,
+        ctx,
+        JointPreparedOutcome(JointPreparedLimitChannel).stalled_prepare,
+    );
+    try std.testing.expectEqual(
+        JointPreparedResolution(JointPreparedLimitChannel){ .outcome = .finalize_exec_state },
+        stalled,
+    );
 }

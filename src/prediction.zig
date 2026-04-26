@@ -163,6 +163,17 @@ pub fn linearStateFromInstanceSnapshot(instance: rewind.InstanceSnapshot) Linear
     };
 }
 
+pub fn linearStateFromInstance(inst: *const scene32.Instance) LinearState {
+    return .{
+        .pos_x = @as(f32, @floatFromInt(inst.pos_x)),
+        .pos_y = @as(f32, @floatFromInt(inst.pos_y)),
+        .pos_z = @as(f32, @floatFromInt(inst.pos_z)),
+        .vel_x = @as(f32, @floatFromInt(inst.vel_x)),
+        .vel_y = @as(f32, @floatFromInt(inst.vel_y)),
+        .vel_z = @as(f32, @floatFromInt(inst.vel_z)),
+    };
+}
+
 pub fn instancePoseFromInstance(inst: *const scene32.Instance) InstancePoseForecast {
     return .{
         .pos_x = @as(f32, @floatFromInt(inst.pos_x)),
@@ -651,11 +662,19 @@ test "buildAvoidanceRecommendation derives brake and steer advice from conflict 
 
 test "computeTTC detects head-on convergence" {
     const ttc = computeTTC(.{
-        .pos_x = 0, .pos_y = 0, .pos_z = 0,
-        .vel_x = 10, .vel_y = 0, .vel_z = 0,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .vel_x = 10,
+        .vel_y = 0,
+        .vel_z = 0,
     }, .{
-        .pos_x = 100, .pos_y = 0, .pos_z = 0,
-        .vel_x = -10, .vel_y = 0, .vel_z = 0,
+        .pos_x = 100,
+        .pos_y = 0,
+        .pos_z = 0,
+        .vel_x = -10,
+        .vel_y = 0,
+        .vel_z = 0,
     }, 1.0, 10.0);
     try std.testing.expect(ttc.valid);
     try std.testing.expect(ttc.time > 4.8 and ttc.time < 5.2);
@@ -663,11 +682,19 @@ test "computeTTC detects head-on convergence" {
 
 test "computeConflictWindow returns finite overlap span" {
     const window = computeConflictWindow(.{
-        .pos_x = 0, .pos_y = 0, .pos_z = 0,
-        .vel_x = 5, .vel_y = 0, .vel_z = 0,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .vel_x = 5,
+        .vel_y = 0,
+        .vel_z = 0,
     }, .{
-        .pos_x = 8, .pos_y = 0, .pos_z = 0,
-        .vel_x = 0, .vel_y = 0, .vel_z = 0,
+        .pos_x = 8,
+        .pos_y = 0,
+        .pos_z = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
     }, 2.0, 5.0, 0.1);
     try std.testing.expect(window.valid);
     try std.testing.expect(window.end_time >= window.start_time);
@@ -880,11 +907,19 @@ test "advanceSupportPose preserves predicted support motion until actual catches
 
 test "assessCollisionRisk escalates imminent convergence" {
     const risk = assessCollisionRisk(.{
-        .pos_x = 0, .pos_y = 0, .pos_z = 0,
-        .vel_x = 10, .vel_y = 0, .vel_z = 0,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .vel_x = 10,
+        .vel_y = 0,
+        .vel_z = 0,
     }, .{
-        .pos_x = 1.5, .pos_y = 0, .pos_z = 0,
-        .vel_x = -10, .vel_y = 0, .vel_z = 0,
+        .pos_x = 1.5,
+        .pos_y = 0,
+        .pos_z = 0,
+        .vel_x = -10,
+        .vel_y = 0,
+        .vel_z = 0,
     }, 1.0, 2.0, 0.1);
     try std.testing.expect(risk.level == .imminent);
     try std.testing.expect(risk.score > 0.5);
@@ -893,11 +928,19 @@ test "assessCollisionRisk escalates imminent convergence" {
 
 test "assessCollisionRisk returns none for separated parallel motion" {
     const risk = assessCollisionRisk(.{
-        .pos_x = 0, .pos_y = 0, .pos_z = 0,
-        .vel_x = 5, .vel_y = 0, .vel_z = 0,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .vel_x = 5,
+        .vel_y = 0,
+        .vel_z = 0,
     }, .{
-        .pos_x = 0, .pos_y = 10, .pos_z = 0,
-        .vel_x = 5, .vel_y = 0, .vel_z = 0,
+        .pos_x = 0,
+        .pos_y = 10,
+        .pos_z = 0,
+        .vel_x = 5,
+        .vel_y = 0,
+        .vel_z = 0,
     }, 1.0, 3.0, 0.1);
     try std.testing.expect(risk.level == .none);
     try std.testing.expect(risk.score == 0);
