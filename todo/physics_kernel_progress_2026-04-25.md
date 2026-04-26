@@ -2239,3 +2239,422 @@ joint finish 这边之前虽然 ready 分支已经很薄，但：
 1. optional row-spec 包装不再在 plan 路径和 directional 路径各写一份。
 2. 后续如果要给“禁用 row”补更多 tracing / debug 行为，可以先沿同一个 optional helper 扩，而不是回头扫多处 early-return。
 3. 这一步仍然没有改变 row enable 判断本身，也没有改变 row spec 的字段值。
+
+### directional mode -> row spec 投影也开始固定到单一出口
+
+这一轮继续压缩 `row spec` 这一层的重复投影逻辑，把 `direction + equation + mode -> ConstraintRowBuildSpec` 固定到一个 helper。
+
+新增：
+
+1. `makeConstraintRowBuildSpecFromDirectionalMode(...)`
+
+当前效果：
+
+1. `buildDirectionalModeRowSpec(...)` 改为复用 `makeConstraintRowBuildSpecFromDirectionalMode(...)`。
+2. `buildOptionalDirectionalRowSpec(...)` 不再直接重复调用 `buildDirectionalModeRowSpec(...)` 的同组参数投影，而是走同一个 directional-mode helper。
+3. `directional payload -> row spec` 的投影入口继续收口。
+
+这一步的意义：
+
+1. `DirectionalRowPayload` 相关的 spec 投影不再在 optional / non-optional 两条链上各保留一份参数展开。
+2. 后续如果 `DirectionalRowSpecMode` 再扩或要加 trace 字段，有明确的 directional-mode spec 出口可挂。
+3. 这一步仍然没有改变 residual、equation 或 enable 语义。
+
+### joint prepare ready-channel 包装也开始共享 helper
+
+这一轮从 `row/build/spec` 稍微转开一点，收口的是 `joint prepare` 路径里仍然重复的 ready-channel 包装。
+
+新增：
+
+1. `jointAxisVectorFromPreparedConstraint(...)`
+2. `readyJointPreparedAngularChannel(...)`
+3. `readyJointPreparedLinearChannel(...)`
+
+当前效果：
+
+1. `prepareJointLimitChannel(...)` 不再自己手工拼：
+   - hinge angular ready channel
+   - slider linear ready channel
+2. `prepareJointDriveChannel(...)` 也改为复用同一组 angular/linear ready helper。
+3. slider limit 的 `prepared.dir_* -> axis vec3` 投影统一改为 `jointAxisVectorFromPreparedConstraint(...)`。
+
+这一步的意义：
+
+1. joint prepare 层的 ready-channel 包装开始有固定出口，不再在 limit/drive 各写一份近似相同的 union 字面量。
+2. 这为后续如果要继续收 joint prepare / descriptor / postprocess 三层之间的协议边界，提供了更稳定的底层构造点。
+3. 这一步仍然没有改变 inactive/stalled policy，也没有改变任何 joint 求解数值。
+
+### anchor prepare ready 包装也开始收口
+
+这一轮继续沿 `joint prepare` 做小步统一，把 `anchor` 路径里仍然重复的 ready 包装也收成了单点 helper。
+
+新增：
+
+1. `readyJointPreparedAnchorChannel(...)`
+
+当前效果：
+
+1. `prepareJointAnchorChannel(...)` 的 `spring` 分支不再手工拼：
+   - `dir_* -> axis`
+   - `constraint = prepared`
+   - `damping_scale = ...`
+2. `prepareJointAnchorChannel(...)` 的 `fixed/ball_socket/hinge/slider` 分支也改为复用同一个 helper。
+3. `jointAxisVectorFromPreparedLinearConstraint(...)` 现在同时服务：
+   - limit slider
+   - anchor spring
+   - anchor fixed/ball_socket/hinge/slider
+
+这一步的意义：
+
+1. `joint prepare` 三条主线里，`anchor` 也开始拥有和 `limit/drive` 一样的底层 ready 构造出口。
+2. 这让 `prepare -> descriptor -> postprocess` 之间的边界更清晰：prepare 层负责得到标准 channel，descriptor 层再做 postprocess 注入。
+3. 这一步仍然没有改变 damping 数值、inactive/stalled 语义或求解行为。
+
+### drive postprocess 注入也开始对齐 anchor 的更新模式
+
+这一轮继续沿 `joint descriptor / postprocess` 做一小步收口，没有新加抽象层，只是把 `drive` 的 postprocess 注入方式改成和 `anchor` 同类的“复制后局部更新”。
+
+当前效果：
+
+1. `withPreparedJointDrivePostprocess(...)` 不再按 `angular/linear` 两个分支手工重建整个 union。
+2. 现在改为：
+   - `var result = prepared`
+   - 针对活动分支只更新 `.postprocess`
+   - 返回 `result`
+3. `withPreparedJointAnchorPostprocess(...)` 与 `withPreparedJointDrivePostprocess(...)` 现在都采用“复制后注入 metadata”这一类模式。
+
+这一步的意义：
+
+1. joint descriptor postprocess 注入层开始更一致，不再出现一边是局部更新、一边是完整重建的风格分裂。
+2. 后续如果要继续给 prepared channel 注入更多 metadata，这种写法更稳，也更不容易漏字段。
+3. 这一步没有改变任何 postprocess policy、solver 数值或 channel 语义。
+
+### runtime/batch context prepare 入口继续共享
+
+这一轮没有再碰 solver 数值，而是把 `contact/environment` 两条链里仍然重复的一层
+`prepared execution outcome -> runtime/batch solve context`
+收成了共享 helper。
+
+新增：
+
+1. `preparePreparedRuntimeSolveContext(...)`
+2. `preparePreparedBatchSolveContext(...)`
+
+当前效果：
+
+1. `prepareContactRuntimeSolveContext(...)` 不再自己重复写：
+   - `base_residual <= 0 -> inactive`
+   - `mapPreparedExecutionOutcome(...)`
+2. `prepareEnvironmentRuntimeSolveContext(...)` 也改为走同一个 shared runtime prepare helper。
+3. `prepareContactBatchSolveContext(...)` 与 `prepareEnvironmentBatchSolveContext(...)` 现在都统一走 shared batch prepare helper。
+4. `mapPreparedExecutionOutcome(...)` 继续保留为更底层的三态映射原语，而 runtime/batch 是否要额外处理 `base_residual` 的差异被提升到单独 helper 层。
+
+这一步的意义：
+
+1. `prepared execution outcome` 的 prepare 协议又前进了一层，不再只有“映射 ready 载荷”是共享的，连 runtime/batch 外层入口也开始共享。
+2. `contact/environment` 在 `prepare execution -> prepare runtime/batch context -> execute prepared outcome` 这条链上的外形更一致，后续如果继续收 `executePrepared...Outcome(...)` 外壳，切口会更窄。
+3. 这一步仍然没有改变 inactive/stalled/ready 语义、row residual gating 或任何求解行为。
+
+### batch outcome 的纯转发层也进一步缩掉
+
+这一轮继续只收最薄的一层，把 `contact/environment` batch 路径里只为适配
+`void` context 的纯转发 wrapper 去掉了。
+
+新增：
+
+1. `executePreparedBatchOutcomeDirect(...)`
+
+当前效果：
+
+1. `executePreparedContactBatchOutcome(...)` 不再需要：
+   - `runPreparedContactBatch(...)`
+   - 伪造 `void` context
+2. `executePreparedEnvironmentBatchOutcome(...)` 也不再需要：
+   - `runPreparedEnvironmentBatch(...)`
+   - 伪造 `void` context
+3. `executePreparedBatchOutcome(...)` 继续保留给需要显式 context 的 batch 路径；而 contact/environment 这种“ready -> bool”直达型 batch，开始走更薄的 direct helper。
+
+这一步的意义：
+
+1. batch outcome dispatch 现在开始区分两种真实形态：
+   - 需要外部上下文的通用 batch dispatch
+   - 不需要上下文的 direct batch dispatch
+2. `contact/environment` 的 batch 主链又少了一层纯转发噪音，代码更接近真正的执行协议，而不是 adapter 套 adapter。
+3. 这一步仍然没有改变 batch inactive/stalled fallback、settle/wake 策略或求解结果。
+
+### contact finish outcome 入口也开始共享
+
+这一轮继续沿 `contact` 的 row/batch finish 外壳做一小步，把两条 finish 入口共同依赖的
+`mapPreparedContactPairOutcome(...)`
+再上提一层，变成明确的 `contact finish outcome` helper。
+
+新增：
+
+1. `finishPreparedContactOutcome(...)`
+
+当前效果：
+
+1. `finishContactSolveResultOutcome(...)` 不再直接调用底层 `mapPreparedContactPairOutcome(...)`。
+2. `finishContactBatchSolveOutcome(...)` 也改为走同一个 `finishPreparedContactOutcome(...)`。
+3. row/batch 仍然各自保留自己的 ready 处理函数：
+   - `finishPreparedContactSolveResultReady(...)`
+   - `finishPreparedContactBatchSolveReady(...)`
+   但两条路径的 outcome 映射入口现在已经统一。
+
+这一步的意义：
+
+1. `contact` 的 finish 链开始有了更明确的协议分层：
+   - prepared pair outcome 映射
+   - row/batch ready finish
+   - settle/wake / finalize
+2. 后续如果 `contact` finish 还要增加 trace / telemetry / policy 字段，改动点会先收敛到这层 helper，而不是 row/batch 两边各自再碰底层 map。
+3. 这一步仍然没有改变 tangent 需求、stalled fallback、row finalize 或 batch changed 判定。
+
+### predictive metadata 开始进入 row build spec / row 壳
+
+这一轮不再继续做表层 wrapper 收口，而是补了一个更实质的底层缺口：
+`DirectionalRowPlan` 里的 predictive metadata 以前在进入 `ConstraintRowBuildSpec` 时会丢失；
+现在它开始成为 row build 层的显式字段。
+
+新增/调整：
+
+1. `ConstraintRowBuildSpec.predictive_residual_hint`
+2. `ConstraintRow.predictive_residual_hint`
+3. `buildConstraintRow(...)`
+4. `makeConstraintRowBuildSpec(...)`
+5. `makeConstraintRowBuildSpecFromPlan(...)`
+6. `buildConstraintRowFromSpec(...)`
+
+当前效果：
+
+1. `DirectionalRowPlan.predictive_residual_hint` 不再只停留在 plan 层。
+2. 通过 `makeConstraintRowBuildSpecFromPlan(...)` 生成的 row spec 会显式保留 predictive hint。
+3. build 成 `ConstraintRow` 后，这个 metadata 也仍然存在。
+4. 当前这份 metadata 还没有接入 priority 计算、solver numerics 或 iteration 停止条件，属于“先打通承载链路、后续再消费”的状态。
+
+新增测试：
+
+1. `makeConstraintRowBuildSpecFromPlan preserves predictive residual hint`
+
+这一步的意义：
+
+1. row plan 层的预测信息第一次开始拥有稳定的下游承载点，不再需要后续系统反查 directional payload 才能知道“这行是否带 predictive hint”。
+2. 这为下一阶段的 trace / telemetry / 预测调度策略升级打了基础，因为 build spec / row 已经能直接携带这份 metadata。
+3. 这一步刻意没有改变调度优先级和求解行为，避免把“metadata 挂载”与“行为升级”混成一次提交。
+
+### row metadata 进一步从“单字段”升级成独立壳
+
+在上一轮把 predictive hint 接到 `ConstraintRowBuildSpec/ConstraintRow` 之后，这一轮继续把它
+从散落字段提升成统一 metadata 结构，避免后续 trace / telemetry / priority shaping 再次把字段分散到多处。
+
+新增/调整：
+
+1. `ConstraintRowMetadata`
+2. `ConstraintRow.metadata`
+3. `DirectionalRowPlan.metadata`
+4. `ConstraintRowBuildSpec.metadata`
+5. `makeConstraintRowMetadata(...)`
+
+同步更新：
+
+1. `makeDirectionalRowPlan(...)`
+2. `buildConstraintRow(...)`
+3. `makeConstraintRowBuildSpec(...)`
+4. `makeConstraintRowBuildSpecFromPlan(...)`
+5. `buildConstraintRowFromSpec(...)`
+6. contact prepared normal 路径对 predictive hint 的读取方式
+7. 对应单测改为校验 `spec.metadata.predictive_residual_hint`
+
+当前效果：
+
+1. predictive metadata 现在不再作为 `ConstraintRow` / `ConstraintRowBuildSpec` / `DirectionalRowPlan` 上的散字段存在。
+2. 三层都开始共享同一个 `ConstraintRowMetadata` 承载壳。
+3. 这使后续如果还要补：
+   - trace id
+   - source/provenance
+   - predictive policy tags
+   - debug counters
+   不需要再次改一轮大面积字段签名。
+
+这一步的意义：
+
+1. row 承载层开始从“先塞一个字段进去”升级为“明确预留 metadata 扩展位”。
+2. 这让后续行为升级可以更聚焦在 metadata 的消费逻辑，而不是继续反复重构载体。
+3. 这一步依然没有改变 row priority、solver numerics、iteration 逻辑或 runtime dispatch。
+
+### row metadata 现在已经有最小 debug 导出出口
+
+在 metadata 承载层已经稳定之后，这一轮补了一个非常保守的观察出口，让外部不需要读取内部 `ConstraintRow`
+结构，也能把 row 的关键调度信息和 predictive metadata 拿出来。
+
+新增：
+
+1. `ConstraintRowDebugSnapshot`
+2. `writeConstraintRowDebugSnapshots(...)`
+
+新增测试：
+
+1. `writeConstraintRowDebugSnapshots exports row metadata`
+
+当前效果：
+
+1. `ConstraintRow` 现在可以被安全复制成只读 debug snapshot。
+2. snapshot 当前包含：
+   - `kind`
+   - `index`
+   - `priority`
+   - `base_residual`
+   - `metadata`
+   - `equation`
+3. 这意味着 `predictive_residual_hint` 已经不只是“内核里能传递”，而是“外部也能稳定观察”。
+
+这一步的意义：
+
+1. 之后无论要做约束阶段 trace、调试 dump、测试探针，还是更精细的迭代可视化，都有了现成的只读导出壳。
+2. 这让后续“开始消费 metadata”之前，先具备了可观测性，不必把行为升级和观测接口绑在一起。
+3. 这一步仍然没有改变求解、调度和停止条件；只是新增导出辅助层。
+
+### 约束块级别的 row debug 采样也已经打通
+
+在单条 `ConstraintRow -> ConstraintRowDebugSnapshot` 导出已经可用之后，这一轮继续把同样的观测能力提升到
+“整块约束调度前的 row 集合”。
+
+新增：
+
+1. `collectConstraintRowDebugSnapshots(...)`
+
+新增测试：
+
+1. `collectConstraintRowDebugSnapshots includes environment row`
+
+当前效果：
+
+1. 现在可以直接输入：
+   - `Scene1024`
+   - `entities`
+   - `joints`
+   - `broadphase_pairs`
+2. helper 会复用真实的：
+   - island 划分
+   - island stress 排序
+   - row build
+   - row priority 排序
+3. 最终导出 `ConstraintRowDebugSnapshot` 列表，但不会执行 solve loop，也不会修改世界状态。
+
+这一步的意义：
+
+1. 约束阶段已经拥有“构建真实 row 集合并只读观察”的最小采样能力。
+2. 后续如果要做：
+   - 调试工具
+   - 行优先级可视化
+   - predictive metadata 观察
+   - 回归测试里直接检查 row 组成
+   都不需要再借助真正的 solve 过程侧面观察。
+3. 这一步依然没有让 metadata 进入行为层，只是把观测从“单行”提升到了“stage/block 级 row 集合”。
+
+### row debug 采样现在已经覆盖 environment / contact / joint 三类组成
+
+在 `collectConstraintRowDebugSnapshots(...)` 打通之后，这一轮继续补了三类 row 组成的直接测试，
+让后续如果要调整 priority shaping 或 row 构造策略时，有更明确的回归护栏。
+
+新增测试：
+
+1. `collectConstraintRowDebugSnapshots includes environment row`
+2. `collectConstraintRowDebugSnapshots includes contact normal and friction rows`
+3. `collectConstraintRowDebugSnapshots includes joint anchor limit and drive rows`
+
+当前效果：
+
+1. `environment` 场景现在能直接验证会不会生成 environment row。
+2. `contact` 场景现在能直接验证会不会同时生成：
+   - `contact_normal`
+   - `contact_friction`
+3. `joint` 场景现在能直接验证 slider + motor 配置下会不会生成：
+   - `joint_anchor`
+   - `joint_limit`
+   - `joint_drive`
+
+这一步的意义：
+
+1. 观测层不再只是“能把 row 导出来”，而是已经开始覆盖真实 row family 组成。
+2. 这为下一步把 `predictive_residual_hint` 逐步接入 row priority shaping 提供了重要护栏，因为一旦 row 构造条件变化，测试会立刻暴露。
+3. 这一步仍然没有改变 solver、priority 算法或行为层逻辑；它只是在观测与测试层把边界补扎实。
+
+### predictive metadata 第一次进入行为层：priority floor
+
+在 row 观测与测试护栏补齐之后，这一轮终于让 `ConstraintRowMetadata` 开始进入行为层，但范围仍然刻意压得很小：
+只接到 row priority 的 floor，不碰 solver 数值、warm start 或 iteration stop 逻辑。
+
+新增/调整：
+
+1. `measureConstraintRowMetadataPriorityFloor(...)`
+2. `measureConstraintRowCachedPriority(...)` 现在先消费 `ConstraintRowMetadata`
+3. `buildConstraintRow(...)` 继续沿同一路径把 metadata 传入 priority 计算
+
+新增测试：
+
+1. `measureConstraintRowCachedPriority respects predictive metadata floor`
+
+当前效果：
+
+1. 对没有 row cache 的新行来说，如果 `metadata.predictive_residual_hint` 高于 `base_residual`，priority 会被抬到这条 metadata floor。
+2. 对已有 cache 的行来说，最终 priority 仍是：
+   - metadata floor 处理后的 base priority
+   - 与 cached residual/impulse priority
+   两者取高。
+3. 当前这一改动主要影响 contact/environment 这类已有 predictive hint 的 row；joint 仍然基本保持原样，因为 metadata 目前为 0。
+
+这一步的意义：
+
+1. 这标志着 `predictive_residual_hint` 不再只是“可传递、可导出、可测试”，而是第一次成为实际调度输入。
+2. 因为接入点只是 priority floor，风险明显低于直接修改 equation/bias/impulse/solver 顺序。
+3. 现有 contact/environment/joint/world 测试全部保持通过，说明这一步目前仍处于保守可控范围。
+
+### finalize solve-step 展开也开始有共享 helper
+
+这一轮转到 `finalize pair/single row result` 这条链，收口的是 `ConstraintSolveStep -> changed/applied_impulse` 的重复展开。
+
+新增：
+
+1. `finalizeRowResultFromSolveStep(...)`
+2. `finalizePairRowResultWithContext(...)`
+3. `finalizeSingleRowResultWithContext(...)`
+
+当前效果：
+
+1. `finalizePairSolveStepResult(...)` 不再自己手工展开：
+   - `solve_step.changed`
+   - `solve_step.applied_impulse`
+2. `finalizeSingleSolveStepResult(...)` 也改为复用同一个 solve-step finalize helper。
+3. pair/single 两条 finalize 路径现在共享同一层 `solve_step` 展开入口，而 wake/measure 语义仍保留在各自的 row-result helper 中。
+
+这一步的意义：
+
+1. `ConstraintSolveStep` 的结果展开不再在 pair/single 两处各写一份。
+2. finalize 链条的分层更清晰：
+   - `solve_step` 展开
+   - pair/single wake 与 finalize
+   - 统一 `finalizeConstraintRowResult(...)`
+3. 这一步仍然没有改变 residual_after、impulse 或 wake 语义。
+
+### solve-step metadata 覆盖也开始有共享 helper
+
+这一轮继续沿 finalize 链做一小步，把 `ConstraintSolveStep` 的 `applied_impulse` 覆盖收成了一个单点 helper。
+
+新增：
+
+1. `withSolveStepAppliedImpulse(...)`
+
+当前效果：
+
+1. `finalizePreparedEnvironmentRowResult(...)` 不再手工重建匿名 `ConstraintSolveStep`。
+2. 现在改为：
+   - 保留 `solve_result.solve_step.changed`
+   - 通过 `withSolveStepAppliedImpulse(...)` 覆盖最终 `applied_impulse`
+3. environment finalize 路径重新回到统一的 solve-step 处理风格上。
+
+这一步的意义：
+
+1. `ConstraintSolveStep` 的 metadata 覆盖不再散落为匿名字面量。
+2. 后续如果要继续补 step telemetry / trace 字段，这种 helper 能减少局部重建时漏字段的风险。
+3. 这一步仍然没有改变 environment 的 impulse 聚合策略或最终 residual 行为。
