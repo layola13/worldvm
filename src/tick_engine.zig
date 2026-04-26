@@ -25,6 +25,7 @@ const contact_response = @import("contact_response.zig");
 const collision_event = @import("collision_event.zig");
 const sleep_response = @import("sleep_response.zig");
 const physics_kernel = @import("physics_kernel.zig");
+const physics_world = @import("physics_world.zig");
 
 pub const Operator = enum(u8) { NOP = 0, FALL = 6, FLOW = 7, MOVE = 3, PUSH = 4, BREAK = 5 };
 pub const MAX_BROADPHASE_PAIRS: usize = physics_kernel.MAX_BROADPHASE_PAIRS;
@@ -559,35 +560,38 @@ fn runDiscreteIntentStage(engine: *TickEngine, apply_continuous_physics: bool) u
     return commit(engine);
 }
 
-fn runCoordinatorStep(
-    engine: *TickEngine,
-    dt: f32,
-    run_pre_motion_constraint: bool,
-    apply_continuous_physics: bool,
-) bool {
-    physics_kernel.beginWorldStep(&engine.tick_id, engine.s1024);
+fn buildPhysicsWorld(engine: *TickEngine) physics_world.PhysicsWorld {
+    return .{
+        .s1024 = engine.s1024,
+        .entities = engine.entities,
+        .joints = engine.joints,
+        .joint_count = engine.joint_count,
+        .tick = engine.tick_id,
+        .world_bus = engine.world_bus,
+        .pending_collisions = engine.pending_collisions,
+        .broadphase_pairs = engine.broadphase_pairs,
+        .broadphase_pair_count = engine.broadphase_pair_count,
+    };
+}
 
-    if (run_pre_motion_constraint) {
-        const pre_constraint = physics_kernel.runPreMotionConstraintStage(
-            engine.s1024,
-            engine.entities,
-            engine.joints[0..engine.joint_count],
-            engine.broadphase_pairs[0..],
-            engine.time_scale,
-            SLEEP_TIME_THRESHOLD,
-            dt,
-        );
-        engine.broadphase_pair_count = pre_constraint.pair_count;
-    }
-
-    const applied = runDiscreteIntentStage(engine, apply_continuous_physics);
-    engine.stable = (applied == 0);
-    physics_kernel.finishWorldStep(&engine.pending_collisions, engine.world_bus, engine.tick_id, engine.s1024, engine.entities, dt);
+fn syncFromPhysicsWorld(engine: *TickEngine, world: *const physics_world.PhysicsWorld, changed: bool) bool {
+    engine.tick_id = world.tick;
+    engine.pending_collisions = world.pending_collisions;
+    engine.broadphase_pairs = world.broadphase_pairs;
+    engine.broadphase_pair_count = world.broadphase_pair_count;
+    engine.stable = !changed;
     return engine.stable;
 }
 
 pub fn stepTick(engine: *TickEngine) bool {
-    return runCoordinatorStep(engine, engine.fixed_dt, false, true);
+    var world = buildPhysicsWorld(engine);
+    const result = physics_world.stepPhysicsConfigured(&world, .{
+        .dt = engine.fixed_dt,
+        .time_scale = engine.time_scale,
+        .run_pre_motion_constraint = false,
+        .apply_continuous_physics = true,
+    });
+    return syncFromPhysicsWorld(engine, &world, result.changed);
 }
 
 pub fn runTicks(engine: *TickEngine, max_ticks: u32) u32 {
@@ -606,7 +610,14 @@ pub fn runTicks(engine: *TickEngine, max_ticks: u32) u32 {
 /// Unified physics step that coordinates all physics subsystems
 /// This is the main entry point for the unified physics world
 pub fn stepPhysicsWorld(engine: *TickEngine, dt: f32) void {
-    _ = runCoordinatorStep(engine, dt, true, false);
+    var world = buildPhysicsWorld(engine);
+    const result = physics_world.stepPhysicsConfigured(&world, .{
+        .dt = dt,
+        .time_scale = engine.time_scale,
+        .run_pre_motion_constraint = true,
+        .apply_continuous_physics = false,
+    });
+    _ = syncFromPhysicsWorld(engine, &world, result.changed);
 }
 
 /// Record world state snapshot for rewind
@@ -1267,4 +1278,3 @@ test "TickEngine stepPhysicsWorld advances KCC characters through coordinator" {
     try std.testing.expect(char.pos_y < before_y);
     try std.testing.expect(char.vel_y < 0);
 }
-

@@ -30,6 +30,18 @@ pub const SLEEP_TIME_THRESHOLD: u8 = 30;
 pub const MAX_BROADPHASE_PAIRS: usize = physics_kernel.MAX_BROADPHASE_PAIRS;
 pub const BroadPhasePair = physics_kernel.BroadPhasePair;
 
+pub const StepConfig = struct {
+    dt: f32 = FIXED_DT,
+    time_scale: f32 = 1.0,
+    run_pre_motion_constraint: bool = true,
+    apply_continuous_physics: bool = false,
+};
+
+pub const StepResult = struct {
+    changed: bool,
+    pair_count: usize,
+};
+
 /// PhysicsWorld - bundles all physics subsystem handles
 pub const PhysicsWorld = struct {
     s1024: *scene1024.Scene1024,
@@ -250,7 +262,12 @@ pub fn solveConstraints(world: *PhysicsWorld) void {
 }
 
 /// Integrate: move objects, update positions
-pub fn integrate(world: *PhysicsWorld) void {
+pub const IntegrateResult = struct {
+    moved: bool,
+    topology_changed: bool,
+};
+
+pub fn integrate(world: *PhysicsWorld) IntegrateResult {
     physics_kernel.clearPendingCollisions(&world.pending_collisions);
     var moved = false;
     var topology_changed = false;
@@ -260,6 +277,10 @@ pub fn integrate(world: *PhysicsWorld) void {
     }
 
     physics_kernel.rebuildOccupancyIfNeeded(world.s1024, world.entities, moved or topology_changed);
+    return .{
+        .moved = moved,
+        .topology_changed = topology_changed,
+    };
 }
 
 /// Handle events: collision callbacks, triggers
@@ -272,28 +293,59 @@ pub fn recordSnapshot(world: *PhysicsWorld) void {
     physics_kernel.recordWorldSnapshot(world.tick, world.s1024, world.entities);
 }
 
-/// Main physics step - call once per frame
-pub fn stepPhysics(world: *PhysicsWorld) void {
+fn runStep(world: *PhysicsWorld, cfg: StepConfig) StepResult {
     physics_kernel.beginWorldStep(&world.tick, world.s1024);
-    const pre_constraint = physics_kernel.runPreMotionConstraintStage(
-        world.s1024,
-        world.entities,
-        world.joints[0..world.joint_count],
-        world.broadphase_pairs[0..],
-        1.0,
-        SLEEP_TIME_THRESHOLD,
-        FIXED_DT,
-    );
-    world.broadphase_pair_count = pre_constraint.pair_count;
-    integrate(world);
+
+    var pre_changed = false;
+    var observed_pair_count: usize = world.broadphase_pair_count;
+    if (cfg.run_pre_motion_constraint) {
+        const pre_constraint = physics_kernel.runPreMotionConstraintStage(
+            world.s1024,
+            world.entities,
+            world.joints[0..world.joint_count],
+            world.broadphase_pairs[0..],
+            cfg.time_scale,
+            SLEEP_TIME_THRESHOLD,
+            cfg.dt,
+        );
+        world.broadphase_pair_count = pre_constraint.pair_count;
+        observed_pair_count = pre_constraint.pair_count;
+        pre_changed = pre_constraint.changed;
+    } else if (cfg.apply_continuous_physics) {
+        physics_kernel.runPreStepSystems(
+            world.s1024,
+            world.entities,
+            cfg.time_scale,
+            SLEEP_TIME_THRESHOLD,
+            cfg.dt,
+        );
+    }
+
+    const integrate_result = integrate(world);
     const constraint_result = physics_kernel.runPostMotionConstraintStage(
         world.s1024,
         world.entities,
         world.joints[0..world.joint_count],
         world.broadphase_pairs[0..],
     );
-    world.broadphase_pair_count = constraint_result.pair_count;
-    physics_kernel.finishWorldStep(&world.pending_collisions, world.world_bus, world.tick, world.s1024, world.entities, FIXED_DT);
+    world.broadphase_pair_count = physics_kernel.mergeObservedPairCount(
+        observed_pair_count,
+        constraint_result.pair_count,
+    );
+    physics_kernel.finishWorldStep(&world.pending_collisions, world.world_bus, world.tick, world.s1024, world.entities, cfg.dt);
+    return .{
+        .changed = pre_changed or integrate_result.moved or integrate_result.topology_changed or constraint_result.changed,
+        .pair_count = world.broadphase_pair_count,
+    };
+}
+
+/// Main physics step - call once per frame
+pub fn stepPhysics(world: *PhysicsWorld) void {
+    _ = runStep(world, .{});
+}
+
+pub fn stepPhysicsConfigured(world: *PhysicsWorld, cfg: StepConfig) StepResult {
+    return runStep(world, cfg);
 }
 
 // ============================================================================

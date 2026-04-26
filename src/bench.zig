@@ -38,7 +38,10 @@ fn measureTickRun(allocator: std.mem.Allocator, scenario: scenarios.Scenario, ma
     tick_engine.init(&engine, &s1024, &entities);
 
     const start = std.time.nanoTimestamp();
-    _ = tick_engine.runTicks(&engine, max_ticks);
+    var ticks_run: u32 = 0;
+    while (ticks_run < max_ticks and !engine.stable) : (ticks_run += 1) {
+        tick_engine.stepPhysicsWorld(&engine, tick_engine.getFixedDT(&engine));
+    }
     const elapsed = @as(u64, @intCast(std.time.nanoTimestamp() - start)) / 1000;
 
     return .{ .tick_us = elapsed / @max(engine.tick_id, 1), .stable = engine.stable };

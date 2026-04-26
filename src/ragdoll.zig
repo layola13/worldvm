@@ -13,6 +13,7 @@ const scene1024 = @import("scene1024.zig");
 const entity16 = @import("entity16.zig");
 const joint = @import("joint.zig");
 const physics = @import("physics.zig");
+const query = @import("query.zig");
 
 pub const RagdollPart = struct {
     joint_idx: u8,
@@ -672,6 +673,17 @@ pub fn checkPartCollision(
     const py = @as(i32, @intFromFloat(@floor(part.pos_y)));
     const pz = @as(i32, @intFromFloat(@floor(part.pos_z)));
     const radius = @as(i32, @intFromFloat(@floor(@as(f32, @floatFromInt(part.radius)) * 0.5)));
+    const world_view = query.QueryWorldView{
+        .s1024 = s1024,
+        .instances = s1024.instances[0..s1024.instance_count],
+        .entities = entities,
+    };
+    const filter = query.QueryFilter{
+        .include_static = true,
+        .include_dynamic = true,
+        .include_kinematic = true,
+        .include_sensors = false,
+    };
 
     var dy: i32 = 0;
     while (dy <= radius * 2) : (dy += 2) {
@@ -679,7 +691,7 @@ pub fn checkPartCollision(
         while (dx <= radius) : (dx += 2) {
             var dz: i32 = -radius;
             while (dz <= radius) : (dz += 2) {
-                if (physics.isOccupiedGlobal(s1024, null, entities, px + dx, py + dy, pz + dz, null)) {
+                if (query.queryAnyVoxel(&world_view, px + dx, py + dy, pz + dz, filter).hit) {
                     return true;
                 }
             }

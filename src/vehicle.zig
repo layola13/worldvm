@@ -9,6 +9,7 @@ const scene1024 = @import("scene1024.zig");
 const entity16 = @import("entity16.zig");
 const physics = @import("physics.zig");
 const prediction = @import("prediction.zig");
+const query = @import("query.zig");
 
 const WheelWorldPosition = struct {
     x: f32,
@@ -348,11 +349,22 @@ pub fn checkGrounded(
 ) bool {
     const check_y = @as(i32, @intFromFloat(@floor(vehicle.pos_y - 1)));
     const wheel_pos = getWheelPositions(vehicle);
+    const world_view = query.QueryWorldView{
+        .s1024 = s1024,
+        .instances = s1024.instances[0..s1024.instance_count],
+        .entities = entities,
+    };
+    const filter = query.QueryFilter{
+        .include_static = true,
+        .include_dynamic = true,
+        .include_kinematic = true,
+        .include_sensors = false,
+    };
 
     for (wheel_pos) |pos| {
         const wx = @as(i32, @intFromFloat(@floor(pos.x)));
         const wz = @as(i32, @intFromFloat(@floor(pos.z)));
-        if (physics.isOccupiedGlobal(s1024, null, entities, wx, check_y, wz, null)) {
+        if (query.queryAnyVoxel(&world_view, wx, check_y, wz, filter).hit) {
             return true;
         }
     }

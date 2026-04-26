@@ -125,7 +125,7 @@ pub export fn run_ticks(max_ticks: u32) c_int {
     const s = g_state orelse return -1;
     var t: u32 = 0;
     while (t < max_ticks and !s.engine.stable) : (t += 1) {
-        _ = tick_engine.stepTick(&s.engine);
+        tick_engine.stepPhysicsWorld(&s.engine, tick_engine.getFixedDT(&s.engine));
         s.affect_sys.update(&s.tri_bus);
         
         var i: u16 = 0;

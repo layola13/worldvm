@@ -76,7 +76,7 @@ fn cmdRun(allocator: std.mem.Allocator, args: *std.process.ArgIterator) !void {
     
     var t: u32 = 0;
     while (t < ticks and !engine.stable) : (t += 1) {
-        _ = tick_engine.stepTick(&engine);
+        tick_engine.stepPhysicsWorld(&engine, tick_engine.getFixedDT(&engine));
         if (verbose) {
             try renderer.renderScene(scene, stdout);
             try stdout.print("\n", .{});
@@ -117,7 +117,10 @@ fn cmdBench(allocator: std.mem.Allocator, args: *std.process.ArgIterator) !void 
         tick_engine.init(&engine, &s1024, &entities);
         
         const start = std.time.nanoTimestamp();
-        _ = tick_engine.runTicks(&engine, 100);
+        var ticks_run: u32 = 0;
+        while (ticks_run < 100 and !engine.stable) : (ticks_run += 1) {
+            tick_engine.stepPhysicsWorld(&engine, tick_engine.getFixedDT(&engine));
+        }
         const elapsed = (@as(u64, @intCast(std.time.nanoTimestamp() - start))) / 1000;
         total_us += elapsed;
         if (engine.stable) stable_count += 1;
