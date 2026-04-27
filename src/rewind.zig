@@ -111,7 +111,7 @@ pub const DETERMINISM_FLAG_FLOAT_NEGATIVE_ZERO: u32 = 1 << 1;
 pub const DETERMINISM_FLAG_FLOAT_SUBNORMAL: u32 = 1 << 2;
 pub const DETERMINISM_FLAG_SIMD_REDUCTION_MISMATCH: u32 = 1 << 3;
 const WORLD_SNAPSHOT_PERSIST_MAGIC: u32 = 0x57565350; // "WVSP"
-const WORLD_SNAPSHOT_PERSIST_VERSION: u16 = 1;
+const WORLD_SNAPSHOT_PERSIST_VERSION: u16 = 2;
 const WORLD_SNAPSHOT_NETWORK_MAGIC: u32 = 0x5756534E; // "WVSN"
 const WORLD_SNAPSHOT_NETWORK_VERSION: u16 = 1;
 const WORLD_SNAPSHOT_NETWORK_ENCRYPTION_NONE: u8 = 0;
@@ -133,6 +133,48 @@ pub const SimdDeterminismReport = struct {
     allowed_delta: f32 = 0.0,
     mismatch: bool = false,
     flags: u32 = 0,
+};
+
+/// Unified RNG state for deterministic randomness
+/// Uses PCG-XSH-RR (Permuted Congruential Generator)
+pub const RngState = struct {
+    state: u64 = 0x853c_49e_6748_8e95,
+    seed: u64 = 0xDEADBEEFCAFEBABE,
+
+    /// Initialize RNG with a seed
+    pub fn init(initial_seed: u64) RngState {
+        var rng = RngState{
+            .seed = initial_seed,
+            .state = initial_seed,
+        };
+        // Mix the state a few times
+        _ = rng.next();
+        _ = rng.next();
+        return rng;
+    }
+
+    /// Generate next random value (PCG-XSH-RR)
+    pub fn next(rng: *RngState) u32 {
+        const oldstate = rng.state;
+        rng.state = oldstate *% 0x5851_955F_8659_3C6D +% 1;
+        const xsh = @as(u32, @truncate((oldstate >> 22) ^ oldstate));
+        rng.state = rng.state *% 0x5851_955F_8659_3C6D +% 1;
+        const rs = @as(u32, @truncate(rng.state >> 43));
+        return @truncate((xsh >> 9) ^ rs);
+    }
+
+    /// Generate random u64
+    pub fn nextU64(rng: *RngState) u64 {
+        const hi = @as(u64, rng.next()) << 32;
+        const lo = @as(u64, rng.next());
+        return hi | lo;
+    }
+
+    /// Generate random in range [0, max)
+    pub fn nextU32(rng: *RngState, max: u32) u32 {
+        if (max == 0) return 0;
+        return @as(u32, @intCast(@as(u64, rng.next()) *% @as(u64, max) >> 32));
+    }
 };
 
 pub const InputLog = struct {
@@ -403,6 +445,9 @@ pub const WorldSnapshot = struct {
     input_log: [MAX_INPUT_LOG]InputLog,
     input_count: u16,
 
+    // RNG state for deterministic randomness
+    rng_state: RngState,
+
     // World hash for determinism
     world_hash: u64,
 };
@@ -432,6 +477,9 @@ pub const RewindSystem = struct {
     input_log: [MAX_INPUT_LOG]InputLog,
     input_count: u16,
     max_input_tick: u32,
+
+    // Unified RNG state for determinism
+    rng_state: RngState,
 
     // Determinism verification
     proof_ticks: u32,
@@ -473,6 +521,7 @@ pub fn init() void {
     g_rewind_system.active_world_snapshot_branch_id = 0;
     g_rewind_system.input_count = 0;
     g_rewind_system.max_input_tick = 0;
+    g_rewind_system.rng_state = RngState.init(0x1234567890ABCDEF);
     g_rewind_system.proof_ticks = 0;
     g_rewind_system.proof_initial_hash = 0;
     g_rewind_system.proof_final_hash = 0;
@@ -813,6 +862,9 @@ pub fn captureWorldSnapshot(
         snapshot.input_log[i] = g_rewind_system.input_log[i];
     }
 
+    // Capture RNG state
+    snapshot.rng_state = g_rewind_system.rng_state;
+
     // Compute world hash
     snapshot.world_hash = computeWorldHash(&snapshot);
 
@@ -1020,6 +1072,10 @@ pub fn saveWorldSnapshotsToFile(path: []const u8) !void {
     try writePersistValue(writer, g_rewind_system.world_snapshot_budget);
     try writePersistValue(writer, g_rewind_system.world_snapshot_budget_evicted_count);
 
+    // Save RNG state
+    try writePersistValue(writer, g_rewind_system.rng_state.state);
+    try writePersistValue(writer, g_rewind_system.rng_state.seed);
+
     slot_idx = 0;
     while (slot_idx < MAX_WORLD_SNAPSHOT_BRANCHES) : (slot_idx += 1) {
         const branch = g_rewind_system.world_snapshot_branches[slot_idx];
@@ -1062,6 +1118,10 @@ pub fn loadWorldSnapshotsFromFile(path: []const u8) !void {
     const snapshot_budget = try readPersistValue(reader, u8);
     const budget_evicted_count = try readPersistValue(reader, u32);
 
+    // Read RNG state (v2+)
+    const rng_state = try readPersistValue(reader, u64);
+    const rng_seed = try readPersistValue(reader, u64);
+
     if (snapshot_count > MAX_WORLD_SNAPSHOTS) return error.InvalidSnapshotPersistenceState;
     if (branch_count == 0 or branch_count > MAX_WORLD_SNAPSHOT_BRANCHES) return error.InvalidSnapshotPersistenceState;
     if (snapshot_budget == 0 or snapshot_budget > MAX_WORLD_SNAPSHOTS) return error.InvalidSnapshotPersistenceState;
@@ -1075,6 +1135,8 @@ pub fn loadWorldSnapshotsFromFile(path: []const u8) !void {
     g_rewind_system.world_snapshot_branch_count = 0;
     g_rewind_system.active_world_snapshot_branch_id = 0;
     g_rewind_system.playback = .{};
+    g_rewind_system.rng_state.state = rng_state;
+    g_rewind_system.rng_state.seed = rng_seed;
 
     var loaded_branch_count: u8 = 0;
     while (loaded_branch_count < branch_count) : (loaded_branch_count += 1) {
@@ -1907,6 +1969,9 @@ pub fn restoreWorldSnapshot(
     }
     traffic_sys.global_time = snapshot.ai_traffic_global_time;
 
+    // Restore RNG state
+    g_rewind_system.rng_state = snapshot.rng_state;
+
     // Rebuild occupancy after restore
     s1024.rebuildOccupancy(entities) catch {};
 }
@@ -2437,9 +2502,11 @@ pub fn verifyWorldSnapshotSimdDeterminism(snapshot: *const WorldSnapshot) SimdDe
     // SIMD-like pairwise lane reduction to detect order-sensitive accumulation drift.
     report.simd_sum = (lane_sums[0] + lane_sums[2]) + (lane_sums[1] + lane_sums[3]);
     report.absolute_delta = @abs(report.scalar_sum - report.simd_sum);
+    // Use relative scaling: allow larger delta for larger sums
+    const scalar_magnitude = @max(@abs(report.scalar_sum), @as(f32, 0.0001));
     report.allowed_delta = @max(
         @as(f32, 0.0001),
-        @as(f32, @floatFromInt(report.inspected_float_count)) * 0.000001,
+        scalar_magnitude * @as(f32, 0.0001),
     );
     report.mismatch = report.absolute_delta > report.allowed_delta;
     if (report.mismatch) {
@@ -2722,6 +2789,10 @@ pub fn computeWorldHash(snapshot: *const WorldSnapshot) u64 {
     hash ^= @as(u64, snapshot.ai_traffic_light_count) +% 0x9e3779b97f4a7c15;
     hash ^= @as(u64, @as(u32, @bitCast(snapshot.ai_traffic_global_time))) +% 0x9e3779b97f4a7c15;
 
+    // Hash RNG state
+    hash ^= snapshot.rng_state.state +% 0x9e3779b97f4a7c15;
+    hash ^= snapshot.rng_state.seed +% 0x9e3779b97f4a7c15;
+
     // Finalize hash
     hash = (hash << 31) | (hash >> 33);
     hash ^= 0x1234567890ABCDEF;
@@ -2767,6 +2838,26 @@ pub fn recordInput(
 ) void {
     if (g_rewind_system.input_count >= MAX_INPUT_LOG) return;
 
+    // Check for duplicate tick - replace if exists for determinism
+    var i: u16 = 0;
+    while (i < g_rewind_system.input_count) : (i += 1) {
+        if (g_rewind_system.input_log[i].tick == tick) {
+            // Replace existing input for this tick
+            g_rewind_system.input_log[i] = .{
+                .tick = tick,
+                .forward = forward,
+                .backward = backward,
+                .left = left,
+                .right = right,
+                .jump = jump,
+                .brake = brake,
+                .mouse_dx = mouse_dx,
+                .mouse_dy = mouse_dy,
+            };
+            return;
+        }
+    }
+
     const idx = g_rewind_system.input_count;
     g_rewind_system.input_log[idx] = .{
         .tick = tick,
@@ -2798,6 +2889,32 @@ pub fn getInputAtTick(tick: u32) ?*const InputLog {
 pub fn clearInputLog() void {
     g_rewind_system.input_count = 0;
     g_rewind_system.max_input_tick = 0;
+}
+
+/// Normalize and clamp input for deterministic replay
+/// Mouse deltas are clamped to prevent extreme values from affecting determinism
+pub fn normalizeInput(dx: *f32, dy: *f32) void {
+    const max_delta: f32 = 1000.0;
+    if (dx.* > max_delta) dx.* = max_delta;
+    if (dx.* < -max_delta) dx.* = -max_delta;
+    if (dy.* > max_delta) dy.* = max_delta;
+    if (dy.* < -max_delta) dy.* = -max_delta;
+}
+
+/// Sort input log by tick for deterministic ordering
+pub fn sortInputLog() void {
+    // Bubble sort for simplicity and determinism (no quick sort with random pivot)
+    var i: u16 = 0;
+    while (i < g_rewind_system.input_count) : (i += 1) {
+        var j: u16 = 0;
+        while (j < g_rewind_system.input_count - 1 - i) : (j += 1) {
+            if (g_rewind_system.input_log[j].tick > g_rewind_system.input_log[j + 1].tick) {
+                const temp = g_rewind_system.input_log[j];
+                g_rewind_system.input_log[j] = g_rewind_system.input_log[j + 1];
+                g_rewind_system.input_log[j + 1] = temp;
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -3013,6 +3130,21 @@ pub fn getSystem() *RewindSystem {
     return &g_rewind_system;
 }
 
+/// Get next random u32 from the unified RNG
+pub fn getNextRandom() u32 {
+    return g_rewind_system.rng_state.next();
+}
+
+/// Get next random u32 in range [0, max)
+pub fn getNextRandomInRange(max: u32) u32 {
+    return g_rewind_system.rng_state.nextU32(max);
+}
+
+/// Seed the unified RNG (for deterministic replay)
+pub fn seedRandom(seed: u64) void {
+    g_rewind_system.rng_state = RngState.init(seed);
+}
+
 fn appendPlaybackTestSnapshot(tick: u32) void {
     while (g_rewind_system.world_snapshot_count >= g_rewind_system.world_snapshot_budget and g_rewind_system.world_snapshot_count > 0) {
         const evicted_branch_id = evictOldestWorldSnapshot() orelse break;
@@ -3033,6 +3165,128 @@ fn appendPlaybackTestSnapshot(tick: u32) void {
     if (g_rewind_system.world_snapshot_count < MAX_WORLD_SNAPSHOTS) {
         g_rewind_system.world_snapshot_count += 1;
     }
+}
+// ============================================================================
+// Determinism Auto-Repair (Item 250)
+// ============================================================================
+
+pub const DeterminismAutoRepairReport = struct {
+    inspected_float_count: u32 = 0,
+    nan_repaired_count: u32 = 0,
+    inf_repaired_count: u32 = 0,
+    negative_zero_repaired_count: u32 = 0,
+    subnormal_repaired_count: u32 = 0,
+    rng_reseeded: bool = false,
+    total_repaired: u32 = 0,
+};
+
+pub const FloatSanitizeConfig = struct {
+    nan_value: f32 = 0.0,
+    inf_max: f32 = 1e38,
+    inf_min: f32 = -1e38,
+    flush_negative_zero: bool = true,
+    flush_subnormal: bool = true,
+    subnormal_threshold: f32 = 1e-38,
+};
+
+fn autoRepairFloatsRecursive(
+    comptime T: type,
+    value: *T,
+    config: FloatSanitizeConfig,
+    report: *DeterminismAutoRepairReport,
+) void {
+    switch (@typeInfo(T)) {
+        .float => {
+            report.inspected_float_count += 1;
+            const v = value.*;
+            var repaired = false;
+            var new_val: f32 = @floatCast(v);
+
+            if (std.math.isNan(v)) {
+                new_val = config.nan_value;
+                report.nan_repaired_count += 1;
+                repaired = true;
+            } else if (std.math.isInf(v)) {
+                if (v > 0) {
+                    new_val = config.inf_max;
+                } else {
+                    new_val = config.inf_min;
+                }
+                report.inf_repaired_count += 1;
+                repaired = true;
+            } else if (config.flush_negative_zero and v == 0 and std.math.signbit(v)) {
+                new_val = 0.0;
+                report.negative_zero_repaired_count += 1;
+                repaired = true;
+            } else if (config.flush_subnormal and v != 0 and !std.math.isNormal(v) and @abs(v) < config.subnormal_threshold) {
+                new_val = 0.0;
+                report.subnormal_repaired_count += 1;
+                repaired = true;
+            }
+
+            if (repaired) {
+                report.total_repaired += 1;
+                value.* = @as(T, @floatCast(new_val));
+            }
+        },
+        .array => |arr| {
+            var i: usize = 0;
+            while (i < arr.len) : (i += 1) {
+                autoRepairFloatsRecursive(arr.child, &value.*[i], config, report);
+            }
+        },
+        .@"struct" => |s| {
+            inline for (s.fields) |field| {
+                autoRepairFloatsRecursive(field.type, &@field(value.*, field.name), config, report);
+            }
+        },
+        else => {},
+    }
+}
+
+/// Auto-repair floating point determinism issues in a world snapshot
+pub fn autoRepairWorldSnapshot(snapshot: *WorldSnapshot) DeterminismAutoRepairReport {
+    const config = FloatSanitizeConfig{};
+    var report = DeterminismAutoRepairReport{};
+    autoRepairFloatsRecursive(WorldSnapshot, snapshot, config, &report);
+    snapshot.world_hash = computeWorldHash(snapshot);
+    return report;
+}
+
+/// Reset the unified RNG to a deterministic seed
+pub fn autoRepairDeterministicRng(seed: u64) void {
+    seedRandom(seed);
+    g_rewind_system.rng_state = RngState.init(seed);
+}
+
+/// Run a full determinism auto-repair cycle
+pub fn autoRepairDeterminism(snapshot: *WorldSnapshot, rng_seed: u64) DeterminismAutoRepairReport {
+    const flags = computeWorldDeterminismFlags(snapshot);
+    var report = DeterminismAutoRepairReport{};
+    if (flags != 0) {
+        report = autoRepairWorldSnapshot(snapshot);
+    }
+    autoRepairDeterministicRng(rng_seed);
+    report.rng_reseeded = true;
+    return report;
+}
+
+/// Diagnose determinism issues without repairing (read-only)
+pub fn diagnoseDeterminismIssues(snapshot: *const WorldSnapshot) struct {
+    flags: u32,
+    float_report: FloatDeterminismReport,
+    simd_report: SimdDeterminismReport,
+    needs_repair: bool,
+} {
+    const float_report = verifyWorldSnapshotFloatDeterminism(snapshot);
+    const simd_report = verifyWorldSnapshotSimdDeterminism(snapshot);
+    const flags = float_report.flags | simd_report.flags;
+    return .{
+        .flags = flags,
+        .float_report = float_report,
+        .simd_report = simd_report,
+        .needs_repair = flags != 0,
+    };
 }
 
 test "World snapshot capture and lookup" {
@@ -3233,9 +3487,13 @@ test "World snapshot persistence round-trips branch and budget state" {
     const branch_tick30_hash = getWorldSnapshotAtTickInBranch(30, branch_id).?.world_hash;
 
     try std.testing.expect(setWorldSnapshotBudget(5));
-    const save_path = ".zig-cache/rewind_snapshot_persist_test.bin";
+
+    // Use unique temp file to avoid cross-test interference
+    var buf: [64]u8 = undefined;
+    const save_path = try std.fmt.bufPrint(&buf, ".zig-cache/rewind_persist_{d}.bin", .{std.time.microTimestamp()});
+
     std.fs.cwd().makePath(".zig-cache") catch {};
-    defer std.fs.cwd().deleteFile(save_path) catch {};
+    errdefer std.fs.cwd().deleteFile(save_path) catch {};
 
     try saveWorldSnapshotsToFile(save_path);
 
@@ -4064,4 +4322,203 @@ test "World snapshot merge keep_source and keep_latest prefer source snapshot" {
     try std.testing.expect(keep_latest_report.conflict_count >= 1);
     try std.testing.expect(keep_latest_report.resolved_by_source >= 1);
     try std.testing.expectEqual(latest_source_hash, getWorldSnapshotAtTickInBranch(20, 0).?.world_hash);
+}
+
+// ============================================================================
+// Determinism Regression Tests (242-244)
+// ============================================================================
+
+test "Determinism: two runs with same seed produce same world hash" {
+    init();
+
+    // First run
+    var s1024_a = scene1024.Scene1024.init(std.testing.allocator);
+    defer s1024_a.deinit();
+    _ = try s1024_a.getPage(0);
+
+    var entities_a: [1]entity16.Entity16 = undefined;
+    entities_a[0] = entity16.Prototypes.apple();
+
+    s1024_a.instance_count = 1;
+    s1024_a.instances[0] = .{
+        .entity_id = 0,
+        .pos_x = 10,
+        .pos_y = 200,
+        .pos_z = 10,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+
+    // Use a fixed RNG seed
+    seedRandom(0x12345678);
+    const snapshot_a = captureWorldSnapshot(0, &s1024_a, entities_a[0..]);
+    const advanced_a = try simulateWorldSnapshotForward(&snapshot_a, 5, std.testing.allocator, entities_a[0..]);
+
+    // Second run with same seed
+    init(); // Reset rewind system
+    seedRandom(0x12345678);
+
+    var s1024_b = scene1024.Scene1024.init(std.testing.allocator);
+    defer s1024_b.deinit();
+    _ = try s1024_b.getPage(0);
+
+    var entities_b: [1]entity16.Entity16 = undefined;
+    entities_b[0] = entity16.Prototypes.apple();
+
+    s1024_b.instance_count = 1;
+    s1024_b.instances[0] = .{
+        .entity_id = 0,
+        .pos_x = 10,
+        .pos_y = 200,
+        .pos_z = 10,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+
+    const snapshot_b = captureWorldSnapshot(0, &s1024_b, entities_b[0..]);
+    const advanced_b = try simulateWorldSnapshotForward(&snapshot_b, 5, std.testing.allocator, entities_b[0..]);
+
+    // Same seed should produce same final state
+    try std.testing.expectEqual(advanced_a.world_hash, advanced_b.world_hash);
+    try std.testing.expectEqual(advanced_a.tick, advanced_b.tick);
+}
+
+test "Determinism: rewind and restore continues identically" {
+    init();
+    seedRandom(0xABCD1234);
+
+    var s1024 = scene1024.Scene1024.init(std.testing.allocator);
+    defer s1024.deinit();
+    _ = try s1024.getPage(0);
+
+    var entities: [1]entity16.Entity16 = undefined;
+    entities[0] = entity16.Prototypes.apple();
+
+    s1024.instance_count = 1;
+    s1024.instances[0] = .{
+        .entity_id = 0,
+        .pos_x = 10,
+        .pos_y = 200,
+        .pos_z = 10,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+
+    // Run forward 5 ticks
+    const snapshot_0 = captureWorldSnapshot(0, &s1024, entities[0..]);
+    const after_5 = try simulateWorldSnapshotForward(&snapshot_0, 5, std.testing.allocator, entities[0..]);
+
+    // Restore to tick 3 and continue
+    init();
+    seedRandom(0xABCD1234); // Same seed
+
+    var s1024_restore = scene1024.Scene1024.init(std.testing.allocator);
+    defer s1024_restore.deinit();
+    _ = try s1024_restore.getPage(0);
+
+    var entities_restore: [1]entity16.Entity16 = undefined;
+    entities_restore[0] = entity16.Prototypes.apple();
+
+    s1024_restore.instance_count = 1;
+    s1024_restore.instances[0] = .{
+        .entity_id = 0,
+        .pos_x = 10,
+        .pos_y = 200,
+        .pos_z = 10,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+
+    // Simulate 3 ticks
+    const snapshot_3 = captureWorldSnapshot(0, &s1024_restore, entities_restore[0..]);
+    const after_3 = try simulateWorldSnapshotForward(&snapshot_3, 3, std.testing.allocator, entities_restore[0..]);
+
+    // Continue 2 more ticks
+    const after_5_continued = try simulateWorldSnapshotForward(&after_3, 2, std.testing.allocator, entities_restore[0..]);
+
+    // Should match running 5 ticks continuously
+    try std.testing.expectEqual(after_5.world_hash, after_5_continued.world_hash);
+}
+
+test "Determinism: RNG state is captured in snapshot" {
+    init();
+    seedRandom(0xDEADBEEF);
+
+    var s1024 = scene1024.Scene1024.init(std.testing.allocator);
+    defer s1024.deinit();
+    _ = try s1024.getPage(0);
+
+    var entities: [1]entity16.Entity16 = undefined;
+    entities[0] = entity16.Prototypes.apple();
+
+    s1024.instance_count = 1;
+    s1024.instances[0] = .{
+        .entity_id = 0,
+        .pos_x = 10,
+        .pos_y = 200,
+        .pos_z = 10,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+
+    // Advance RNG a few times
+    _ = getNextRandom();
+    _ = getNextRandom();
+    _ = getNextRandom();
+
+    const snapshot = captureWorldSnapshot(0, &s1024, entities[0..]);
+
+    // RNG state should be captured
+    try std.testing.expect(snapshot.rng_state.state != 0);
+    try std.testing.expect(snapshot.rng_state.seed == 0xDEADBEEF);
 }

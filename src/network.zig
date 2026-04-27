@@ -216,6 +216,31 @@ fn advanceReplicaLinearPosition(replica: *ReplicaState, dt: f32) void {
     replica.pos_z = predicted.pos_z;
 }
 
+/// Predict replica state over a multi-step horizon for sync window planning.
+/// Uses the unified prediction layer for consistency with sensors/ai_traffic/safety.
+pub fn predictReplicaHorizon(replica: *const ReplicaState, dt: f32, steps: u8) prediction.PredictedStateSeries {
+    var series = prediction.PredictedStateSeries{};
+    var current = prediction.LinearState{
+        .pos_x = replica.pos_x,
+        .pos_y = replica.pos_y,
+        .pos_z = replica.pos_z,
+        .vel_x = replica.vel_x,
+        .vel_y = replica.vel_y,
+        .vel_z = replica.vel_z,
+    };
+    series.states[0] = current;
+    series.valid_count = 1;
+
+    var step: u8 = 1;
+    while (step < steps and step < prediction.MAX_PREDICTION_STATES) : (step += 1) {
+        const predicted = prediction.predictLinearState(current, dt);
+        series.states[step] = predicted;
+        series.valid_count += 1;
+        current = predicted;
+    }
+    return series;
+}
+
 /// Reconcile local with remote state
 pub fn reconcile(
     local: *ReplicaState,
@@ -321,6 +346,79 @@ pub fn advanceTick() void {
 /// Get current tick
 pub fn getTick() u32 {
     return g_network_system.local_tick;
+}
+
+// ============================================================================
+// Sync Protocol (Item 287)
+// ============================================================================
+// The sync protocol defines how local and remote replicas are kept in sync:
+// 1. Client predicts local replicas forward every tick using predict().
+// 2. Server sends authoritative replica states at sync_rate_hz.
+// 3. On receiving a server update, the client reconciles via reconcile().
+// 4. If reconciliation fails, rollback to server tick and re-predict forward.
+
+/// Apply a remote authoritative state with smooth correction or hard rollback.
+pub fn applyRemoteState(
+    local: *ReplicaState,
+    remote: *const ReplicaState,
+    input_history: []const InputState,
+    dt: f32,
+) ReconciliationResult {
+    const result = reconcile(local, remote);
+    switch (result) {
+        .OK => {
+            const snap_factor: f32 = 0.3;
+            local.pos_x += (remote.pos_x - local.pos_x) * snap_factor;
+            local.pos_y += (remote.pos_y - local.pos_y) * snap_factor;
+            local.pos_z += (remote.pos_z - local.pos_z) * snap_factor;
+            local.vel_x += (remote.vel_x - local.vel_x) * snap_factor;
+            local.vel_y += (remote.vel_y - local.vel_y) * snap_factor;
+            local.vel_z += (remote.vel_z - local.vel_z) * snap_factor;
+        },
+        .POSITION_DIVERGED, .CRC_MISMATCH, .TICK_MISMATCH => {
+            rollbackWithPrediction(local, remote, input_history, dt);
+        },
+        .TIMEOUT => {},
+    }
+    return result;
+}
+
+// ============================================================================
+// Rollback Semantics (Item 288)
+// ============================================================================
+// Rollback resets to an authoritative remote snapshot and re-predicts forward
+// through input history using the unified prediction layer. This guarantees
+// deterministic reconciliation.
+
+/// Full rollback: reset to remote state and re-predict through input history.
+pub fn rollbackWithPrediction(
+    replica: *ReplicaState,
+    remote: *const ReplicaState,
+    input_history: []const InputState,
+    dt: f32,
+) void {
+    replica.* = remote.*;
+    for (input_history) |input| {
+        if (input.tick > remote.tick) {
+            predict(replica, &input, dt);
+        }
+    }
+}
+
+/// Predict the result of a hypothetical rollback without modifying state.
+pub fn predictRollbackResult(
+    replica: *const ReplicaState,
+    target_remote: *const ReplicaState,
+    input_history: []const InputState,
+    dt: f32,
+) ReplicaState {
+    var hypothetical = target_remote.*;
+    for (input_history) |input| {
+        if (input.tick > target_remote.tick) {
+            predict(&hypothetical, &input, dt);
+        }
+    }
+    return hypothetical;
 }
 
 /// Validate deterministic behavior

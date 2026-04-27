@@ -9077,7 +9077,7 @@ fn computeDamageEvalCrackModel(
         policy.impact_y,
         policy.impact_z,
         base_energy,
-        policy.seed + @as(u32, input.impact.legacy_impact),
+        policy.seed +% @as(u32, input.impact.legacy_impact) +% rewind.getNextRandom(),
     );
     pattern.fragment_count = input.fragments.generated_fragments;
     pattern.fragments = input.fragments.fragments;

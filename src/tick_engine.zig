@@ -2092,6 +2092,7 @@ test "stepTickResult emits fixed trace telemetry snapshot and hash outputs" {
     var event_bus = bus.Bus.init();
     engine.world_bus = &event_bus;
 
+    rewind.init();
     const result = stepTickResult(&engine);
     try std.testing.expect(result.event_count > 0);
 

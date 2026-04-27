@@ -93,6 +93,101 @@ pub const OccupancyConflictWindow = struct {
     end_time: f32 = 0,
 };
 
+/// Maximum number of steps in a prediction horizon (5s at 100ms step = 50 steps)
+pub const PREDICT_MAX_STEPS: usize = 50;
+
+/// Maximum prediction horizon in seconds
+pub const PREDICT_MAX_HORIZON: f32 = 5.0;
+
+/// Minimum prediction step in seconds (100ms)
+pub const PREDICT_MIN_STEP: f32 = 0.1;
+
+/// Maximum allowed collision radius
+pub const PREDICT_MAX_COLLISION_RADIUS: f32 = 100.0;
+
+/// Prediction layer validation result
+pub const ValidationResult = struct {
+    valid: bool,
+    reason: []const u8,
+};
+
+/// Validate prediction horizon parameter
+pub fn validateHorizon(horizon: f32) ValidationResult {
+    if (horizon <= 0) {
+        return .{ .valid = false, .reason = "horizon must be positive" };
+    }
+    if (horizon > PREDICT_MAX_HORIZON) {
+        return .{ .valid = false, .reason = "horizon exceeds maximum" };
+    }
+    return .{ .valid = true, .reason = "" };
+}
+
+/// Validate prediction step parameter
+pub fn validateStep(step: f32) ValidationResult {
+    if (step <= 0) {
+        return .{ .valid = false, .reason = "step must be positive" };
+    }
+    if (step < PREDICT_MIN_STEP) {
+        return .{ .valid = false, .reason = "step below minimum resolution" };
+    }
+    return .{ .valid = true, .reason = "" };
+}
+
+/// Validate collision radius parameter
+pub fn validateCollisionRadius(radius: f32) ValidationResult {
+    if (radius < 0) {
+        return .{ .valid = false, .reason = "radius cannot be negative" };
+    }
+    if (radius > PREDICT_MAX_COLLISION_RADIUS) {
+        return .{ .valid = false, .reason = "radius exceeds maximum" };
+    }
+    return .{ .valid = true, .reason = "" };
+}
+
+/// Validate prediction parameters (horizon, step, collision_radius)
+pub fn validatePredictionParams(horizon: f32, step: f32, collision_radius: f32) ValidationResult {
+    if (validateHorizon(horizon).valid == false) return validateHorizon(horizon);
+    if (validateStep(step).valid == false) return validateStep(step);
+    if (validateCollisionRadius(collision_radius).valid == false) return validateCollisionRadius(collision_radius);
+    return .{ .valid = true, .reason = "" };
+}
+
+/// Compute maximum number of steps for a given horizon and step
+pub fn computeMaxSteps(horizon: f32, step: f32) u8 {
+    if (step <= 0) return 0;
+    const steps = horizon / step;
+    if (steps > PREDICT_MAX_STEPS) return @as(u8, PREDICT_MAX_STEPS);
+    return @as(u8, @intFromFloat(@ceil(steps)));
+}
+
+pub const PredictedStateEntry = struct {
+    time: f32,
+    state: LinearState,
+};
+
+pub const PredictedStateSeries = struct {
+    entity_id: u16,
+    instance_idx: u8,
+    horizon: f32,
+    step_size: f32,
+    count: u8 = 0,
+    entries: [PREDICT_MAX_STEPS]PredictedStateEntry = undefined,
+};
+
+pub const PredictedOccupancyEntry = struct {
+    time: f32,
+    aabb: FutureOccupancyAABB,
+};
+
+pub const PredictedOccupancySeries = struct {
+    entity_id: u16,
+    instance_idx: u8,
+    horizon: f32,
+    step_size: f32,
+    count: u8 = 0,
+    entries: [PREDICT_MAX_STEPS]PredictedOccupancyEntry = undefined,
+};
+
 pub const AvoidanceRecommendation = struct {
     conflict: OccupancyConflictWindow = .{},
     should_brake: bool = false,
@@ -534,6 +629,179 @@ pub fn predictSnapshotInstances(snapshot: *const rewind.WorldSnapshot, time_delt
         };
     }
     return count;
+}
+
+/// Predict state series for an entity over a time horizon
+/// Returns a PredictedStateSeries with entries at each step
+pub fn predict_state(snapshot: *const rewind.WorldSnapshot, entity_id: u16, horizon_s: f32, step_size: f32) PredictedStateSeries {
+    var result = PredictedStateSeries{
+        .entity_id = entity_id,
+        .instance_idx = 0xFF,
+        .horizon = horizon_s,
+        .step_size = step_size,
+        .count = 0,
+    };
+
+    // Find the instance with matching entity_id
+    var found_idx: u8 = 0xFF;
+    var i: u8 = 0;
+    while (i < snapshot.instance_count) : (i += 1) {
+        if (snapshot.instances[i].entity_id == entity_id) {
+            found_idx = i;
+            break;
+        }
+    }
+    if (found_idx == 0xFF) return result;
+    result.instance_idx = found_idx;
+
+    // Generate predictions at each step
+    var time: f32 = step_size;
+    while (time <= horizon_s and result.count < PREDICT_MAX_STEPS) : (time += step_size) {
+        if (snapshotInstanceToLinearState(snapshot, found_idx)) |initial_state| {
+            result.entries[result.count] = .{
+                .time = time,
+                .state = predictLinearState(initial_state, time),
+            };
+            result.count += 1;
+        }
+    }
+
+    return result;
+}
+
+/// Predict occupancy series for an entity over a time horizon
+/// Each entry contains a time-stamped AABB representing future occupancy
+pub fn predict_occupancy(
+    snapshot: *const rewind.WorldSnapshot,
+    entity_id: u16,
+    horizon_s: f32,
+    step_size: f32,
+    half_extent_x: f32,
+    half_extent_y: f32,
+    half_extent_z: f32,
+) PredictedOccupancySeries {
+    var result = PredictedOccupancySeries{
+        .entity_id = entity_id,
+        .instance_idx = 0xFF,
+        .horizon = horizon_s,
+        .step_size = step_size,
+        .count = 0,
+    };
+
+    // Find the instance with matching entity_id
+    var found_idx: u8 = 0xFF;
+    var i: u8 = 0;
+    while (i < snapshot.instance_count) : (i += 1) {
+        if (snapshot.instances[i].entity_id == entity_id) {
+            found_idx = i;
+            break;
+        }
+    }
+    if (found_idx == 0xFF) return result;
+    result.instance_idx = found_idx;
+
+    // Generate occupancy predictions at each step
+    var time: f32 = step_size;
+    while (time <= horizon_s and result.count < PREDICT_MAX_STEPS) : (time += step_size) {
+        if (snapshotInstanceToLinearState(snapshot, found_idx)) |initial_state| {
+            const predicted = predictLinearState(initial_state, time);
+            result.entries[result.count] = .{
+                .time = time,
+                .aabb = computeFutureOccupancyAABB(
+                    predicted.pos_x,
+                    predicted.pos_y,
+                    predicted.pos_z,
+                    half_extent_x,
+                    half_extent_y,
+                    half_extent_z,
+                ),
+            };
+            result.count += 1;
+        }
+    }
+
+    return result;
+}
+
+/// Predict conflict window between two entities over a time horizon
+/// Returns ConflictWindow describing when and how close the entities come
+pub fn predict_conflict(
+    snapshot: *const rewind.WorldSnapshot,
+    entity_a_id: u16,
+    entity_b_id: u16,
+    conflict_radius: f32,
+    horizon: f32,
+    step: f32,
+) ConflictWindow {
+    // Find both instances by entity_id
+    var found_a_idx: u8 = 0xFF;
+    var found_b_idx: u8 = 0xFF;
+    var i: u8 = 0;
+    while (i < snapshot.instance_count) : (i += 1) {
+        if (snapshot.instances[i].entity_id == entity_a_id) {
+            found_a_idx = i;
+        } else if (snapshot.instances[i].entity_id == entity_b_id) {
+            found_b_idx = i;
+        }
+        if (found_a_idx != 0xFF and found_b_idx != 0xFF) break;
+    }
+    if (found_a_idx == 0xFF or found_b_idx == 0xFF) return .{};
+
+    const a = linearStateFromInstanceSnapshot(snapshot.instances[found_a_idx]);
+    const b = linearStateFromInstanceSnapshot(snapshot.instances[found_b_idx]);
+    return computeConflictWindow(a, b, conflict_radius, horizon, step);
+}
+
+/// Predict risk score for an entity performing a maneuver
+/// Returns CollisionRisk which serves as RiskAssessment
+pub fn predict_risk_score(
+    snapshot: *const rewind.WorldSnapshot,
+    entity_id: u16,
+    other_entity_id: u16,
+    collision_radius: f32,
+    horizon: f32,
+    step: f32,
+) CollisionRisk {
+    // Find both instances by entity_id
+    var found_a_idx: u8 = 0xFF;
+    var found_b_idx: u8 = 0xFF;
+    var i: u8 = 0;
+    while (i < snapshot.instance_count) : (i += 1) {
+        if (snapshot.instances[i].entity_id == entity_id) {
+            found_a_idx = i;
+        } else if (snapshot.instances[i].entity_id == other_entity_id) {
+            found_b_idx = i;
+        }
+        if (found_a_idx != 0xFF and found_b_idx != 0xFF) break;
+    }
+    if (found_a_idx == 0xFF or found_b_idx == 0xFF) return .{};
+
+    return assessSnapshotCollisionRisk(snapshot, found_a_idx, found_b_idx, collision_radius, horizon, step);
+}
+
+/// Compute TTC between two entities using entity IDs
+pub fn compute_ttc(
+    snapshot: *const rewind.WorldSnapshot,
+    entity_a_id: u16,
+    entity_b_id: u16,
+    collision_radius: f32,
+    horizon: f32,
+) TTCResult {
+    // Find both instances by entity_id
+    var found_a_idx: u8 = 0xFF;
+    var found_b_idx: u8 = 0xFF;
+    var i: u8 = 0;
+    while (i < snapshot.instance_count) : (i += 1) {
+        if (snapshot.instances[i].entity_id == entity_a_id) {
+            found_a_idx = i;
+        } else if (snapshot.instances[i].entity_id == entity_b_id) {
+            found_b_idx = i;
+        }
+        if (found_a_idx != 0xFF and found_b_idx != 0xFF) break;
+    }
+    if (found_a_idx == 0xFF or found_b_idx == 0xFF) return .{};
+
+    return computeSnapshotTTC(snapshot, found_a_idx, found_b_idx, collision_radius, horizon);
 }
 
 pub fn snapshotInstanceToLinearState(snapshot: *const rewind.WorldSnapshot, instance_idx: u8) ?LinearState {
@@ -1141,4 +1409,705 @@ test "predictSnapshotInstances forecasts multiple entries" {
     try std.testing.expect(entries[1].entity_id == 11);
     try std.testing.expectApproxEqAbs(@as(f32, 1.0), entries[1].state.pos_x, 0.0001);
     try std.testing.expectApproxEqAbs(@as(f32, 8.0), entries[1].state.pos_y, 0.0001);
+}
+
+test "predict_state generates time series for entity" {
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 1;
+    snapshot.instances[0] = .{
+        .entity_id = 42,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 10,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const series = predict_state(&snapshot, 42, 1.0, 0.25);
+    try std.testing.expect(series.entity_id == 42);
+    try std.testing.expect(series.instance_idx == 0);
+    try std.testing.expect(series.horizon == 1.0);
+    try std.testing.expect(series.step_size == 0.25);
+    try std.testing.expect(series.count == 4);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.25), series.entries[0].time, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.5), series.entries[0].state.pos_x, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.5), series.entries[1].time, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 5.0), series.entries[1].state.pos_x, 0.0001);
+}
+
+test "predict_state returns empty series for non-existent entity" {
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 1;
+    snapshot.instances[0] = .{
+        .entity_id = 10,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const series = predict_state(&snapshot, 999, 1.0, 0.25);
+    try std.testing.expect(series.instance_idx == 0xFF);
+    try std.testing.expect(series.count == 0);
+}
+
+test "predict_occupancy generates time series of AABBs" {
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 1;
+    snapshot.instances[0] = .{
+        .entity_id = 7,
+        .pos_x = 100,
+        .pos_y = 50,
+        .pos_z = 200,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 20,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const series = predict_occupancy(&snapshot, 7, 0.5, 0.25, 2.0, 3.0, 1.5);
+    try std.testing.expect(series.entity_id == 7);
+    try std.testing.expect(series.instance_idx == 0);
+    try std.testing.expect(series.horizon == 0.5);
+    try std.testing.expect(series.step_size == 0.25);
+    try std.testing.expect(series.count == 2);
+    // At t=0.25, pos_x = 100 + 20*0.25 = 105, AABB half_extent_x=2.0 => min_x=103, max_x=107
+    try std.testing.expectApproxEqAbs(@as(f32, 103), series.entries[0].aabb.min_x, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 107), series.entries[0].aabb.max_x, 0.0001);
+    // At t=0.5, pos_x = 100 + 20*0.5 = 110, AABB half_extent_x=2.0 => min_x=108, max_x=112
+    try std.testing.expectApproxEqAbs(@as(f32, 108), series.entries[1].aabb.min_x, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 112), series.entries[1].aabb.max_x, 0.0001);
+}
+
+test "predict_occupancy returns empty series for non-existent entity" {
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 1;
+    snapshot.instances[0] = .{
+        .entity_id = 5,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const series = predict_occupancy(&snapshot, 888, 1.0, 0.5, 1.0, 1.0, 1.0);
+    try std.testing.expect(series.instance_idx == 0xFF);
+    try std.testing.expect(series.count == 0);
+}
+
+test "predict_conflict returns conflict window for converging entities" {
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    // Entity A moving positive X
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 10,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    // Entity B moving negative X
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 100,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = -10,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    // They start 100 apart, approach at 20 units/sec, collision_radius = 5
+    // Collision at t=4.75, should detect conflict in horizon
+    const window = predict_conflict(&snapshot, 1, 2, 5.0, 10.0, 0.5);
+    try std.testing.expect(window.valid);
+    try std.testing.expect(window.start_time > 4.0 and window.start_time < 6.0);
+    try std.testing.expect(window.end_time > 4.0 and window.end_time < 6.0);
+    try std.testing.expect(window.min_distance < 5.0);
+}
+
+test "predict_conflict returns invalid for diverging entities" {
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    // Entity A moving positive X
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 10,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    // Entity B also moving positive X (same direction, won't collide)
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 50,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 10,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const window = predict_conflict(&snapshot, 1, 2, 5.0, 10.0, 0.5);
+    try std.testing.expect(!window.valid);
+}
+
+test "predict_conflict returns invalid for non-existent entity" {
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 1;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 10,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const window = predict_conflict(&snapshot, 1, 999, 5.0, 10.0, 0.5);
+    try std.testing.expect(!window.valid);
+}
+
+test "compute_ttc returns valid TTC for converging entities" {
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    // Entity A moving positive X
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 10,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    // Entity B moving negative X
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 100,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = -10,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    // Use a small collision radius to ensure collision is detected
+    const ttc = compute_ttc(&snapshot, 1, 2, 1.0, 10.0);
+    try std.testing.expect(ttc.valid);
+    try std.testing.expect(ttc.time > 4.8 and ttc.time < 5.2);
+}
+
+test "predict_risk_score returns risk assessment for converging entities" {
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    // Entity A moving positive X
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 10,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    // Entity B moving negative X
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 100,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = -10,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const risk = predict_risk_score(&snapshot, 1, 2, 5.0, 10.0, 0.5);
+    try std.testing.expect(risk.level != .none);
+    try std.testing.expect(risk.ttc.valid);
+    try std.testing.expect(risk.window.valid);
+}
+
+test "validateHorizon accepts valid horizons" {
+    try std.testing.expect(validateHorizon(0.1).valid);
+    try std.testing.expect(validateHorizon(1.0).valid);
+    try std.testing.expect(validateHorizon(5.0).valid);
+}
+
+test "validateHorizon rejects invalid horizons" {
+    const r1 = validateHorizon(0);
+    try std.testing.expect(!r1.valid);
+    try std.testing.expect(std.mem.indexOf(u8, r1.reason, "positive") != null);
+
+    const r2 = validateHorizon(-1);
+    try std.testing.expect(!r2.valid);
+
+    const r3 = validateHorizon(6.0);
+    try std.testing.expect(!r3.valid);
+    try std.testing.expect(std.mem.indexOf(u8, r3.reason, "maximum") != null);
+}
+
+test "validateStep accepts valid steps" {
+    try std.testing.expect(validateStep(0.1).valid);
+    try std.testing.expect(validateStep(0.5).valid);
+    try std.testing.expect(validateStep(1.0).valid);
+}
+
+test "validateStep rejects invalid steps" {
+    const r1 = validateStep(0);
+    try std.testing.expect(!r1.valid);
+
+    const r2 = validateStep(-0.5);
+    try std.testing.expect(!r2.valid);
+
+    const r3 = validateStep(0.05);
+    try std.testing.expect(!r3.valid);
+    try std.testing.expect(std.mem.indexOf(u8, r3.reason, "resolution") != null);
+}
+
+test "validateCollisionRadius accepts valid radii" {
+    try std.testing.expect(validateCollisionRadius(0).valid);
+    try std.testing.expect(validateCollisionRadius(1.0).valid);
+    try std.testing.expect(validateCollisionRadius(100.0).valid);
+}
+
+test "validateCollisionRadius rejects invalid radii" {
+    const r1 = validateCollisionRadius(-1);
+    try std.testing.expect(!r1.valid);
+
+    const r2 = validateCollisionRadius(101.0);
+    try std.testing.expect(!r2.valid);
+    try std.testing.expect(std.mem.indexOf(u8, r2.reason, "maximum") != null);
+}
+
+test "computeMaxSteps calculates correct step count" {
+    try std.testing.expectEqual(@as(u8, 0), computeMaxSteps(1.0, 0.0));
+    try std.testing.expectEqual(@as(u8, 10), computeMaxSteps(1.0, 0.1));
+    try std.testing.expectEqual(@as(u8, 5), computeMaxSteps(1.0, 0.2));
+    try std.testing.expectEqual(@as(u8, 50), computeMaxSteps(5.0, 0.1));
+}
+
+// ============================================================================
+// Test Scenarios 321-330: TTC Prediction Scenarios
+// ============================================================================
+
+test "321: oncoming vehicle TTC prediction" {
+    // Two vehicles approaching each other head-on
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 20,  // Moving +X at 20 m/s
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 100,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 128,  // Facing -X
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = -20,  // Moving -X at 20 m/s
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    // Use predict_state to get state series
+    const series_a = predict_state(&snapshot, 1, 5.0, 0.5);
+    try std.testing.expect(series_a.count > 0);
+
+    // Use compute_ttc for precise TTC
+    const ttc = compute_ttc(&snapshot, 1, 2, 2.0, 10.0);
+    try std.testing.expect(ttc.valid);
+    try std.testing.expect(ttc.time > 2.0 and ttc.time < 3.0); // 100m / 40 m/s = 2.5s
+}
+
+test "322: same-direction vehicle TTC prediction" {
+    // Two vehicles in same lane, faster behind slower
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 30,  // Faster: 30 m/s
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 50,  // Ahead, but slower
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 20,  // Slower: 20 m/s
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const ttc = compute_ttc(&snapshot, 1, 2, 2.0, 10.0);
+    try std.testing.expect(ttc.valid);
+    try std.testing.expect(ttc.time > 4.0 and ttc.time < 6.0); // 50m / 10 m/s = 5s
+}
+
+test "323: crossing vehicle TTC prediction" {
+    // Two vehicles crossing paths at intersection
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = -30,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 20,  // Moving +X
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = -30,  // Moving +Z
+        .rot_yaw = 64,  // Facing +X
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 20,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const ttc = compute_ttc(&snapshot, 1, 2, 2.0, 10.0);
+    // They cross at origin, time = 1.5s for each
+    try std.testing.expect(ttc.valid);
+    try std.testing.expect(ttc.time > 1.0 and ttc.time < 2.0);
+}
+
+test "326: traffic light switching window prediction" {
+    // Vehicle approaching green light early in cycle
+    const signal = predictSignalWindow(.green, 2.0, 60.0, 3.0);
+    try std.testing.expect(signal.state_now == .green);
+    try std.testing.expect(signal.time_to_next_change > 0);
+
+    // Green light late in cycle (approaching yellow)
+    const signal2 = predictSignalWindow(.green, 55.0, 60.0, 3.0);
+    try std.testing.expect(signal2.state_now == .green);
+    try std.testing.expect(signal2.time_to_next_change < 10.0); // About to change
+
+    // Yellow phase
+    const signal3 = predictSignalWindow(.yellow, 1.0, 60.0, 3.0);
+    try std.testing.expect(signal3.state_now == .yellow);
+    try std.testing.expect(signal3.safe_to_enter == false);
+    try std.testing.expect(signal3.safe_to_clear == true); // Can clear if already in
+}
+
+test "327: yellow light passage decision prediction" {
+    // Estimate if vehicle can clear intersection before red
+    const signal = predictSignalWindow(.yellow, 1.0, 60.0, 3.0);
+    const distance_to_line: f32 = 30.0;
+    const speed: f32 = 15.0;
+    const vehicle_length: f32 = 4.5;
+
+    const pass = estimateSafePass(distance_to_line, speed, vehicle_length, signal);
+    // At 15 m/s, 30m takes 2s, yellow is 3s, so can likely pass
+    try std.testing.expect(pass.can_pass);
+}
+
+test "328: safe following distance window prediction" {
+    // Lead vehicle at 20 m/s, following vehicle at 30 m/s
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 30,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 40,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 20,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const ttc = compute_ttc(&snapshot, 1, 2, 2.0, 10.0);
+    // Closing speed = 10 m/s, distance = 40m
+    try std.testing.expect(ttc.valid);
+    try std.testing.expect(ttc.time > 3.0 and ttc.time < 5.0);
+}
+
+test "329: emergency braking prediction" {
+    // Lead vehicle suddenly brakes from 20 m/s to 0
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,  // Stopped (braked)
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 30,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 20,  // Approaching at 20 m/s
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const ttc = compute_ttc(&snapshot, 1, 2, 2.0, 10.0);
+    // Closing speed = 20 m/s, distance = 30m, collision at 1.5s
+    try std.testing.expect(ttc.valid);
+    try std.testing.expect(ttc.time > 1.0 and ttc.time < 2.0);
+
+    // Also check risk assessment
+    const risk = predict_risk_score(&snapshot, 1, 2, 2.0, 10.0, 0.5);
+    try std.testing.expect(risk.level != .none);
+    try std.testing.expect(risk.level == .high or risk.level == .imminent);
+}
+
+test "330: intersection conflict window prediction" {
+    // Vehicle A going north, Vehicle B going west, both approaching intersection
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = -20,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 15,  // Moving +X (east)
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = -20,  // Moving +Z (south)
+        .rot_yaw = 64,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 15,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    // Both will reach (0,0) at t=1.33s
+    const conflict = predict_conflict(&snapshot, 1, 2, 3.0, 5.0, 0.25);
+    try std.testing.expect(conflict.valid);
+    try std.testing.expect(conflict.start_time > 1.0 and conflict.start_time < 2.0);
 }
