@@ -251,3 +251,142 @@ pub const PhysicsTestResult = struct {
     passed: bool,
 };
 ```
+
+---
+
+## Cross-Domain Scenario Extensions (Planned)
+
+The scenarios below extend pure physics tests with chemical, sound, personal-universe, and temporal-causal logic checks.
+They are **planned cross-domain cases** for upcoming test suites and are not part of the current `runPhysicsTest(allocator, test_id)` 1-100 implementation.
+
+### Chemical Cases (ID: 101-110)
+
+| ID | Name | Input | Key Assertions | Expected |
+|----|------|-------|----------------|----------|
+| 101 | chem_smell_fruit | Human near fruit with `chemical_signature` | smell profile detected, `affect_delta` produced | PASS |
+| 102 | chem_taste_sugar | Human ingests sugar object | taste profile hit, `physio_delta` updated | PASS |
+| 103 | chem_rotten_avoid | Human detects rotten odor | aversion bias increases, approach action gated | PASS |
+| 104 | chem_unknown_safe_guard | Unknown chemical ingestion | `run_chemical_check` returns risk | FAIL or CLARIFY |
+| 105 | chem_dual_source | Two simultaneous odor sources | strongest source wins or weighted merge | PASS |
+| 106 | chem_memory_anchor | Known smell linked to memory | memory anchor trigger logged | PASS |
+| 107 | chem_overdose_guard | High concentration toxic input | safety block with reason code | `C_REACTION_UNSAFE` |
+| 108 | chem_ingest_then_move | Ingest + locomotion | no crash, state remains deterministic | PASS |
+| 109 | chem_replay_determinism | Same chemical event replayed twice | same `reason_code` and deltas | PASS |
+| 110 | chem_headless_budget | `sim-check --domain chem` | p95 within configured budget | PASS |
+
+### Sound Cases (ID: 111-120)
+
+| ID | Name | Input | Key Assertions | Expected |
+|----|------|-------|----------------|----------|
+| 111 | sound_music_sad | Sad music event | `valence` drops, trace recorded | PASS |
+| 112 | sound_alarm_high_arousal | Alarm event | arousal rises, risk gate tightened | PASS |
+| 113 | sound_speech_command | Speech command event | parsed intent + sound features both present | PASS |
+| 114 | sound_noise_filter | Background noise + command | command survives noise floor | PASS |
+| 115 | sound_loop_adaptation | Looping same track | adaptation curve appears | PASS |
+| 116 | sound_memory_trigger | Familiar voice | memory anchor hit count increases | PASS |
+| 117 | sound_multi_source | Competing sound sources | deterministic source merge | PASS |
+| 118 | sound_to_behavior | Sound event changes action priority | action whitelist updated | PASS |
+| 119 | sound_replay_determinism | Replay identical sound input | identical deltas and codes | PASS |
+| 120 | sound_headless_budget | Headless auditory check | within latency budget | PASS |
+
+### Personal Universe Cases (ID: 121-130)
+
+| ID | Name | Input | Key Assertions | Expected |
+|----|------|-------|----------------|----------|
+| 121 | pu_basic_event_loop | Visual/social event to human | human root page activates and commits | PASS |
+| 122 | pu_affect_gate | High-threat input | gate restricts risky actions | PASS |
+| 123 | pu_shadow_branch | One event, multiple responses | branch scoring generated | PASS |
+| 124 | pu_sound_chem_fusion | Concurrent sound+chemical events | fused deltas reflected in gate | PASS |
+| 125 | pu_recovery_curve | Strong negative event then idle | recovery trend appears over ticks | PASS |
+| 126 | pu_low_freq_idle | No events for long period | low-frequency heartbeat only | PASS |
+| 127 | pu_bus_roundtrip | Physics -> Personal -> scheduler | no missing bus message | PASS |
+| 128 | pu_stability_24h | Long running simulation | no leak, no state corruption | PASS |
+| 129 | pu_replay_determinism | Same seed + same inputs | same outputs and traces | PASS |
+| 130 | pu_headless_profile | profile in headless mode | no render dependency | PASS |
+
+### Temporal-Causal Logic Cases (ID: 131-140)
+
+| ID | Name | Input | Key Assertions | Expected |
+|----|------|-------|----------------|----------|
+| 131 | temporal_parent_marriage_son | marriage at `t1`, son born at `t2>t1` | invite precondition fails correctly | `T_EXISTENCE_VIOLATION` |
+| 132 | temporal_before_after_conflict | contradictory before/after edges | conflict detected | `T_ORDER_CONFLICT` |
+| 133 | temporal_cause_reverse | result precedes cause | causal rule triggers | `T_CAUSAL_CONFLICT` |
+| 134 | temporal_role_inactive | action requires inactive role | role window rejection | `T_ROLE_INACTIVE` |
+| 135 | temporal_valid_timeline | consistent birth-school-work order | no temporal errors | PASS |
+| 136 | temporal_missing_time_clarify | insufficient timestamp evidence | clarify required, no unsafe execute | FAIL or CLARIFY |
+| 137 | temporal_cross_module_guard | temporal fail + physics intent | execution blocked before physics step | FAIL |
+| 138 | temporal_hook_protocol | hook response check | includes `reason_code` and `break_time` | PASS |
+| 139 | temporal_replay_determinism | same temporal input replay | identical reason code and break_time | PASS |
+| 140 | temporal_batch_cases | mixed valid/invalid timeline batch | stable classification accuracy | PASS |
+
+## Extended Result Structure Suggestion
+
+```zig
+pub const CrossDomainResult = struct {
+    test_id: u32,
+    domain: enum { physics, chemical, sound, personal, temporal },
+    passed: bool,
+    reason_code: []const u8, // E_OK / C_* / T_* ...
+    break_time: i64,         // temporal conflict point, -1 if N/A
+    trace_digest: []const u8,
+};
+```
+
+## Implementation Note
+
+- Current implemented suite: `src/physics_tests.zig` (`test_id` 1-100)
+- Planned extension suite: cross-domain cases (`test_id` 101-140)
+- Recommended split:
+  - `src/physics_tests.zig` for rigid-body baseline
+  - `src/cross_domain_tests.zig` for chemical/sound/personal/temporal scenarios
+
+## Implementation Roadmap (Recommended)
+
+1. Add a new entry API:
+```zig
+pub fn runCrossDomainTest(
+    allocator: std.mem.Allocator,
+    test_id: u32,
+) !CrossDomainResult
+```
+2. Keep ID partition stable:
+   - `101-110`: chemical
+   - `111-120`: sound
+   - `121-130`: personal
+   - `131-140`: temporal
+3. Reuse existing reason code definitions (`E_*`, `C_*`, `T_*`) from appendix docs.
+4. Ensure deterministic replay for all temporal and personal cases.
+5. Add CLI path aligned with current docs:
+```bash
+./zig-out/bin/worldvm sim-check --domain physics --case 35
+./zig-out/bin/worldvm sim-check --domain chem --case 110
+./zig-out/bin/worldvm sim-check --domain temporal --case 131
+```
+
+## Acceptance Gates for Cross-Domain Cases
+
+To avoid "case name only" tests, each cross-domain case should define explicit pass gates:
+
+1. Functional gate:
+   - Expected `passed == true` for PASS cases
+   - Expected `reason_code` match for guarded FAIL cases (for example `T_*`, `C_*`)
+2. Determinism gate:
+   - Same seed + same input -> same `reason_code`, `trace_digest`, and `break_time`
+3. Performance gate:
+   - `sim-check` p95 within configured budget (`<= 1000ms` on CPU-only target)
+4. Safety gate:
+   - Unsafe scenarios must not proceed silently; they must return structured failure
+
+### Suggested CI Layout
+
+```bash
+# baseline physics
+zig test src/physics_tests.zig
+
+# cross-domain extension (when implemented)
+zig test src/cross_domain_tests.zig
+
+# sampled headless checks
+./zig-out/bin/worldvm sim-check --domain chem --case 110
+./zig-out/bin/worldvm sim-check --domain temporal --case 131
+```

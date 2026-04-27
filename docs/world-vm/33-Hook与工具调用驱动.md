@@ -1,4 +1,4 @@
-# 07 Hook 与工具调用驱动
+# 33 Hook 与工具调用驱动
 
 ## 1. 目标
 定义 `todo2.md` 中两种外挂接入模式：
@@ -36,6 +36,8 @@
 1. 运动与放置（move/put/drop）。
 2. 交通与路径（go/turn/stop/light）。
 3. 容器与流体（fill/pour/overflow）。
+4. 摄入与化学事件（eat/drink/smell/taste）。
+5. 时间与关系推理（before/after/born/marry/invite）。
 
 ## 6. Hook 返回协议
 至少包含：
@@ -43,6 +45,9 @@
 2. `reason_code`
 3. `break_frame`
 4. `repair_hint`
+5. `domain`（physics/chem/logic）
+6. `trace_digest`
+7. `break_time`（时间逻辑冲突点，若有）
 
 ## 7. 回灌策略
 1. FAIL 时追加约束上下文并请求模型重试。
@@ -53,8 +58,11 @@
 Zig 内核对外统一 C ABI：
 1. `init_kernel`
 2. `run_logic_check`
-3. `get_trace_summary`
-4. `reset_context`
+3. `run_physics_check`
+4. `run_chemical_check`
+5. `run_temporal_check`
+6. `get_trace_summary`
+7. `reset_context`
 
 上层可由 Python/Go/Node 封装 SDK。
 

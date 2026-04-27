@@ -1,4 +1,4 @@
-# 05 Zig 内核实现策略
+# 31 Zig 内核实现策略
 
 ## 1. 目标
 将 `todo2.md` 的 Zig 讨论收敛为可执行工程策略：小体积、零依赖、快编译、快运行。
@@ -13,8 +13,11 @@
 1. `vm_core`：分页、页表、Tick。
 2. `vm_geom`：LiteMesh、AABB、位图转换、SDF采样。
 3. `vm_phys`：刚体/流体/气体离散算子。
-4. `vm_io`：CLI、ASCII dump、日志。
-5. `vm_ext`：外挂接口占位。
+4. `vm_human`：Personal Universe 运行时。
+5. `vm_sound`：声音子宇宙（事件缓冲、声音特征、联动输出）。
+6. `vm_chem`：化学子宇宙（标签场、反应规则、扩散步进）。
+7. `vm_io`：CLI、ASCII dump、日志。
+8. `vm_ext`：外挂接口占位。
 
 ## 4. 性能策略
 1. 整数优先：空间坐标与碰撞逻辑优先整数路径。
@@ -31,6 +34,7 @@
 1. `run --scenario ... --ticks N`
 2. `bench --scenario ...`
 3. `dump --view top|front|side|slice`
+4. `sim-check --domain physics|chem --case ...`
 
 ## 7. 物理算子最小集（v1）
 1. `APPLY_FORCE_FALL`
@@ -47,6 +51,7 @@
 1. 不引入重量级连续物理求解器。
 2. 不让内核依赖 Python 运行时。
 3. 不在首版耦合训练流程代码。
+4. 人宇宙与子宇宙模块必须支持 headless 运行。
 
 ## 10. 验收目标
 1. 单可执行交付。
