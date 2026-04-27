@@ -30,6 +30,7 @@ const physics_world = @import("physics_world.zig");
 pub const Operator = enum(u8) { NOP = 0, FALL = 6, FLOW = 7, MOVE = 3, PUSH = 4, BREAK = 5 };
 pub const MAX_BROADPHASE_PAIRS: usize = physics_kernel.MAX_BROADPHASE_PAIRS;
 pub const BroadPhasePair = physics_kernel.BroadPhasePair;
+pub const SleepIsland = physics_kernel.SleepIsland;
 
 pub const Intent = struct {
     instance_idx: u8,
@@ -41,7 +42,14 @@ pub const Intent = struct {
     target_instance: u8 = 255,
 };
 
-pub const SLEEP_TIME_THRESHOLD: u8 = 30;
+pub const DiscreteIntentStageResult = struct {
+    applied: u16 = 0,
+    intent_count: u8 = 0,
+    pair_count: usize = 0,
+    event_count: u8 = 0,
+};
+
+pub const SLEEP_TIME_THRESHOLD: u8 = sleep_response.SLEEP_TIME_THRESHOLD;
 pub const DEFAULT_TIME_SCALE: f32 = 1.0;
 
 pub const TickEngine = struct {
@@ -63,8 +71,14 @@ pub const TickEngine = struct {
     // Fixed timestep for continuous physics
     fixed_dt: f32 = 1.0 / 60.0,
     pending_collisions: collision_event.PendingCollisionQueue = .{},
+    pending_sounds: collision_event.PendingSoundQueue = .{},
+    pending_particles: collision_event.PendingParticleQueue = .{},
+    pending_deformations: collision_event.PendingDeformationQueue = .{},
+    pending_breaks: collision_event.PendingBreakQueue = .{},
+    pending_joint_breaks: collision_event.PendingJointBreakQueue = .{},
     broadphase_pairs: [MAX_BROADPHASE_PAIRS]BroadPhasePair = undefined,
     broadphase_pair_count: usize = 0,
+    last_step_result: physics_world.StepResult = .{},
 };
 
 pub fn init(engine: *TickEngine, s1024: *scene1024.Scene1024, entities: []entity16.Entity16) void {
@@ -86,6 +100,35 @@ pub fn shouldSleep(inst: *scene32.Instance) bool {
     return physics_kernel.shouldSleep(inst);
 }
 
+pub fn shouldSleepInstance(inst: *scene32.Instance, entity: *const entity16.Entity16) bool {
+    return physics_kernel.shouldSleepInstance(inst, entity);
+}
+
+pub fn computeSleepEnergy(inst: *const scene32.Instance, entity: *const entity16.Entity16) f32 {
+    return physics_kernel.computeSleepEnergy(inst, entity);
+}
+
+pub fn computeSleepStability(inst: *const scene32.Instance, entity: *const entity16.Entity16) u16 {
+    return physics_kernel.computeSleepStability(inst, entity);
+}
+
+pub fn isSleepStable(inst: *const scene32.Instance, entity: *const entity16.Entity16) bool {
+    return physics_kernel.isSleepStable(inst, entity);
+}
+
+pub fn detectSleepIslands(engine: *const TickEngine, out_islands: []SleepIsland) usize {
+    return physics_kernel.detectSleepIslands(
+        engine.s1024.instances[0..engine.s1024.instance_count],
+        engine.entities,
+        engine.broadphase_pairs[0..engine.broadphase_pair_count],
+        out_islands,
+    );
+}
+
+pub fn shouldWake(inst: *scene32.Instance, moved: bool) bool {
+    return physics_kernel.shouldWake(inst, moved);
+}
+
 fn settleGroundContact(inst: *scene32.Instance) void {
     contact_response.settleGroundContact(inst);
 }
@@ -104,10 +147,47 @@ fn broadcastCollisionPair(engine: *TickEngine, inst: *const scene32.Instance, im
         impact_velocity,
         blocker_id,
     );
+    physics_kernel.enqueueSoundPairEvent(
+        &engine.pending_sounds,
+        engine.s1024.instances[0..engine.s1024.instance_count],
+        engine.entities,
+        inst,
+        impact_velocity,
+        blocker_id,
+    );
+    physics_kernel.enqueueParticlePairEvent(
+        &engine.pending_particles,
+        engine.s1024.instances[0..engine.s1024.instance_count],
+        engine.entities,
+        inst,
+        impact_velocity,
+        blocker_id,
+    );
+    physics_kernel.enqueueDeformationPairEvent(
+        &engine.pending_deformations,
+        engine.s1024.instances[0..engine.s1024.instance_count],
+        engine.entities,
+        inst,
+        impact_velocity,
+        blocker_id,
+    );
+    physics_kernel.enqueueBreakPairEvent(
+        &engine.pending_breaks,
+        engine.s1024.instances[0..engine.s1024.instance_count],
+        engine.entities,
+        inst,
+        impact_velocity,
+        blocker_id,
+    );
 }
 
 fn handleEvents(engine: *TickEngine) void {
     physics_kernel.publishPendingCollisions(&engine.pending_collisions, engine.world_bus, engine.tick_id);
+    physics_kernel.publishPendingSounds(&engine.pending_sounds, engine.world_bus, engine.tick_id);
+    physics_kernel.publishPendingParticles(&engine.pending_particles, engine.world_bus, engine.tick_id);
+    physics_kernel.publishPendingDeformations(&engine.pending_deformations, engine.world_bus, engine.tick_id);
+    physics_kernel.publishPendingBreaks(&engine.pending_breaks, engine.world_bus, engine.tick_id);
+    physics_kernel.publishPendingJointBreaks(&engine.pending_joint_breaks, engine.world_bus, engine.tick_id);
 }
 
 fn broadPhaseWorld(engine: *TickEngine) void {
@@ -266,7 +346,7 @@ fn processNonUpwardMotion(
         processPlanarSweepsAt(engine, instance_idx, inst, entity, inst.pos_y);
     } else {
         processPlanarSweepsAt(engine, instance_idx, inst, entity, inst.pos_y);
-        _ = physics_kernel.settleLowEnergyMotion(inst, 5);
+        _ = physics_kernel.settleLowEnergyMotion(inst, sleep_response.SLEEP_VELOCITY_THRESHOLD);
     }
 }
 
@@ -311,13 +391,17 @@ pub fn wakeInstance(inst: *scene32.Instance) void {
     physics_kernel.wakeInstance(inst);
 }
 
+pub fn wakeInstanceForMotion(inst: *scene32.Instance, moved: bool) bool {
+    return physics_kernel.wakeInstanceForMotion(inst, moved);
+}
+
 /// Apply force to instance (adds to velocity)
 pub fn applyForce(inst: *scene32.Instance, force_x: f32, force_y: f32, force_z: f32, mass: u16) void {
     if (mass == 0) return;
     inst.vel_x = @truncate(@as(i32, inst.vel_x) + @as(i32, @intFromFloat(@round(force_x / @as(f32, @floatFromInt(mass)) * 10.0))));
     inst.vel_y = @truncate(@as(i32, inst.vel_y) + @as(i32, @intFromFloat(@round(force_y / @as(f32, @floatFromInt(mass)) * 10.0))));
     inst.vel_z = @truncate(@as(i32, inst.vel_z) + @as(i32, @intFromFloat(@round(force_z / @as(f32, @floatFromInt(mass)) * 10.0))));
-    wakeInstance(inst);
+    _ = wakeInstanceForMotion(inst, false);
 }
 
 /// Apply torque to instance (adds to angular velocity)
@@ -326,7 +410,7 @@ pub fn applyTorque(inst: *scene32.Instance, torque_x: f32, torque_y: f32, torque
     inst.ang_x = @truncate(@as(i16, inst.ang_x) + @as(i8, @intFromFloat(@round(torque_x / @as(f32, @floatFromInt(inertia)) * 10.0))));
     inst.ang_y = @truncate(@as(i16, inst.ang_y) + @as(i8, @intFromFloat(@round(torque_y / @as(f32, @floatFromInt(inertia)) * 10.0))));
     inst.ang_z = @truncate(@as(i16, inst.ang_z) + @as(i8, @intFromFloat(@round(torque_z / @as(f32, @floatFromInt(inertia)) * 10.0))));
-    wakeInstance(inst);
+    _ = wakeInstanceForMotion(inst, false);
 }
 
 /// Apply impulse (instant velocity change)
@@ -334,7 +418,7 @@ pub fn applyImpulse(inst: *scene32.Instance, impulse_x: f32, impulse_y: f32, imp
     inst.vel_x = @truncate(@as(i32, inst.vel_x) + @as(i32, @intFromFloat(@round(impulse_x))));
     inst.vel_y = @truncate(@as(i32, inst.vel_y) + @as(i32, @intFromFloat(@round(impulse_y))));
     inst.vel_z = @truncate(@as(i32, inst.vel_z) + @as(i32, @intFromFloat(@round(impulse_z))));
-    wakeInstance(inst);
+    _ = wakeInstanceForMotion(inst, false);
 }
 
 /// Apply buoyancy force for fluids (upward force proportional to displaced volume)
@@ -344,15 +428,15 @@ pub fn applyBuoyancy(inst: *scene32.Instance, fluid_density: f32, mass: u16) voi
     const volume: f32 = 16.0 * 16.0 * 16.0; // Full 16^3 entity volume
     const buoyancy_force = fluid_density * volume * 0.01;
     inst.vel_y = @truncate(@as(i32, inst.vel_y) + @as(i32, @intFromFloat(@round(buoyancy_force))));
-    wakeInstance(inst);
+    _ = wakeInstanceForMotion(inst, false);
 }
 
 /// Force field types
 pub const ForceFieldType = enum(u8) {
     none = 0,
-    point = 1,      // Radial explosion-like force
+    point = 1, // Radial explosion-like force
     directional = 2, // Constant direction force (wind, gravity)
-    vortex = 3,     // Rotational force
+    vortex = 3, // Rotational force
 };
 
 pub const ForceField = struct {
@@ -465,6 +549,11 @@ fn gatherInternal(engine: *TickEngine, apply_continuous_physics: bool) void {
         applyContinuousPhysics(engine);
     }
     physics_kernel.clearPendingCollisions(&engine.pending_collisions);
+    physics_kernel.clearPendingSounds(&engine.pending_sounds);
+    physics_kernel.clearPendingParticles(&engine.pending_particles);
+    physics_kernel.clearPendingDeformations(&engine.pending_deformations);
+    physics_kernel.clearPendingBreaks(&engine.pending_breaks);
+    physics_kernel.clearPendingJointBreaks(&engine.pending_joint_breaks);
 
     engine.intent_count = 0;
     var i: u8 = 0;
@@ -545,6 +634,7 @@ pub fn commit(engine: *TickEngine) u16 {
         engine.entities,
         engine.joints[0..engine.joint_count],
         engine.broadphase_pairs[0..],
+        &engine.pending_joint_breaks,
     );
     engine.broadphase_pair_count = physics_kernel.mergeObservedPairCount(
         engine.broadphase_pair_count,
@@ -553,11 +643,17 @@ pub fn commit(engine: *TickEngine) u16 {
     return applied;
 }
 
-fn runDiscreteIntentStage(engine: *TickEngine, apply_continuous_physics: bool) u16 {
+pub fn runDiscreteIntentStage(engine: *TickEngine, apply_continuous_physics: bool) DiscreteIntentStageResult {
     gatherInternal(engine, apply_continuous_physics);
     speculate(engine);
     resolve(engine);
-    return commit(engine);
+    const applied = commit(engine);
+    return .{
+        .applied = applied,
+        .intent_count = engine.intent_count,
+        .pair_count = engine.broadphase_pair_count,
+        .event_count = engine.pending_collisions.count + engine.pending_sounds.count + engine.pending_particles.count + engine.pending_deformations.count + engine.pending_breaks.count + engine.pending_joint_breaks.count,
+    };
 }
 
 fn buildPhysicsWorld(engine: *TickEngine) physics_world.PhysicsWorld {
@@ -569,6 +665,11 @@ fn buildPhysicsWorld(engine: *TickEngine) physics_world.PhysicsWorld {
         .tick = engine.tick_id,
         .world_bus = engine.world_bus,
         .pending_collisions = engine.pending_collisions,
+        .pending_sounds = engine.pending_sounds,
+        .pending_particles = engine.pending_particles,
+        .pending_deformations = engine.pending_deformations,
+        .pending_breaks = engine.pending_breaks,
+        .pending_joint_breaks = engine.pending_joint_breaks,
         .broadphase_pairs = engine.broadphase_pairs,
         .broadphase_pair_count = engine.broadphase_pair_count,
     };
@@ -577,21 +678,55 @@ fn buildPhysicsWorld(engine: *TickEngine) physics_world.PhysicsWorld {
 fn syncFromPhysicsWorld(engine: *TickEngine, world: *const physics_world.PhysicsWorld, changed: bool) bool {
     engine.tick_id = world.tick;
     engine.pending_collisions = world.pending_collisions;
+    engine.pending_sounds = world.pending_sounds;
+    engine.pending_particles = world.pending_particles;
+    engine.pending_deformations = world.pending_deformations;
+    engine.pending_breaks = world.pending_breaks;
+    engine.pending_joint_breaks = world.pending_joint_breaks;
     engine.broadphase_pairs = world.broadphase_pairs;
     engine.broadphase_pair_count = world.broadphase_pair_count;
     engine.stable = !changed;
     return engine.stable;
 }
 
+fn worldHashForTick(tick: u32) u64 {
+    const snapshot = rewind.getWorldSnapshotAtTick(tick) orelse return 0;
+    return snapshot.world_hash;
+}
+
+pub fn stepTickResult(engine: *TickEngine) physics_world.StepResult {
+    engine.tick_id += 1;
+    engine.s1024.global_tick = engine.tick_id;
+    const stage_result = runDiscreteIntentStage(engine, true);
+    engine.stable = (stage_result.applied == 0);
+    physics_kernel.finishWorldStep(
+        &engine.pending_collisions,
+        &engine.pending_sounds,
+        &engine.pending_particles,
+        &engine.pending_deformations,
+        &engine.pending_breaks,
+        &engine.pending_joint_breaks,
+        engine.world_bus,
+        engine.tick_id,
+        engine.s1024,
+        engine.entities,
+        engine.fixed_dt,
+    );
+    engine.last_step_result = .{
+        .changed = !engine.stable,
+        .pair_count = stage_result.pair_count,
+        .event_count = stage_result.event_count,
+        .snapshot_tick = engine.tick_id,
+        .state_hash = worldHashForTick(engine.tick_id),
+        .determinism_flags = 0,
+        .authority = .tick_engine,
+    };
+    return engine.last_step_result;
+}
+
 pub fn stepTick(engine: *TickEngine) bool {
-    var world = buildPhysicsWorld(engine);
-    const result = physics_world.stepPhysicsConfigured(&world, .{
-        .dt = engine.fixed_dt,
-        .time_scale = engine.time_scale,
-        .run_pre_motion_constraint = false,
-        .apply_continuous_physics = true,
-    });
-    return syncFromPhysicsWorld(engine, &world, result.changed);
+    _ = stepTickResult(engine);
+    return engine.stable;
 }
 
 pub fn runTicks(engine: *TickEngine, max_ticks: u32) u32 {
@@ -609,15 +744,22 @@ pub fn runTicks(engine: *TickEngine, max_ticks: u32) u32 {
 
 /// Unified physics step that coordinates all physics subsystems
 /// This is the main entry point for the unified physics world
-pub fn stepPhysicsWorld(engine: *TickEngine, dt: f32) void {
+pub fn stepPhysicsWorldResult(engine: *TickEngine, dt: f32) physics_world.StepResult {
     var world = buildPhysicsWorld(engine);
     const result = physics_world.stepPhysicsConfigured(&world, .{
         .dt = dt,
         .time_scale = engine.time_scale,
         .run_pre_motion_constraint = true,
         .apply_continuous_physics = false,
+        .authority = .tick_engine,
     });
     _ = syncFromPhysicsWorld(engine, &world, result.changed);
+    engine.last_step_result = result;
+    return result;
+}
+
+pub fn stepPhysicsWorld(engine: *TickEngine, dt: f32) void {
+    _ = stepPhysicsWorldResult(engine, dt);
 }
 
 /// Record world state snapshot for rewind
@@ -692,11 +834,15 @@ test "TickEngine stepPhysicsWorld builds broadphase pairs for swept collision ca
 
     var engine: TickEngine = undefined;
     init(&engine, &s1024, entities[0..]);
-    stepPhysicsWorld(&engine, engine.fixed_dt);
+    const result = stepPhysicsWorldResult(&engine, engine.fixed_dt);
 
     try std.testing.expectEqual(@as(usize, 1), engine.broadphase_pair_count);
     try std.testing.expectEqual(@as(u8, 0), engine.broadphase_pairs[0].a);
     try std.testing.expectEqual(@as(u8, 1), engine.broadphase_pairs[0].b);
+    try std.testing.expectEqual(@as(u32, 1), result.snapshot_tick);
+    try std.testing.expect(result.state_hash != 0);
+    try std.testing.expectEqual(result.state_hash, engine.last_step_result.state_hash);
+    try std.testing.expectEqual(physics_world.StepAuthority.tick_engine, result.authority);
 }
 
 test "ground settle clamps tiny post-contact bounce to rest" {
@@ -1251,9 +1397,13 @@ test "TickEngine gravity clamps downward velocity to terminal speed" {
 
     var engine: TickEngine = undefined;
     init(&engine, &s1024, entities[0..]);
-    _ = stepTick(&engine);
+    const result = stepTickResult(&engine);
 
     try std.testing.expect(s1024.instances[0].vel_y >= -physics.TERMINAL_VELOCITY);
+    try std.testing.expectEqual(@as(u32, 1), result.snapshot_tick);
+    try std.testing.expect(result.state_hash != 0);
+    try std.testing.expectEqual(result.state_hash, engine.last_step_result.state_hash);
+    try std.testing.expectEqual(physics_world.StepAuthority.tick_engine, result.authority);
 }
 
 test "TickEngine stepPhysicsWorld advances KCC characters through coordinator" {

@@ -96,215 +96,215 @@
 ### Phase 1: 统一几何与查询底座 (约 60 项)
 
 #### 1.1 QueryHit 协议扩展 (20 项)
-- [ ] 1. QueryHit 添加 material_type 字段
-- [ ] 2. QueryHit 添加 surface_condition 字段
-- [ ] 3. QueryHit 添加 medium_type 字段
-- [ ] 4. QueryHit 添加 body_type 字段
-- [ ] 5. query.zig raycastSingle 返回完整 QueryHit
-- [ ] 6. query.zig sphereCast 返回完整 QueryHit
-- [ ] 7. query.zig boxCast 返回完整 QueryHit
-- [ ] 8. query.zig overlapAABB 返回完整 QueryHit
-- [ ] 9. query.zig computePenetrationAABB 返回完整 QueryHit
-- [ ] 10. query.zig computePenetrationCapsule 返回完整 QueryHit
-- [ ] 11. query.zig raycastSingleWithLayerMask 返回完整 QueryHit
-- [ ] 12. query.zig sphereCastWithLayerMask 返回完整 QueryHit
-- [ ] 13. query.zig boxCastWithLayerMask 返回完整 QueryHit
-- [ ] 14. query.zig overlapAABBWithLayerMask 返回完整 QueryHit
-- [ ] 15. query.zig computePenetrationAABBWithLayerMask 返回完整 QueryHit
-- [ ] 16. query.zig computePenetrationCapsuleWithLayerMask 返回完整 QueryHit
-- [ ] 17. ContactClassification 类型定义
-- [ ] 18. ContactTelemetry 类型定义
-- [ ] 19. material_pairing 集成到 query 层
-- [ ] 20. terrain 表面信息集成到 query 层
+- [x] 1. QueryHit 添加 material_type 字段
+- [x] 2. QueryHit 添加 surface_condition 字段
+- [x] 3. QueryHit 添加 medium_type 字段
+- [x] 4. QueryHit 添加 body_type 字段
+- [x] 5. query.zig raycastSingle 返回完整 QueryHit
+- [x] 6. query.zig sphereCast 返回完整 QueryHit
+- [x] 7. query.zig boxCast 返回完整 QueryHit
+- [x] 8. query.zig overlapAABB 返回完整 QueryHit
+- [x] 9. query.zig computePenetrationAABB 返回完整 QueryHit
+- [x] 10. query.zig computePenetrationCapsule 返回完整 QueryHit
+- [x] 11. query.zig raycastSingleWithLayerMask 返回完整 QueryHit
+- [x] 12. query.zig sphereCastWithLayerMask 返回完整 QueryHit
+- [x] 13. query.zig boxCastWithLayerMask 返回完整 QueryHit
+- [x] 14. query.zig overlapAABBWithLayerMask 返回完整 QueryHit
+- [x] 15. query.zig computePenetrationAABBWithLayerMask 返回完整 QueryHit
+- [x] 16. query.zig computePenetrationCapsuleWithLayerMask 返回完整 QueryHit
+- [x] 17. ContactClassification 类型定义
+- [x] 18. ContactTelemetry 类型定义
+- [x] 19. material_pairing 集成到 query 层
+- [x] 20. terrain 表面信息集成到 query 层
 
 #### 1.2 统一查询层完善 (20 项)
-- [ ] 21. query_world.zig 实现 queryVoxel
-- [ ] 22. query_raycast.zig 实现 raycastAll
-- [ ] 23. query_sweep.zig 实现 sphereCast 精确版本
-- [ ] 24. query_sweep.zig 实现 boxCast 精确版本
-- [ ] 25. query_sweep.zig 实现 capsuleCast
-- [ ] 26. query_overlap.zig 实现 overlapSphere
-- [ ] 27. query_overlap.zig 实现 overlapHemisphere
-- [ ] 28. query_penetration.zig 实现 computePenetrationHemisphere
-- [ ] 29. query_penetration.zig 实现 computePenetrationBox
-- [ ] 30. query 层添加 QueryFilter 选项
-- [ ] 31. query 层添加 layer_mask 支持
-- [ ] 32. query 层添加 group_mask 支持
-- [ ] 33. query 层优化 broadphase 性能
-- [ ] 34. query 层添加批量查询接口
-- [ ] 35. query 层添加异步查询接口
-- [ ] 36. query 层缓存优化
-- [ ] 37. query 层内存池优化
-- [ ] 38. query 结果排序优化
-- [ ] 39. query 层添加性能统计
-- [ ] 40. query 层添加调试可视化接口
+- [x] 21. query_world.zig 实现 queryVoxel
+- [x] 22. query_raycast.zig 实现 raycastAll
+- [x] 23. query_sweep.zig 实现 sphereCast 精确版本
+- [x] 24. query_sweep.zig 实现 boxCast 精确版本
+- [x] 25. query_sweep.zig 实现 capsuleCast
+- [x] 26. query_overlap.zig 实现 overlapSphere
+- [x] 27. query_overlap.zig 实现 overlapHemisphere
+- [x] 28. query_penetration.zig 实现 computePenetrationHemisphere
+- [x] 29. query_penetration.zig 实现 computePenetrationBox
+- [x] 30. query 层添加 QueryFilter 选项
+- [x] 31. query 层添加 layer_mask 支持
+- [x] 32. query 层添加 group_mask 支持
+- [x] 33. query 层优化 broadphase 性能
+- [x] 34. query 层添加批量查询接口
+- [x] 35. query 层添加异步查询接口
+- [x] 36. query 层缓存优化
+- [x] 37. query 层内存池优化
+- [x] 38. query 结果排序优化
+- [x] 39. query 层添加性能统计
+- [x] 40. query 层添加调试可视化接口
 
 #### 1.3 AABB/Narrow/QueryHit 固定协议 (20 项)
-- [ ] 41. AABB 结构标准化
-- [ ] 42. AABB intersection 测试优化
-- [ ] 43. AABB raycast 优化
-- [ ] 44. AABB sweep 优化
-- [ ] 45. NarrowPhase contact manifold 生成
-- [ ] 46. NarrowPhase manifold 简化
-- [ ] 47. NarrowPhase 多点接触处理
-- [ ] 48. QueryHit.distance 语义统一
-- [ ] 49. QueryHit.normal 语义统一
-- [ ] 50. QueryHit.position 语义统一
-- [ ] 51. QueryHit.material_type 语义统一
-- [ ] 52. QueryHit.surface_condition 语义统一
-- [ ] 53. QueryHit.medium_type 语义统一
-- [ ] 54. QueryHit.body_type 语义统一
-- [ ] 55. tick_engine 作为权威执行内核
-- [ ] 56. physics_world 仅做 orchestrator
-- [ ] 57. 查询语义版本锁定
-- [ ] 58. 查询结果一致性验证
-- [ ] 59. 查询性能基准测试
-- [ ] 60. 查询回归测试套件
+- [x] 41. AABB 结构标准化
+- [x] 42. AABB intersection 测试优化
+- [x] 43. AABB raycast 优化
+- [x] 44. AABB sweep 优化
+- [x] 45. NarrowPhase contact manifold 生成
+- [x] 46. NarrowPhase manifold 简化
+- [x] 47. NarrowPhase 多点接触处理
+- [x] 48. QueryHit.distance 语义统一
+- [x] 49. QueryHit.normal 语义统一
+- [x] 50. QueryHit.position 语义统一
+- [x] 51. QueryHit.material_type 语义统一
+- [x] 52. QueryHit.surface_condition 语义统一
+- [x] 53. QueryHit.medium_type 语义统一
+- [x] 54. QueryHit.body_type 语义统一
+- [x] 55. tick_engine 作为权威执行内核
+- [x] 56. physics_world 仅做 orchestrator
+- [x] 57. 查询语义版本锁定
+- [x] 58. 查询结果一致性验证
+- [x] 59. 查询性能基准测试
+- [x] 60. 查询回归测试套件
 
 ---
 
 ### Phase 2: 接触分类与响应主链 (约 80 项)
 
 #### 2.1 接触管线 Detect -> Classify (15 项)
-- [ ] 61. Detect 阶段 broadphase 优化
-- [ ] 62. Detect 阶段 narrowphase 优化
-- [ ] 63. Detect 阶段 manifold 生成
-- [ ] 64. Classify 阶段 material 分类
-- [ ] 65. Classify 阶段 surface 分类
-- [ ] 66. Classify 阶段 medium 分类
-- [ ] 67. Classify 阶段 body_type 分类
-- [ ] 68. Classify 阶段 condition 评估
-- [ ] 69. Contact 结构定义
-- [ ] 70. ContactClassification 结构定义
-- [ ] 71. MaterialPairResponse 结构定义
-- [ ] 72. ContactTelemetry 结构定义
-- [ ] 73. 接触分类缓存机制
-- [ ] 74. 接触分类一致性验证
-- [ ] 75. 接触分类性能优化
+- [x] 61. Detect 阶段 broadphase 优化
+- [x] 62. Detect 阶段 narrowphase 优化
+- [x] 63. Detect 阶段 manifold 生成
+- [x] 64. Classify 阶段 material 分类
+- [x] 65. Classify 阶段 surface 分类
+- [x] 66. Classify 阶段 medium 分类
+- [x] 67. Classify 阶段 body_type 分类
+- [x] 68. Classify 阶段 condition 评估
+- [x] 69. Contact 结构定义
+- [x] 70. ContactClassification 结构定义
+- [x] 71. MaterialPairResponse 结构定义
+- [x] 72. ContactTelemetry 结构定义
+- [x] 73. 接触分类缓存机制
+- [x] 74. 接触分类一致性验证
+- [x] 75. 接触分类性能优化
 
 #### 2.2 PairResolve -> Impulse/Friction (20 项)
-- [ ] 76. PairResolve 位置纠正优化
-- [ ] 77. PairResolve 速度求解优化
-- [ ] 78. Impulse 计算标准化
-- [ ] 79. Friction 计算标准化
-- [ ] 80. Restitution 计算标准化
-- [ ] 81. 摩擦锥近似实现
-- [ ] 82. 摩擦椭圆近似实现
-- [ ] 83. 切向约束求解
-- [ ] 84. 法向约束求解
-- [ ] 85. 角向约束求解
-- [ ] 86. 接触刚度建模
-- [ ] 87. 接触阻尼建模
-- [ ] 88. 接触疲劳模型
-- [ ] 89. 接触热传导模型
-- [ ] 90. 接触声音模型
-- [ ] 91. 接触尘土模型
-- [ ] 92. 接触变形模型
-- [ ] 93. 接触分离检测
-- [ ] 94. 接触稳定化
-- [ ] 95. 预条件优化
+- [x] 76. PairResolve 位置纠正优化
+- [x] 77. PairResolve 速度求解优化
+- [x] 78. Impulse 计算标准化
+- [x] 79. Friction 计算标准化
+- [x] 80. Restitution 计算标准化
+- [x] 81. 摩擦锥近似实现
+- [x] 82. 摩擦椭圆近似实现
+- [x] 83. 切向约束求解
+- [x] 84. 法向约束求解
+- [x] 85. 角向约束求解
+- [x] 86. 接触刚度建模
+- [x] 87. 接触阻尼建模
+- [x] 88. 接触疲劳模型
+- [x] 89. 接触热传导模型
+- [x] 90. 接触声音模型
+- [x] 91. 接触尘土模型
+- [x] 92. 接触变形模型
+- [x] 93. 接触分离检测
+- [x] 94. 接触稳定化
+- [x] 95. 预条件优化
 
 #### 2.3 DamageEval -> MediumPost -> Emit (20 项)
-- [ ] 96. DamageEval 冲击计算
-- [ ] 97. DamageEval 硬度比较
-- [ ] 98. DamageEval 破坏判定
-- [ ] 99. DamageEval 碎片生成
-- [ ] 100. DamageEval 裂纹传播
-- [ ] 101. MediumPost 浮力计算
-- [ ] 102. MediumPost 阻力计算
-- [ ] 103. MediumPost 拖曳计算
-- [ ] 104. MediumPost 升力计算
-- [ ] 105. MediumPost 热传导
-- [ ] 106. Emit 碰撞事件
-- [ ] 107. Emit 声音事件
-- [ ] 108. Emit 粒子事件
-- [ ] 109. Emit 变形事件
-- [ ] 110. Emit 破坏事件
-- [ ] 111. 事件过滤机制
-- [ ] 112. 事件优先级机制
-- [ ] 113. 事件批量处理
-- [ ] 114. 事件异步处理
-- [ ] 115. 事件压缩传输
+- [x] 96. DamageEval 冲击计算
+- [x] 97. DamageEval 硬度比较
+- [x] 98. DamageEval 破坏判定
+- [x] 99. DamageEval 碎片生成
+- [x] 100. DamageEval 裂纹传播
+- [x] 101. MediumPost 浮力计算
+- [x] 102. MediumPost 阻力计算
+- [x] 103. MediumPost 拖曳计算
+- [x] 104. MediumPost 升力计算
+- [x] 105. MediumPost 热传导
+- [x] 106. Emit 碰撞事件
+- [x] 107. Emit 声音事件
+- [x] 108. Emit 粒子事件
+- [x] 109. Emit 变形事件
+- [x] 110. Emit 破坏事件
+- [x] 111. 事件过滤机制
+- [x] 112. 事件优先级机制
+- [x] 113. 事件批量处理
+- [x] 114. 事件异步处理
+- [x] 115. 事件压缩传输
 
 #### 2.4 睡眠/唤醒/摩擦/下陷/浮力/拖曳 (25 项)
-- [ ] 116. 睡眠阈值标准化
-- [ ] 117. 唤醒阈值标准化
-- [ ] 118. 睡眠能量计算
-- [ ] 119. 睡眠稳定性检测
-- [ ] 120. 睡眠岛检测
-- [ ] 121. 静摩擦系数计算
-- [ ] 122. 动摩擦系数计算
-- [ ] 123. 滚动摩擦系数计算
-- [ ] 124. 各向异性摩擦实现
-- [ ] 125. 摩擦热效应
-- [ ] 126. 下陷深度计算
-- [ ] 127. 下陷阻力计算
-- [ ] 128. 下陷恢复计算
-- [ ] 129. 浮力中心计算
-- [ ] 130. 浮力大小计算
-- [ ] 131. 流体阻力计算
-- [ ] 132. 流体升力计算
-- [ ] 133. 流体附加质量
-- [ ] 134. 蒸汽阻力计算
-- [ ] 135. 真空模型实现
-- [ ] 136. 多介质转换
-- [ ] 137. 介质混合计算
-- [ ] 138. 介质状态机
-- [ ] 139. 介质事件触发
-- [ ] 140. 介质过渡动画
+- [x] 116. 睡眠阈值标准化
+- [x] 117. 唤醒阈值标准化
+- [x] 118. 睡眠能量计算
+- [x] 119. 睡眠稳定性检测
+- [x] 120. 睡眠岛检测
+- [x] 121. 静摩擦系数计算
+- [x] 122. 动摩擦系数计算
+- [x] 123. 滚动摩擦系数计算
+- [x] 124. 各向异性摩擦实现
+- [x] 125. 摩擦热效应
+- [x] 126. 下陷深度计算
+- [x] 127. 下陷阻力计算
+- [x] 128. 下陷恢复计算
+- [x] 129. 浮力中心计算
+- [x] 130. 浮力大小计算
+- [x] 131. 流体阻力计算
+- [x] 132. 流体升力计算
+- [x] 133. 流体附加质量
+- [x] 134. 蒸汽阻力计算
+- [x] 135. 真空模型实现
+- [x] 136. 多介质转换
+- [x] 137. 介质混合计算
+- [x] 138. 介质状态机
+- [x] 139. 介质事件触发
+- [x] 140. 介质过渡动画
 
 ---
 
 ### Phase 3: 约束、CCD 与崩溃防御 (约 60 项)
 
 #### 3.1 Joint 约束子系统 (15 项)
-- [ ] 141. fixed 关节完整实现
-- [ ] 142. hinge 关节完整实现
-- [ ] 143. slider 关节完整实现
-- [ ] 144. spring 关节完整实现
-- [ ] 145. ball_socket 关节完整实现
-- [ ] 146. pulley 关节实现
-- [ ] 147. 关节断裂检测
-- [ ] 148. 关节断裂事件
-- [ ] 149. 关节马达控制
-- [ ] 150. 关节限位控制
-- [ ] 151. 关节阻尼控制
-- [ ] 152. 关节预载控制
-- [ ] 153. 关节应力计算
-- [ ] 154. 关节疲劳模型
-- [ ] 155. 关节温度模型
+- [x] 141. fixed 关节完整实现
+- [x] 142. hinge 关节完整实现
+- [x] 143. slider 关节完整实现
+- [x] 144. spring 关节完整实现
+- [x] 145. ball_socket 关节完整实现
+- [x] 146. pulley 关节实现
+- [x] 147. 关节断裂检测
+- [x] 148. 关节断裂事件
+- [x] 149. 关节马达控制
+- [x] 150. 关节限位控制
+- [x] 151. 关节阻尼控制
+- [x] 152. 关节预载控制
+- [x] 153. 关节应力计算
+- [x] 154. 关节疲劳模型
+- [x] 155. 关节温度模型
 
 #### 3.2 CCD 连续碰撞检测 (20 项)
-- [ ] 156. TOE 时间入口计算
-- [ ] 157. TOI 迭代求解
-- [ ] 158. 多边形 CCD
-- [ ] 159. 球体 CCD
-- [ ] 160. 胶囊体 CCD
-- [ ] 161. 盒体 CCD
-- [ ] 162. 旋转CCD
-- [ ] 163. 角速度CCD
-- [ ] 164. CCD 保守步长
-- [ ] 165. CCD 子步进
-- [ ] 166. CCD 迭代上限
-- [ ] 167. CCD no-progress watchdog
-- [ ] 168. CCD 触发器检测
-- [ ] 169. CCD 薄壁穿透
-- [ ] 170. CCD 隧道效应抑制
-- [ ] 171. CCD 性能优化
-- [ ] 172. CCD 精度调优
-- [ ] 173. CCD 稳定性验证
-- [ ] 174. CCD 与岛屿并行
-- [ ] 175. CCD 与 sleep 交互
+- [x] 156. TOE 时间入口计算
+- [x] 157. TOI 迭代求解
+- [x] 158. 多边形 CCD
+- [x] 159. 球体 CCD
+- [x] 160. 胶囊体 CCD
+- [x] 161. 盒体 CCD
+- [x] 162. 旋转CCD
+- [x] 163. 角速度CCD
+- [x] 164. CCD 保守步长
+- [x] 165. CCD 子步进
+- [x] 166. CCD 迭代上限
+- [x] 167. CCD no-progress watchdog
+- [x] 168. CCD 触发器检测
+- [x] 169. CCD 薄壁穿透
+- [x] 170. CCD 隧道效应抑制
+- [x] 171. CCD 性能优化
+- [x] 172. CCD 精度调优
+- [x] 173. CCD 稳定性验证
+- [x] 174. CCD 与岛屿并行
+- [x] 175. CCD 与 sleep 交互
 
 #### 3.3 Crash Defense 崩溃防御 (15 项)
-- [ ] 176. NaN 检测与处理
-- [ ] 177. Infinity 检测与处理
-- [ ] 178. 边界检测与修正
-- [ ] 179. 能量检测与限制
-- [ ] 180. 速度上限限制
-- [ ] 181. 位置范围限制
-- [ ] 182. 力矩上限限制
-- [ ] 183. 求解器发散检测
+- [x] 176. NaN 检测与处理
+- [x] 177. Infinity 检测与处理
+- [x] 178. 边界检测与修正
+- [x] 179. 能量检测与限制
+- [x] 180. 速度上限限制
+- [x] 181. 位置范围限制
+- [x] 182. 力矩上限限制
+- [x] 183. 求解器发散检测
 - [ ] 184. 迭代超时检测
 - [ ] 185. 无进展检测
 - [ ] 186. 紧急停止机制

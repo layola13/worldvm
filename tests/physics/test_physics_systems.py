@@ -115,7 +115,136 @@ class TestJoints(PhysicsTestHarness):
         self.vm.lib.add_joint_fixed(0, 1, 0, 0, 0)
         self.vm.lib.solve_joints()
 
-    def test_107_clear_joints(self):
+    def test_107_breakable_joint_state_queries(self):
+        """Can configure and query joint break detection state"""
+        self.vm.lib.clear_joints()
+        self.vm.spawn(0, 0, 0, 0)
+        self.vm.spawn(1, 20, 0, 0)
+        joint_idx = self.vm.lib.add_joint_fixed(0, 1, 0, 0, 0)
+        self.assertEqual(joint_idx, 0)
+        self.assertEqual(self.vm.lib.set_joint_breaking_force(joint_idx, 5.0), 0)
+        self.assertEqual(self.vm.lib.is_joint_enabled(joint_idx), 1)
+        self.vm.lib.solve_joints()
+        self.assertEqual(self.vm.lib.is_joint_broken(joint_idx), 1)
+
+    def test_108_joint_break_events(self):
+        """Joint break detection should publish a trace event"""
+        self.vm.lib.clear_joints()
+        self.vm.spawn(5, 16, 0, 16)
+        self.vm.spawn(0, 16, 10, 16)
+        joint_idx = self.vm.lib.add_joint_fixed(0, 1, 16, 5, 16)
+        self.assertEqual(joint_idx, 0)
+        self.assertEqual(self.vm.lib.set_joint_breaking_force(joint_idx, 5.0), 0)
+        self.vm.apply_impulse(1, 1000, 0, 0)
+        for _ in range(30):
+            self.vm.run(1)
+        self.assertTrue(any(event["type"] == "joint_breakage" and event["id"] == joint_idx for event in self.vm.events()))
+
+    def test_109_joint_motor_controls(self):
+        """Can configure, query and disable a joint motor"""
+        self.vm.lib.clear_joints()
+        self.vm.spawn(5, 16, 0, 16)
+        self.vm.spawn(0, 16, 10, 16)
+        joint_idx = self.vm.lib.add_joint_hinge(0, 1, 16, 5, 16, 0, 0, 1)
+        self.assertEqual(joint_idx, 0)
+        self.assertEqual(self.vm.lib.configure_joint_motor(joint_idx, 0.6, 6.0, 100.0), 0)
+        self.assertEqual(self.vm.lib.is_joint_motor_enabled(joint_idx), 1)
+        before = self.vm.lib.get_joint_motor_position(joint_idx)
+        self.vm.lib.solve_joints()
+        after = self.vm.lib.get_joint_motor_position(joint_idx)
+        self.assertLess(abs(0.6 - after), abs(0.6 - before))
+        self.assertEqual(self.vm.lib.set_joint_motor_enabled(joint_idx, 0), 0)
+        self.assertEqual(self.vm.lib.is_joint_motor_enabled(joint_idx), 0)
+
+    def test_110_joint_limit_controls(self):
+        """Can configure and query supported joint limits"""
+        self.vm.lib.clear_joints()
+        self.vm.spawn(5, 16, 0, 16)
+        self.vm.spawn(0, 16, 10, 16)
+        joint_idx = self.vm.lib.add_joint_hinge(0, 1, 16, 5, 16, 0, 0, 1)
+        self.assertEqual(joint_idx, 0)
+        self.assertEqual(self.vm.lib.set_joint_limits(joint_idx, 0.25, -0.25), 0)
+        self.assertAlmostEqual(self.vm.lib.get_joint_limit_min(joint_idx), -0.25, places=4)
+        self.assertAlmostEqual(self.vm.lib.get_joint_limit_max(joint_idx), 0.25, places=4)
+
+        fixed_idx = self.vm.lib.add_joint_fixed(0, 1, 16, 5, 16)
+        self.assertEqual(fixed_idx, 1)
+        self.assertEqual(self.vm.lib.set_joint_limits(fixed_idx, -0.25, 0.25), -1)
+
+    def test_111_joint_damping_controls(self):
+        """Can configure and query joint damping"""
+        self.vm.lib.clear_joints()
+        self.vm.spawn(5, 16, 0, 16)
+        self.vm.spawn(0, 16, 10, 16)
+        joint_idx = self.vm.lib.add_joint_spring(0, 1, 16, 5, 16, 100.0, 10.0)
+        self.assertEqual(joint_idx, 0)
+        self.assertEqual(self.vm.lib.set_joint_damping(joint_idx, 250.0), 0)
+        self.assertAlmostEqual(self.vm.lib.get_joint_damping(joint_idx), 250.0, places=4)
+        self.assertEqual(self.vm.lib.set_joint_damping(joint_idx, -5.0), 0)
+        self.assertAlmostEqual(self.vm.lib.get_joint_damping(joint_idx), 0.0, places=4)
+        self.assertEqual(self.vm.lib.set_joint_damping(99, 10.0), -1)
+        self.assertAlmostEqual(self.vm.lib.get_joint_damping(99), -1.0, places=4)
+
+    def test_112_joint_preload_controls(self):
+        """Can configure and query joint preload"""
+        self.vm.lib.clear_joints()
+        self.vm.spawn(5, 16, 0, 16)
+        self.vm.spawn(0, 16, 10, 16)
+        joint_idx = self.vm.lib.add_joint_hinge(0, 1, 16, 5, 16, 0, 0, 1)
+        self.assertEqual(joint_idx, 0)
+        self.assertEqual(self.vm.lib.set_joint_preload(joint_idx, 1.0, -2.0, 3.0, 0.5), 0)
+        self.assertAlmostEqual(self.vm.lib.get_joint_preload_linear_x(joint_idx), 1.0, places=4)
+        self.assertAlmostEqual(self.vm.lib.get_joint_preload_linear_y(joint_idx), -2.0, places=4)
+        self.assertAlmostEqual(self.vm.lib.get_joint_preload_linear_z(joint_idx), 3.0, places=4)
+        self.assertAlmostEqual(self.vm.lib.get_joint_preload_angular(joint_idx), 0.5, places=4)
+        self.assertEqual(self.vm.lib.set_joint_preload(99, 0.0, 0.0, 0.0, 0.0), -1)
+        self.assertAlmostEqual(self.vm.lib.get_joint_preload_angular(99), -1.0, places=4)
+
+    def test_113_joint_stress_controls(self):
+        """Can query joint stress components"""
+        self.vm.lib.clear_joints()
+        self.vm.spawn(0, 0, 0, 0)
+        self.vm.spawn(1, 12, 0, 0)
+        joint_idx = self.vm.lib.add_joint_fixed(0, 1, 0, 0, 0)
+        self.assertEqual(joint_idx, 0)
+
+        self.assertGreaterEqual(self.vm.lib.get_joint_stress(joint_idx), 12.0)
+        self.assertAlmostEqual(self.vm.lib.get_joint_geometry_error(joint_idx), 12.0, places=4)
+        self.assertAlmostEqual(self.vm.lib.get_joint_limit_error(joint_idx), 0.0, places=4)
+        self.assertAlmostEqual(self.vm.lib.get_joint_drive_error(joint_idx), 0.0, places=4)
+        self.assertEqual(self.vm.lib.get_joint_stress(99), -1.0)
+
+    def test_114_joint_fatigue_controls(self):
+        """Can configure and query joint fatigue"""
+        self.vm.lib.clear_joints()
+        self.vm.spawn(0, 0, 0, 0)
+        self.vm.spawn(1, 12, 0, 0)
+        joint_idx = self.vm.lib.add_joint_fixed(0, 1, 0, 0, 0)
+        self.assertEqual(joint_idx, 0)
+
+        self.assertEqual(self.vm.lib.configure_joint_fatigue(joint_idx, 0.7, 1.0, 0.1), 0)
+        self.assertAlmostEqual(self.vm.lib.get_joint_fatigue_damage(joint_idx), 0.0, places=4)
+        self.assertAlmostEqual(self.vm.lib.get_joint_fatigue_ratio(joint_idx), 0.0, places=4)
+        self.assertEqual(self.vm.lib.clear_joint_fatigue(joint_idx), 0)
+        self.assertEqual(self.vm.lib.configure_joint_fatigue(99, 0.7, 1.0, 0.1), -1)
+        self.assertAlmostEqual(self.vm.lib.get_joint_fatigue_damage(99), -1.0, places=4)
+
+    def test_115_joint_temperature_controls(self):
+        """Can configure and query joint temperature"""
+        self.vm.lib.clear_joints()
+        self.vm.spawn(0, 0, 0, 0)
+        self.vm.spawn(1, 12, 0, 0)
+        joint_idx = self.vm.lib.add_joint_fixed(0, 1, 0, 0, 0)
+        self.assertEqual(joint_idx, 0)
+
+        self.assertEqual(self.vm.lib.configure_joint_temperature(joint_idx, 5.0, 2.0, 0.25), 0)
+        self.assertAlmostEqual(self.vm.lib.get_joint_temperature(joint_idx), 0.0, places=4)
+        self.assertAlmostEqual(self.vm.lib.get_joint_temperature_ratio(joint_idx), 0.0, places=4)
+        self.assertEqual(self.vm.lib.clear_joint_temperature(joint_idx), 0)
+        self.assertEqual(self.vm.lib.configure_joint_temperature(99, 5.0, 2.0, 0.25), -1)
+        self.assertAlmostEqual(self.vm.lib.get_joint_temperature(99), -1.0, places=4)
+
+    def test_116_clear_joints(self):
         """clear_joints should reset joint count"""
         self.vm.lib.clear_joints()
         self.vm.spawn(0, 0, 0, 0)
@@ -187,6 +316,469 @@ class TestRaycast(PhysicsTestHarness):
             0.0, 0.0, 0.0,
             ctypes.cast(toi, ctypes.POINTER(ctypes.c_float))
         )
+
+    def test_206_compute_time_of_entry(self):
+        """Compute CCD time of entry"""
+        toe = (ctypes.c_float * 5)()
+        result = self.vm.lib.compute_time_of_entry(
+            0.0, 0.0, 0.0, 1.0, 1.0, 1.0,
+            10.0, 0.0, 0.0,
+            3.0, 0.0, 0.0, 4.0, 1.0, 1.0,
+            0.0, 0.0, 0.0,
+            ctypes.cast(toe, ctypes.POINTER(ctypes.c_float))
+        )
+        self.assertEqual(result, 1)
+        self.assertAlmostEqual(toe[0], 0.2, places=4)
+        self.assertAlmostEqual(toe[1], 0.4, places=4)
+        self.assertAlmostEqual(toe[2], -1.0, places=4)
+        self.assertAlmostEqual(toe[3], 0.0, places=4)
+        self.assertAlmostEqual(toe[4], 0.0, places=4)
+
+    def test_207_compute_toi_iterative(self):
+        """Compute iterative CCD time of impact"""
+        toi = (ctypes.c_float * 6)()
+        result = self.vm.lib.compute_toi_iterative(
+            0.0, 0.0, 0.0, 1.0, 1.0, 1.0,
+            10.0, 0.0, 0.0,
+            3.0, 0.0, 0.0, 4.0, 1.0, 1.0,
+            0.0, 0.0, 0.0,
+            16, 0.001,
+            ctypes.cast(toi, ctypes.POINTER(ctypes.c_float))
+        )
+        self.assertEqual(result, 1)
+        self.assertAlmostEqual(toi[0], 0.2, places=3)
+        self.assertGreater(toi[1], 0.0)
+        self.assertEqual(toi[2], 1.0)
+        self.assertAlmostEqual(toi[3], -1.0, places=4)
+        self.assertAlmostEqual(toi[4], 0.0, places=4)
+        self.assertAlmostEqual(toi[5], 0.0, places=4)
+
+    def test_208_compute_polygon_ccd(self):
+        """Compute convex polygon CCD"""
+        moving = (ctypes.c_float * 8)(
+            0.0, 0.0,
+            1.0, 0.0,
+            1.0, 1.0,
+            0.0, 1.0,
+        )
+        target = (ctypes.c_float * 8)(
+            3.0, 0.0,
+            4.0, 0.0,
+            4.0, 1.0,
+            3.0, 1.0,
+        )
+        result_out = (ctypes.c_float * 5)()
+        result = self.vm.lib.compute_polygon_ccd(
+            ctypes.cast(moving, ctypes.POINTER(ctypes.c_float)),
+            4,
+            10.0,
+            0.0,
+            ctypes.cast(target, ctypes.POINTER(ctypes.c_float)),
+            4,
+            ctypes.cast(result_out, ctypes.POINTER(ctypes.c_float))
+        )
+        self.assertEqual(result, 1)
+        self.assertAlmostEqual(result_out[0], 0.2, places=4)
+        self.assertAlmostEqual(result_out[1], 0.4, places=4)
+        self.assertAlmostEqual(result_out[2], -1.0, places=4)
+        self.assertAlmostEqual(result_out[3], 0.0, places=4)
+
+    def test_209_compute_sphere_ccd(self):
+        """Compute sphere CCD"""
+        result_out = (ctypes.c_float * 5)()
+        result = self.vm.lib.compute_sphere_ccd(
+            0.0, 0.0, 0.0, 1.0,
+            10.0, 0.0, 0.0,
+            4.0, 0.0, 0.0, 1.0,
+            0.0, 0.0, 0.0,
+            ctypes.cast(result_out, ctypes.POINTER(ctypes.c_float))
+        )
+        self.assertEqual(result, 1)
+        self.assertAlmostEqual(result_out[0], 0.2, places=4)
+        self.assertAlmostEqual(result_out[1], 0.6, places=4)
+        self.assertAlmostEqual(result_out[2], -1.0, places=4)
+        self.assertAlmostEqual(result_out[3], 0.0, places=4)
+        self.assertAlmostEqual(result_out[4], 0.0, places=4)
+
+    def test_210_compute_capsule_ccd(self):
+        """Compute capsule CCD"""
+        result_out = (ctypes.c_float * 5)()
+        result = self.vm.lib.compute_capsule_ccd(
+            0.0, 0.0, 0.0, 0.5, 1.0,
+            10.0, 0.0, 0.0,
+            3.0, 0.0, 0.0, 0.5, 1.0,
+            0.0, 0.0, 0.0,
+            ctypes.cast(result_out, ctypes.POINTER(ctypes.c_float))
+        )
+        self.assertEqual(result, 1)
+        self.assertAlmostEqual(result_out[0], 0.2, places=4)
+        self.assertAlmostEqual(result_out[1], 0.4, places=4)
+        self.assertAlmostEqual(result_out[2], -1.0, places=4)
+        self.assertAlmostEqual(result_out[3], 0.0, places=4)
+        self.assertAlmostEqual(result_out[4], 0.0, places=4)
+
+    def test_211_compute_box_ccd(self):
+        """Compute axis-aligned box CCD"""
+        result_out = (ctypes.c_float * 5)()
+        result = self.vm.lib.compute_box_ccd(
+            0.25, 0.0, 0.0, 1.25, 1.0, 1.0,
+            10.0, 0.0, 0.0,
+            3.75, 0.0, 0.0, 4.75, 1.0, 1.0,
+            0.0, 0.0, 0.0,
+            ctypes.cast(result_out, ctypes.POINTER(ctypes.c_float))
+        )
+        self.assertEqual(result, 1)
+        self.assertAlmostEqual(result_out[0], 0.25, places=4)
+        self.assertAlmostEqual(result_out[1], 0.45, places=4)
+        self.assertAlmostEqual(result_out[2], -1.0, places=4)
+        self.assertAlmostEqual(result_out[3], 0.0, places=4)
+        self.assertAlmostEqual(result_out[4], 0.0, places=4)
+
+    def test_212_compute_rotating_box_ccd(self):
+        """Compute conservative rotating box CCD"""
+        result_out = (ctypes.c_float * 5)()
+        result = self.vm.lib.compute_rotating_box_ccd(
+            0.0, 0.0, 0.0,
+            1.0, 1.0, 3.0,
+            0.0, 1.57079632679,
+            10.0, 0.0, 0.0,
+            5.0, 0.0, 0.0,
+            0.5, 1.0, 0.5,
+            0.0, 0.0,
+            0.0, 0.0, 0.0,
+            ctypes.cast(result_out, ctypes.POINTER(ctypes.c_float))
+        )
+        self.assertEqual(result, 1)
+        self.assertAlmostEqual(result_out[0], 0.1338, places=4)
+        self.assertAlmostEqual(result_out[1], 0.8662, places=4)
+        self.assertAlmostEqual(result_out[2], -1.0, places=4)
+
+    def test_213_compute_angular_velocity_ccd(self):
+        """Compute angular-velocity-driven CCD"""
+        result_out = (ctypes.c_float * 5)()
+        result = self.vm.lib.compute_angular_velocity_ccd(
+            0.0, 0.0, 0.0,
+            1.0, 1.0, 3.0,
+            0.0, 1.57079632679,
+            10.0, 0.0, 0.0,
+            5.0, 0.0, 0.0,
+            0.5, 1.0, 0.5,
+            0.0, 0.0,
+            0.0, 0.0, 0.0,
+            1.0,
+            ctypes.cast(result_out, ctypes.POINTER(ctypes.c_float))
+        )
+        self.assertEqual(result, 1)
+        self.assertAlmostEqual(result_out[0], 0.1338, places=4)
+        self.assertAlmostEqual(result_out[1], 0.8662, places=4)
+        self.assertAlmostEqual(result_out[2], -1.0, places=4)
+
+    def test_214_compute_conservative_step(self):
+        """Compute CCD conservative step"""
+        result_out = (ctypes.c_float * 6)()
+        result = self.vm.lib.compute_conservative_step(
+            10.0, 0.0, 0.0,
+            2.0,
+            1.0,
+            2.0,
+            0.25,
+            1.0,
+            100,
+            ctypes.cast(result_out, ctypes.POINTER(ctypes.c_float))
+        )
+        self.assertEqual(result, 1)
+        self.assertEqual(result_out[0], 1.0)
+        self.assertAlmostEqual(result_out[1], 0.025, places=4)
+        self.assertEqual(result_out[2], 40.0)
+        self.assertAlmostEqual(result_out[3], 0.025, places=4)
+        self.assertAlmostEqual(result_out[4], 0.0625, places=4)
+        self.assertEqual(result_out[5], 0.0)
+
+    def test_215_compute_ccd_substep_plan(self):
+        """Compute deterministic CCD substep window"""
+        result_out = (ctypes.c_float * 9)()
+        result = self.vm.lib.compute_ccd_substep_plan(
+            10.0, 0.0, 0.0,
+            2.0,
+            1.0,
+            2.0,
+            0.25,
+            1.0,
+            100,
+            2,
+            ctypes.cast(result_out, ctypes.POINTER(ctypes.c_float))
+        )
+        self.assertEqual(result, 1)
+        self.assertEqual(result_out[0], 1.0)
+        self.assertAlmostEqual(result_out[1], 0.05, places=4)
+        self.assertAlmostEqual(result_out[2], 0.075, places=4)
+        self.assertAlmostEqual(result_out[3], 0.025, places=4)
+        self.assertEqual(result_out[4], 2.0)
+        self.assertEqual(result_out[5], 40.0)
+        self.assertAlmostEqual(result_out[6], 0.925, places=4)
+        self.assertEqual(result_out[7], 0.0)
+        self.assertEqual(result_out[8], 0.0)
+
+    def test_216_compute_ccd_iteration_limit(self):
+        """Compute capped CCD iteration budget"""
+        result_out = (ctypes.c_float * 7)()
+        result = self.vm.lib.compute_ccd_iteration_limit(
+            128,
+            0.001,
+            1.0,
+            32,
+            ctypes.cast(result_out, ctypes.POINTER(ctypes.c_float))
+        )
+        self.assertEqual(result, 1)
+        self.assertEqual(result_out[0], 1.0)
+        self.assertEqual(result_out[1], 128.0)
+        self.assertEqual(result_out[2], 32.0)
+        self.assertEqual(result_out[3], 32.0)
+        self.assertEqual(result_out[4], 10.0)
+        self.assertEqual(result_out[5], 1.0)
+        self.assertEqual(result_out[6], 1.0)
+
+    def test_217_compute_ccd_progress_watchdog(self):
+        """Detect CCD no-progress stall"""
+        result_out = (ctypes.c_float * 8)()
+        result = self.vm.lib.compute_ccd_progress_watchdog(
+            0.25,
+            0.2500001,
+            0.0001,
+            2,
+            3,
+            12,
+            64,
+            ctypes.cast(result_out, ctypes.POINTER(ctypes.c_float))
+        )
+        self.assertEqual(result, 1)
+        self.assertEqual(result_out[0], 1.0)
+        self.assertAlmostEqual(result_out[1], 0.0000001, places=6)
+        self.assertEqual(result_out[2], 3.0)
+        self.assertEqual(result_out[3], 1.0)
+        self.assertEqual(result_out[4], 1.0)
+        self.assertEqual(result_out[5], 1.0)
+        self.assertEqual(result_out[6], 12.0)
+        self.assertEqual(result_out[7], 64.0)
+
+    def test_218_compute_ccd_trigger_aabb(self):
+        """Detect non-blocking CCD trigger volume"""
+        result_out = (ctypes.c_float * 9)()
+        result = self.vm.lib.compute_ccd_trigger_aabb(
+            0.25, 0.0, 0.0,
+            1.25, 1.0, 1.0,
+            10.0, 0.0, 0.0,
+            3.75, 0.0, 0.0,
+            4.75, 1.0, 1.0,
+            0.0, 0.0, 0.0,
+            42,
+            ctypes.cast(result_out, ctypes.POINTER(ctypes.c_float))
+        )
+        self.assertEqual(result, 1)
+        self.assertEqual(result_out[0], 1.0)
+        self.assertEqual(result_out[1], 1.0)
+        self.assertAlmostEqual(result_out[2], 0.25, places=4)
+        self.assertAlmostEqual(result_out[3], 0.45, places=4)
+        self.assertAlmostEqual(result_out[4], 0.2, places=4)
+        self.assertEqual(result_out[5], 0.0)
+        self.assertEqual(result_out[6], 0.0)
+        self.assertEqual(result_out[7], 1.0)
+        self.assertEqual(result_out[8], 42.0)
+
+    def test_219_compute_ccd_thin_wall_penetration(self):
+        """Detect thin wall tunneling missed by discrete endpoints"""
+        result_out = (ctypes.c_float * 9)()
+        result = self.vm.lib.compute_ccd_thin_wall_penetration(
+            0.0, 0.0, 0.0,
+            1.0, 1.0, 1.0,
+            10.0, 0.0, 0.0,
+            5.0, 0.0, 0.0,
+            5.1, 1.0, 1.0,
+            0.0, 0.0, 0.0,
+            0.25,
+            ctypes.cast(result_out, ctypes.POINTER(ctypes.c_float))
+        )
+        self.assertEqual(result, 1)
+        self.assertEqual(result_out[0], 1.0)
+        self.assertEqual(result_out[1], 1.0)
+        self.assertAlmostEqual(result_out[2], 0.4, places=4)
+        self.assertAlmostEqual(result_out[3], 0.51, places=4)
+        self.assertAlmostEqual(result_out[4], 0.1, places=4)
+        self.assertAlmostEqual(result_out[5], 10.0, places=4)
+        self.assertEqual(result_out[6], 0.0)
+        self.assertEqual(result_out[7], 0.0)
+        self.assertEqual(result_out[8], 1.0)
+
+    def test_220_compute_ccd_tunnel_suppression(self):
+        """Clamp motion before thin wall tunneling"""
+        result_out = (ctypes.c_float * 11)()
+        result = self.vm.lib.compute_ccd_tunnel_suppression(
+            0.0, 0.0, 0.0,
+            1.0, 1.0, 1.0,
+            10.0, 0.0, 0.0,
+            5.0, 0.0, 0.0,
+            5.1, 1.0, 1.0,
+            0.0, 0.0, 0.0,
+            0.25,
+            0.01,
+            ctypes.cast(result_out, ctypes.POINTER(ctypes.c_float))
+        )
+        self.assertEqual(result, 1)
+        self.assertEqual(result_out[0], 1.0)
+        self.assertEqual(result_out[1], 1.0)
+        self.assertAlmostEqual(result_out[2], 0.39, places=4)
+        self.assertAlmostEqual(result_out[3], 0.61, places=4)
+        self.assertAlmostEqual(result_out[4], 0.4, places=4)
+        self.assertAlmostEqual(result_out[5], 0.1, places=4)
+        self.assertAlmostEqual(result_out[6], 10.0, places=4)
+        self.assertAlmostEqual(result_out[7], 3.9, places=4)
+        self.assertAlmostEqual(result_out[8], 0.0, places=4)
+        self.assertAlmostEqual(result_out[9], 0.0, places=4)
+        self.assertEqual(result_out[10], 1.0)
+
+    def test_221_compute_ccd_performance_plan(self):
+        """Compute CCD performance budget and gating"""
+        result_out = (ctypes.c_float * 10)()
+        result = self.vm.lib.compute_ccd_performance_plan(
+            10.0, 0.0, 0.0,
+            2.0,
+            1.0,
+            2.0,
+            128,
+            32,
+            128,
+            64,
+            0.1,
+            ctypes.cast(result_out, ctypes.POINTER(ctypes.c_float))
+        )
+        self.assertEqual(result, 1)
+        self.assertEqual(result_out[0], 1.0)
+        self.assertEqual(result_out[1], 1.0)
+        self.assertEqual(result_out[2], 0.0)
+        self.assertEqual(result_out[3], 0.0)
+        self.assertEqual(result_out[4], 32.0)
+        self.assertEqual(result_out[5], 64.0)
+        self.assertEqual(result_out[6], 2048.0)
+        self.assertAlmostEqual(result_out[7], 10.0, places=4)
+        self.assertAlmostEqual(result_out[8], 4.0, places=4)
+        self.assertEqual(result_out[9], 0.0)
+
+    def test_222_compute_ccd_precision_plan(self):
+        """Tune CCD precision for high-risk motion"""
+        result_out = (ctypes.c_float * 11)()
+        result = self.vm.lib.compute_ccd_precision_plan(
+            10.0, 0.0, 0.0,
+            2.0,
+            1.0,
+            2.0,
+            0.001,
+            0.02,
+            16,
+            64,
+            ctypes.cast(result_out, ctypes.POINTER(ctypes.c_float))
+        )
+        self.assertEqual(result, 1)
+        self.assertEqual(result_out[0], 1.0)
+        self.assertAlmostEqual(result_out[1], 0.000125, places=6)
+        self.assertAlmostEqual(result_out[2], 0.0025, places=6)
+        self.assertAlmostEqual(result_out[3], 0.00003125, places=7)
+        self.assertEqual(result_out[4], 64.0)
+        self.assertEqual(result_out[5], 160.0)
+        self.assertEqual(result_out[6], 3.0)
+        self.assertAlmostEqual(result_out[7], 0.00625, places=5)
+        self.assertAlmostEqual(result_out[8], 10.0, places=4)
+        self.assertAlmostEqual(result_out[9], 4.0, places=4)
+        self.assertEqual(result_out[10], 1.0)
+
+    def test_223_compute_ccd_stability_validation(self):
+        """Validate CCD solver stability invariants"""
+        result_out = (ctypes.c_float * 11)()
+        result = self.vm.lib.compute_ccd_stability_validation(
+            0.2,
+            0.3,
+            0.20005,
+            0.19,
+            0.20005,
+            10.0, 0.0, 0.0,
+            2.0,
+            1.0,
+            2.0,
+            0.001,
+            0.02,
+            16,
+            64,
+            256,
+            ctypes.cast(result_out, ctypes.POINTER(ctypes.c_float))
+        )
+        self.assertEqual(result, 1)
+        self.assertEqual(result_out[0], 1.0)
+        self.assertEqual(result_out[1], 1.0)
+        self.assertEqual(result_out[2], 1.0)
+        self.assertEqual(result_out[3], 1.0)
+        self.assertEqual(result_out[4], 1.0)
+        self.assertEqual(result_out[5], 1.0)
+        self.assertAlmostEqual(result_out[6], 0.0, places=6)
+        self.assertAlmostEqual(result_out[7], 0.000125, places=6)
+        self.assertEqual(result_out[8], 64.0)
+        self.assertEqual(result_out[9], 160.0)
+        self.assertEqual(result_out[10], 0.0)
+
+    def test_224_compute_ccd_island_parallel_plan(self):
+        """Schedule independent CCD islands for parallel work"""
+        result_out = (ctypes.c_float * 11)()
+        result = self.vm.lib.compute_ccd_island_parallel_plan(
+            8,
+            6,
+            40,
+            32,
+            128,
+            64,
+            4,
+            6,
+            0,
+            ctypes.cast(result_out, ctypes.POINTER(ctypes.c_float))
+        )
+        self.assertEqual(result, 1)
+        self.assertEqual(result_out[0], 1.0)
+        self.assertEqual(result_out[1], 1.0)
+        self.assertEqual(result_out[2], 0.0)
+        self.assertEqual(result_out[3], 6.0)
+        self.assertEqual(result_out[4], 4.0)
+        self.assertEqual(result_out[5], 2.0)
+        self.assertEqual(result_out[6], 32.0)
+        self.assertEqual(result_out[7], 64.0)
+        self.assertEqual(result_out[8], 12288.0)
+        self.assertAlmostEqual(result_out[9], 1.5, places=4)
+        self.assertEqual(result_out[10], 0.0)
+
+    def test_225_compute_ccd_sleep_interaction(self):
+        """Wake sleeping bodies for blocking CCD risk"""
+        result_out = (ctypes.c_float * 11)()
+        result = self.vm.lib.compute_ccd_sleep_interaction(
+            1,
+            30,
+            30,
+            10.0, 0.0, 0.0,
+            2.0,
+            1.0,
+            2.0,
+            0.2,
+            1,
+            0,
+            ctypes.cast(result_out, ctypes.POINTER(ctypes.c_float))
+        )
+        self.assertEqual(result, 1)
+        self.assertEqual(result_out[0], 1.0)
+        self.assertEqual(result_out[1], 1.0)
+        self.assertEqual(result_out[2], 0.0)
+        self.assertEqual(result_out[3], 1.0)
+        self.assertEqual(result_out[4], 1.0)
+        self.assertEqual(result_out[5], 1.0)
+        self.assertAlmostEqual(result_out[6], 10.0, places=4)
+        self.assertAlmostEqual(result_out[7], 4.0, places=4)
+        self.assertAlmostEqual(result_out[8], 0.2, places=4)
+        self.assertAlmostEqual(result_out[9], 1.0, places=4)
+        self.assertEqual(result_out[10], 1.0)
 
 
 # ============================================================================
@@ -474,6 +1066,82 @@ class TestCrashDefense(PhysicsTestHarness):
         self.vm.lib.crash_defense_init(1, 1, 1, 1000.0, -1000.0, 1000.0, 300)
         result = self.vm.lib.crash_defense_is_valid_float(1.0)
         self.assertEqual(result, 1)
+
+    def test_d05_crash_defense_compute_nan_handling(self):
+        """Can sanitize NaN vector components"""
+        result_out = (ctypes.c_float * 11)()
+        result = self.vm.lib.crash_defense_compute_nan_handling(
+            float('nan'),
+            2.0,
+            float('nan'),
+            0.0,
+            2,
+            0,
+            ctypes.cast(result_out, ctypes.POINTER(ctypes.c_float))
+        )
+        self.assertEqual(result, 1)
+        self.assertEqual(result_out[0], 1.0)
+        self.assertEqual(result_out[1], 1.0)
+        self.assertEqual(result_out[2], 1.0)
+        self.assertEqual(result_out[3], 0.0)
+        self.assertEqual(result_out[4], 5.0)
+        self.assertEqual(result_out[5], 2.0)
+        self.assertEqual(result_out[6], 0.0)
+        self.assertEqual(result_out[7], 2.0)
+        self.assertEqual(result_out[8], 0.0)
+        self.assertEqual(result_out[9], 0.0)
+        self.assertEqual(result_out[10], 1.0)
+
+    def test_d06_crash_defense_compute_infinity_handling(self):
+        """Can clamp infinite vector components"""
+        result_out = (ctypes.c_float * 11)()
+        result = self.vm.lib.crash_defense_compute_infinity_handling(
+            float('inf'),
+            2.0,
+            float('-inf'),
+            100.0,
+            2,
+            0,
+            ctypes.cast(result_out, ctypes.POINTER(ctypes.c_float))
+        )
+        self.assertEqual(result, 1)
+        self.assertEqual(result_out[0], 1.0)
+        self.assertEqual(result_out[1], 1.0)
+        self.assertEqual(result_out[2], 1.0)
+        self.assertEqual(result_out[3], 0.0)
+        self.assertEqual(result_out[4], 5.0)
+        self.assertEqual(result_out[5], 2.0)
+        self.assertEqual(result_out[6], 100.0)
+        self.assertEqual(result_out[7], 2.0)
+        self.assertEqual(result_out[8], -100.0)
+        self.assertEqual(result_out[9], 100.0)
+        self.assertEqual(result_out[10], 1.0)
+
+    def test_d07_crash_defense_compute_bounds_correction(self):
+        """Can clamp out-of-range positions"""
+        result_out = (ctypes.c_float * 11)()
+        result = self.vm.lib.crash_defense_compute_bounds_correction(
+            -150.0,
+            25.0,
+            120.0,
+            -100.0,
+            100.0,
+            80.0,
+            0,
+            ctypes.cast(result_out, ctypes.POINTER(ctypes.c_float))
+        )
+        self.assertEqual(result, 1)
+        self.assertEqual(result_out[0], 1.0)
+        self.assertEqual(result_out[1], 1.0)
+        self.assertEqual(result_out[2], 1.0)
+        self.assertEqual(result_out[3], 0.0)
+        self.assertEqual(result_out[4], 5.0)
+        self.assertEqual(result_out[5], -100.0)
+        self.assertEqual(result_out[6], 25.0)
+        self.assertEqual(result_out[7], 100.0)
+        self.assertAlmostEqual(result_out[8], 70.0, places=4)
+        self.assertEqual(result_out[9], 80.0)
+        self.assertEqual(result_out[10], 1.0)
 
 
 # ============================================================================

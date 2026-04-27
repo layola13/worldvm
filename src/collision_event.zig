@@ -62,6 +62,198 @@ pub const PendingCollisionQueue = struct {
     }
 };
 
+pub const PendingSoundQueue = struct {
+    events: [64]bus.SoundPayload = undefined,
+    entity_ids: [64]u16 = undefined,
+    count: u8 = 0,
+
+    pub fn clear(self: *PendingSoundQueue) void {
+        self.count = 0;
+    }
+
+    pub fn enqueueEntity(self: *PendingSoundQueue, entity_id: u16, payload: bus.SoundPayload) void {
+        if (payload.sound_type == 0 or payload.volume <= 0.0 or payload.duration <= 0.0) return;
+
+        var i: u8 = 0;
+        while (i < self.count) : (i += 1) {
+            if (self.entity_ids[i] != entity_id) continue;
+            const existing = self.events[i];
+            if (existing.sound_type == payload.sound_type and
+                existing.volume == payload.volume and
+                existing.pitch == payload.pitch and
+                existing.duration == payload.duration)
+            {
+                return;
+            }
+        }
+
+        if (self.count >= self.events.len) return;
+        const idx = self.count;
+        self.entity_ids[idx] = entity_id;
+        self.events[idx] = payload;
+        self.count += 1;
+    }
+
+    pub fn publish(self: *PendingSoundQueue, event_bus: *bus.Bus, tick_id: u32) void {
+        var i: u8 = 0;
+        while (i < self.count) : (i += 1) {
+            event_bus.broadcastSoundEvent(self.entity_ids[i], tick_id, self.events[i]);
+        }
+        self.count = 0;
+    }
+};
+
+pub const PendingParticleQueue = struct {
+    events: [64]bus.ParticlePayload = undefined,
+    entity_ids: [64]u16 = undefined,
+    count: u8 = 0,
+
+    pub fn clear(self: *PendingParticleQueue) void {
+        self.count = 0;
+    }
+
+    pub fn enqueueEntity(self: *PendingParticleQueue, entity_id: u16, payload: bus.ParticlePayload) void {
+        if (payload.particle_type == 0 or payload.intensity <= 0.0 or payload.duration <= 0.0) return;
+
+        var i: u8 = 0;
+        while (i < self.count) : (i += 1) {
+            if (self.entity_ids[i] != entity_id) continue;
+            const existing = self.events[i];
+            if (existing.particle_type == payload.particle_type and
+                existing.intensity == payload.intensity and
+                existing.radius == payload.radius and
+                existing.duration == payload.duration)
+            {
+                return;
+            }
+        }
+
+        if (self.count >= self.events.len) return;
+        const idx = self.count;
+        self.entity_ids[idx] = entity_id;
+        self.events[idx] = payload;
+        self.count += 1;
+    }
+
+    pub fn publish(self: *PendingParticleQueue, event_bus: *bus.Bus, tick_id: u32) void {
+        var i: u8 = 0;
+        while (i < self.count) : (i += 1) {
+            event_bus.broadcastParticleEvent(self.entity_ids[i], tick_id, self.events[i]);
+        }
+        self.count = 0;
+    }
+};
+
+pub const PendingDeformationQueue = struct {
+    events: [64]bus.DeformationPayload = undefined,
+    entity_ids: [64]u16 = undefined,
+    count: u8 = 0,
+
+    pub fn clear(self: *PendingDeformationQueue) void {
+        self.count = 0;
+    }
+
+    pub fn enqueueEntity(self: *PendingDeformationQueue, entity_id: u16, payload: bus.DeformationPayload) void {
+        if (payload.total_depth <= 0.0) return;
+
+        var i: u8 = 0;
+        while (i < self.count) : (i += 1) {
+            if (self.entity_ids[i] != entity_id) continue;
+            const existing = self.events[i];
+            if (existing.total_depth == payload.total_depth and
+                existing.permanent_depth == payload.permanent_depth and
+                existing.recovery_fraction == payload.recovery_fraction and
+                existing.severe == payload.severe)
+            {
+                return;
+            }
+        }
+
+        if (self.count >= self.events.len) return;
+        const idx = self.count;
+        self.entity_ids[idx] = entity_id;
+        self.events[idx] = payload;
+        self.count += 1;
+    }
+
+    pub fn publish(self: *PendingDeformationQueue, event_bus: *bus.Bus, tick_id: u32) void {
+        var i: u8 = 0;
+        while (i < self.count) : (i += 1) {
+            event_bus.broadcastDeformationEvent(self.entity_ids[i], tick_id, self.events[i]);
+        }
+        self.count = 0;
+    }
+};
+
+pub const PendingBreakQueue = struct {
+    events: [64]bus.BreakPayload = undefined,
+    entity_ids: [64]u16 = undefined,
+    count: u8 = 0,
+
+    pub fn clear(self: *PendingBreakQueue) void {
+        self.count = 0;
+    }
+
+    pub fn enqueueEntity(self: *PendingBreakQueue, entity_id: u16, payload: bus.BreakPayload) void {
+        var i: u8 = 0;
+        while (i < self.count) : (i += 1) {
+            if (self.entity_ids[i] != entity_id) continue;
+            const existing = self.events[i];
+            if (existing.impact_velocity == payload.impact_velocity and
+                existing.hardness == payload.hardness and
+                existing.fragment_count == payload.fragment_count)
+            {
+                return;
+            }
+        }
+
+        if (self.count >= self.events.len) return;
+        const idx = self.count;
+        self.entity_ids[idx] = entity_id;
+        self.events[idx] = payload;
+        self.count += 1;
+    }
+
+    pub fn publish(self: *PendingBreakQueue, event_bus: *bus.Bus, tick_id: u32) void {
+        var i: u8 = 0;
+        while (i < self.count) : (i += 1) {
+            event_bus.broadcastBreakEvent(self.entity_ids[i], tick_id, self.events[i]);
+        }
+        self.count = 0;
+    }
+};
+
+pub const PendingJointBreakQueue = struct {
+    events: [64]bus.JointBreakPayload = undefined,
+    joint_ids: [64]u16 = undefined,
+    count: u8 = 0,
+
+    pub fn clear(self: *PendingJointBreakQueue) void {
+        self.count = 0;
+    }
+
+    pub fn enqueueJoint(self: *PendingJointBreakQueue, joint_idx: u16, payload: bus.JointBreakPayload) void {
+        var i: u8 = 0;
+        while (i < self.count) : (i += 1) {
+            if (self.joint_ids[i] == joint_idx) return;
+        }
+
+        if (self.count >= self.events.len) return;
+        const idx = self.count;
+        self.joint_ids[idx] = joint_idx;
+        self.events[idx] = payload;
+        self.count += 1;
+    }
+
+    pub fn publish(self: *PendingJointBreakQueue, event_bus: *bus.Bus, tick_id: u32) void {
+        var i: u8 = 0;
+        while (i < self.count) : (i += 1) {
+            event_bus.broadcastJointBreakEvent(self.joint_ids[i], tick_id, self.events[i]);
+        }
+        self.count = 0;
+    }
+};
+
 pub fn makeCollisionPayload(impact_velocity: i16, entity: *const entity16.Entity16) bus.CollisionPayload {
     const impact = break_response.calcImpactMagnitude(impact_velocity, entity.physics.mass);
     const break_result = physics.checkBreak(impact, entity.physics.material, entity.physics.hardness);

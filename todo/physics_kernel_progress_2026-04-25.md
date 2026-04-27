@@ -17,6 +17,27 @@
 5. 还没有形成真正统一的 `prepare -> plan -> solve -> postprocess -> finalize` 完整泛型协议，当前只是大部分关键层已经收口；但 joint runtime 已经把 `prepare_channel -> prepared outcome resolution -> ready build -> finish` 这一段拉成共享协议。
 6. `ConstraintApplyPrimitive` 已经出现，说明底层不再只是 helper 并列，而是开始形成可承载通用 row primitive 的执行元数据壳。
 
+## AABB 语义保留更新（2026-04-26）
+
+根据当前迭代要求，查询/角色碰撞侧明确保留 `AABB` 语义，不再把 `kcc` 顶碰解析混回 capsule 分支。
+
+本轮已完成：
+
+1. `kcc.resolveCollision(...)` 回到 `computePenetrationAABB(...)` 主路径，移除先前“顶碰依赖 capsule 渗透”的分叉执行。
+2. `resolveCollision` 现在使用 AABB 渗透结果做小步迭代去穿透（最多 4 次），避免单次最小平移轴在复杂接触下留下残余重叠。
+3. 在“上升过程发生重叠”场景中，显式钳制 `vel_y`，并保留切向速度；AABB 顶碰只补最小下压余量，不恢复 capsule 分支。
+4. 顶层重叠触发条件改为“离散 AABB 采样或 AABB 渗透结果任一命中”，覆盖采样漏检但渗透可检出的边界场景。
+
+验证结果：
+
+- `zig test src/kcc.zig` 全部通过（235/235）
+- `zig test src/physics_kernel.zig` 全部通过（235/235）
+- `zig test src/tick_engine.zig` 全部通过（235/235）
+- `zig test src/physics_world.zig` 全部通过（235/235）
+- `kcc` 关键回归用例
+  - `KCC resolveCollision slides along sloped ceiling instead of killing tangent motion`
+  已恢复通过
+
 ## 已完成进度
 
 ### 1. 统一 row 调度已经成型
@@ -2658,3 +2679,1221 @@ joint finish 这边之前虽然 ready 分支已经很薄，但：
 1. `ConstraintSolveStep` 的 metadata 覆盖不再散落为匿名字面量。
 2. 后续如果要继续补 step telemetry / trace 字段，这种 helper 能减少局部重建时漏字段的风险。
 3. 这一步仍然没有改变 environment 的 impulse 聚合策略或最终 residual 行为。
+
+### contact stress 排序现在也开始消费 predictive overlap
+
+这一轮把 `contact` 子系统的 stress/order 入口接上了和 row plan 同方向的短时预测信息，
+但仍然保持在很保守的范围内：只影响“当前已经形成接触的 pair”优先级，不扩展到非重叠预测接触。
+
+新增/调整：
+
+1. `computeContactSolvePriorityMagnitude(...)`
+   - 在现有 `probeContactConstraint(...)` 成功后
+   - 复用 `kernelPredictionDt()`
+   - 复用 `predictKernelInstanceState(...)`
+   - 复用 `computePredictedAABBOverlapDepth(...)`
+   - 再通过 `computeDirectionalPredictiveSolvePriorityMagnitude(...)` 计算 contact stress
+2. `buildContactPriorityOrder(...)`
+   - 不改排序协议本身
+   - 但它读取到的 `magnitude` 已开始包含 predictive overlap 影响
+
+新增/调整测试：
+
+1. `buildContactPriorityOrder prioritizes predictive overlap over weaker current overlap`
+   - 现在明确构造成“两个 pair 当前都已重叠”
+   - 其中一个 pair 未来 overlap 会明显加深
+   - 验证 priority order 会先处理未来更糟的那一组
+
+当前效果：
+
+1. `contact` 的 subsystem stress 不再只看当前 penetration/normal/tangent stress。
+2. 对“已经处于接触中的 pair”，如果预测步内 overlap 会继续恶化，priority 会更高。
+3. `contact` 的 island/order 路径现在和此前已经接入 predictive 的 environment/row priority floor 更一致。
+
+当前边界：
+
+1. `probeContactConstraint(...)` 仍然要求当前 AABB 已重叠。
+2. 这意味着“当前未接触、但预测步内会发生接触”的 broadphase pair 仍不会进入当前 contact priority order。
+3. 如果后续要支持这类 pair，需要单独引入“非重叠预测接触 probe”或更前置的 predictive contact candidate 语义；这不是这一步的范围。
+
+这一步的意义：
+
+1. predictive metadata 不再只停留在 row build 和 row priority floor，已经开始进入 contact 子系统的顶层 stress/order 入口。
+2. 接触求解调度现在更接近“先处理接下来会更糟的已接触约束”，而不是只看当前帧的静态穿透。
+3. 现有 `zig test src/physics_kernel.zig`、`zig test src/tick_engine.zig`、`zig test src/physics_world.zig` 全部保持通过，说明这一步仍然处于可控的保守接入范围。
+
+### predictive gain 现在开始进入最小 `PredictiveRowPlan` 壳
+
+这一轮开始正式朝 Phase 3 的“predictive 从增益升级为计划”迈出第一小步，
+但仍然保持非常保守：先只把现有的 predictive gain 输入/输出统一收成显式 plan 载体，不改变 solver 数值与行为。
+
+新增：
+
+1. `PredictiveRowPlan`
+   - `horizon_dt`
+   - `current_depth`
+   - `predicted_depth`
+   - `urgency`
+   - `allowed_correction_budget`
+   - `gain`
+2. `makePredictiveRowPlan(...)`
+3. `makeDirectionalPredictiveRowPlan(...)`
+
+调整：
+
+1. `computeDirectionalPredictiveSolvePriorityMagnitude(...)`
+   - 不再直接从 `direction + policy` 取 `gain.residual_hint`
+   - 改为统一先构造 `PredictiveRowPlan`
+   - 再读取 `plan.urgency`
+2. `buildDirectionalRowPlan(...)`
+   - 不再直接拼 `gain -> equation/residual`
+   - 改为统一先构造 `PredictiveRowPlan`
+   - 再消费 `plan.gain` 与 `plan.urgency`
+
+新增测试：
+
+1. `makeDirectionalPredictiveRowPlan preserves predictive gain semantics`
+   - 验证 plan 壳没有改变既有 predictive gain 数值
+   - 当前 `urgency == gain.residual_hint`
+   - 当前 `allowed_correction_budget == gain.impulse_delta`
+   - `horizon_dt` 统一来自 `kernelPredictionDt()`
+
+当前效果：
+
+1. contact/environment 现有的 predictive priority 与 predictive row-plan 不再只是共享 gain helper，也开始共享同一个最小 plan 载体。
+2. predictive 路径现在第一次显式拥有：
+   - horizon
+   - 当前深度
+   - 预测深度
+   - urgency
+   - correction budget
+3. 当前行为保持不变，仍然只是把旧语义压进新壳中。
+
+当前边界：
+
+1. 这个 `PredictiveRowPlan` 还不是完整的求解计划协议。
+2. 目前仍未显式携带：
+   - predicted target pose / target velocity
+   - row-level allowed axis
+   - overshoot clamp policy
+   - solver-consumed target residual
+3. joint drive 还没有正式切到这层 plan 壳，当前只是 contact/environment 这条 directional predictive 路径先打通。
+
+这一步的意义：
+
+1. Phase 3 不再停留在文档规划，已经有了第一层真实代码载体。
+2. 后续如果继续把 predictive 做成更明确的 solve target，已经不需要再从 `gain helper` 直接硬切，而可以沿 `PredictiveRowPlan` 扩字段与消费点。
+3. 现有 `zig test src/physics_kernel.zig`、`zig test src/tick_engine.zig`、`zig test src/physics_world.zig` 全部保持通过，说明这一步仍属于低风险协议收口。
+
+### joint drive predictive 入口也开始对齐 `PredictiveRowPlan`
+
+在 contact/environment 已经先接入最小 `PredictiveRowPlan` 之后，这一轮把 joint drive 的 predictive 误差入口也对齐到同一层 plan helper，
+但仍然严格保持行为不变：不改 brake 判定、target clamp、desired velocity 或 step 限幅公式。
+
+新增：
+
+1. `jointDrivePredictiveConstraintPolicy()`
+2. `makeJointDrivePredictiveRowPlan(...)`
+
+调整：
+
+1. `computeKernelJointDrivePlan(...)`
+   - 预测误差不再只靠局部 `@abs(predicted_error)` / `@abs(position_error)` 散写
+   - 改为统一先构造 `PredictiveRowPlan`
+   - 再用：
+     - `plan.current_depth`
+     - `plan.predicted_depth`
+     表达当前误差幅度与预测误差幅度
+2. `use_predictive_brake` 仍保持原语义
+   - 仍然要求跨过目标或预测误差比当前误差更小
+3. `control_error` 的符号与数值仍保持原行为
+   - 只是误差幅值改为从 plan 中读取
+
+新增测试：
+
+1. `makeJointDrivePredictiveRowPlan preserves error magnitudes for brake decisions`
+   - 验证 joint drive 的 plan 壳会把带符号误差收成：
+     - `current_depth = abs(position_error)`
+     - `predicted_depth = abs(predicted_error)`
+   - 当前 `urgency` 与 `allowed_correction_budget` 也只是最小保守映射，不直接改变 solver 行为
+
+当前效果：
+
+1. `joint drive` 不再是 predictive plan 体系之外的独立入口。
+2. contact/environment/joint drive 三条 predictive 路径现在都已经至少共享同一类 plan 壳。
+3. 当前 joint drive 仍然只是“用 plan 收口误差输入”，还没有把 plan 直接升级成真正的 motor solve target。
+
+当前边界：
+
+1. `jointDrivePredictiveConstraintPolicy()` 目前只是最小保守 policy，用来承载误差幅值，不参与 joint motor solver numerics。
+2. `PredictiveRowPlan.gain` 在 joint drive 这里当前主要是占位性承载，还没有像 contact/environment 那样直接进入 row equation shaping。
+3. 这一步仍未引入：
+   - predicted target velocity profile
+   - braking budget policy
+   - overshoot clamp policy
+   - motor-specific predictive target row
+
+这一步的意义：
+
+1. Phase 3 的 predictive plan 不再只覆盖 directional contact/environment，也开始触碰 joint drive。
+2. 后续如果要把 joint motor 从“预测辅助刹车”继续推进到“显式预测驱动目标”，现在已经有了统一 plan 承载点。
+3. 现有 `zig test src/physics_kernel.zig`、`zig test src/tick_engine.zig`、`zig test src/physics_world.zig` 全部保持通过，说明这一步仍然处于低风险协议统一范围。
+
+### contact priority 现在也开始纳入非重叠 predictive candidate
+
+这一轮继续沿 contact predictive 路径补之前明确留下的边界：
+当前未重叠、但 broadphase 已命中且预测步内会发生接触的 pair，现在也能进入 contact priority order。
+
+调整：
+
+1. `computeContactSolvePriorityMagnitude(...)`
+   - 不再一开始就完全依赖 `probeContactConstraint(...)`
+   - 现在会先统一计算：
+     - 当前 AABB
+     - 预测位姿
+     - `computePredictedAABBOverlapDepth(...)`
+2. 如果当前已有真实接触：
+   - 仍沿原路径
+   - 使用 manifold + relative velocity + predictive overlap
+3. 如果当前没有真实接触，但预测步内会形成 overlap：
+   - 现在会走新的 predictive-only stress 分支
+   - 当前只给 priority/stress 使用
+   - 不会伪造 manifold，也不会直接进入 contact solve payload
+
+新增测试：
+
+1. `buildContactPriorityOrder includes non-overlapping predictive contact candidate`
+   - 验证当前未重叠、但预测步内会发生接触的 broadphase pair
+   - 已经可以进入 priority order
+
+当前效果：
+
+1. `contact` 的 predictive priority 不再只覆盖“已经接触的 pair”。
+2. broadphase 命中的未来碰撞对现在已经可以被更早排到前面。
+3. 这一步补上了上一轮文档里明确记录的边界缺口。
+
+当前边界：
+
+1. 这仍然只是 priority/stress 层面的接入。
+2. `prepareContactConstraintPair(...)` 与真实 contact solve 仍要求当前已经形成接触 manifold。
+3. 也就是说，当前系统已经能“更早关注”未来接触，但还不能“提前按 contact row 直接求解”未来接触。
+
+这一步的意义：
+
+1. contact predictive 已经从“已接触约束的优先级优化”推进到“未来接触候选的排序感知”。
+2. 下一步如果要继续做真正的 predictive contact plan / speculative contact row，就不需要再先回头补 priority candidate 入口。
+3. 现有 `zig test src/physics_kernel.zig`、`zig test src/tick_engine.zig`、`zig test src/physics_world.zig` 全部保持通过，说明这一步仍然控制在调度层，不会冲击现有求解路径。
+
+### contact prepared payload 现在开始支持最小 speculative normal-only pair
+
+在 priority 层已经能识别“当前未重叠但预测步内会接触”的 candidate 之后，这一轮继续往前推进了一小步：
+`prepareContactConstraintPair(...)` 现在已经可以为一部分 predictive candidate 真正产出 prepared payload，
+但范围仍然严格受限，避免直接冲击现有 grounded / environment 语义。
+
+调整：
+
+1. `ContactPreparedPair`
+   - 新增 `speculative` 标记
+2. `prepareContactConstraintPair(...)`
+   - 当前真实接触时，行为保持不变
+   - 当前未接触但预测步内会重叠时：
+     - 现在可返回最小 speculative prepared pair
+     - 仅生成 normal channel
+     - `restitution = 0`
+     - `friction = 0`
+     - `has_tangent = false`
+     - `friction_equation = zeroConstraintEquation()`
+3. 当前 speculative contact 只允许 `dynamic-dynamic`
+   - 如果任一侧是 static，仍然返回 `null`
+   - 保持 dynamic-static 的 grounded / wall / environment 语义不被 speculative contact 提前接管
+
+新增测试：
+
+1. `prepareContactConstraintPair returns speculative normal-only payload for predictive candidate`
+   - 验证 predictive candidate 能形成 prepared payload
+   - 验证当前 payload 是：
+     - speculative
+     - normal-only
+     - 无 restitution / friction
+
+当前效果：
+
+1. contact predictive 已经不只是 priority candidate，也开始有最小 prepared payload 形态。
+2. 对未来会相撞的 `dynamic-dynamic` pair，内核现在已经具备“提前准备 normal 分离约束”的入口。
+3. 现有 grounded/resting 语义未被破坏，因为 static 侧仍不走 speculative prepared contact。
+
+当前边界：
+
+1. speculative prepared contact 目前只服务 `dynamic-dynamic`。
+2. 仍然没有 speculative friction、speculative restitution、speculative manifold。
+3. dynamic-static 的未来接触仍只停留在 priority/order 层，不会提前形成 prepared contact row。
+
+这一步的意义：
+
+1. contact predictive 已经从“可排序的候选”推进到“可准备的最小约束载荷”。
+2. 后续如果要继续做真正的 speculative contact row，可以在这层继续补：
+   - 更稳定的法线来源
+   - bias/budget policy
+   - dynamic-static 的安全接入边界
+3. 现有 `zig test src/physics_kernel.zig`、`zig test src/tick_engine.zig`、`zig test src/physics_world.zig` 全部保持通过，说明这一步目前仍控制在可回归范围内。
+
+### speculative normal 方向现在开始按最小预测重叠轴选择
+
+在最小 speculative prepared pair 已经能落地之后，这一轮继续补了一个底层但关键的稳定性点：
+predictive candidate 的 normal 方向不再只靠两个 body 的中心点 delta 猜主轴，
+而是开始基于预测 AABB 的最小重叠轴来选分离方向。
+
+调整：
+
+1. 新增 `buildPredictedAABBSeparationDirection(...)`
+   - 基于预测后的 AABB 区间直接计算 `x/y/z` 三轴重叠量
+   - 选择最小预测重叠轴作为 speculative normal 方向
+   - 法线正负仍结合预测中心差决定，保持最小可用分离朝向
+2. `prepareContactConstraintPair(...)`
+   - 在 predictive-only candidate 生成 speculative prepared pair 时
+   - normal channel 改为统一走 `buildPredictedAABBSeparationDirection(...)`
+   - 不再退回到只看中心差绝对值的粗糙主轴选择
+
+新增测试：
+
+1. `buildPredictedAABBSeparationDirection uses minimum predicted overlap axis`
+   - 验证 speculative normal 会沿最小预测重叠轴生成
+   - 当前用例明确覆盖 `y` 轴最小重叠场景
+
+当前效果：
+
+1. speculative prepared contact 的 normal 方向来源更接近真实 penetration axis，而不是中心点启发式。
+2. 这让后续继续补 speculative bias / budget shaping 时，输入方向更稳定，不容易在边角接近时跳到错误主轴。
+3. 现有 `dynamic-static` 限制保持不变，grounded / wall / resting 语义没有被额外放宽。
+
+当前边界：
+
+1. 这一步只改 speculative normal 的方向来源，没有引入真实 manifold。
+2. tie-break 仍然是最小轴优先的简单规则，还没有更复杂的运动趋势/历史缓存稳定器。
+3. speculative prepared contact 仍然只允许 `dynamic-dynamic`；`dynamic-static` 未来接触依旧停留在 priority/order 层。
+
+这一步的意义：
+
+1. speculative contact 不再只是“能准备出来”，而是开始具备更可信的方向基元。
+2. 这为 Phase 3/4 后续继续补：
+   - speculative normal bias policy
+   - speculative iteration budget shaping
+   - debug/export 中的 speculative metadata 观察
+   提供了更稳的底层输入。
+3. 现有 `zig test src/physics_kernel.zig`、`zig test src/tick_engine.zig`、`zig test src/physics_world.zig` 全部保持通过，说明这一步仍然控制在窄范围内，没有破坏当前世界求解语义。
+
+### speculative contact metadata 现在开始进入 row/debug 观察面
+
+在 speculative prepared pair 与最小预测分离方向都已经落地之后，这一轮没有继续扩大 solver 行为，
+而是先把 speculative 状态补进 row metadata 与 debug snapshot，解决“能跑但不可观察”的问题。
+
+调整：
+
+1. `ConstraintRowMetadata`
+   - 新增 `speculative_contact: bool`
+2. contact row build
+   - `contact_normal` row 在由 `ContactPreparedPair` 生成 row spec 时
+   - 会把 `prepared.speculative` 显式抬到 `ConstraintRowMetadata.speculative_contact`
+3. friction row
+   - 仍然保持原样
+   - 不会因为 speculative normal-only pair 被错误打上 speculative friction metadata
+4. debug/export
+   - `writeConstraintRowDebugSnapshots(...)` 与 `collectConstraintRowDebugSnapshots(...)`
+   - 现在会把这层 metadata 一并稳定导出
+
+新增测试：
+
+1. `collectConstraintRowDebugSnapshots marks speculative contact normal metadata`
+   - 验证 speculative prepared pair 生成的 `contact_normal` row 会携带 `speculative_contact = true`
+   - 同时验证 friction 路径不会被错误污染
+2. `writeConstraintRowDebugSnapshots exports row metadata`
+   - 现在也覆盖 metadata 中的 speculative 标记导出
+
+当前效果：
+
+1. speculative/predictive contact 不再只能从 prepared pair 层观察，row/debug 视角也能直接识别。
+2. 这让后续继续调：
+   - speculative priority floor
+   - speculative iteration budget
+   - row export / telemetry
+   时不再需要反查上游 prepared payload。
+3. 由于这一步只扩 metadata 与 build/debug 路径，没有改 solver 数值，所以 grounded / resting / environment 语义保持不变。
+
+当前边界：
+
+1. `speculative_contact` 目前只作为 metadata/debug 观察字段使用，还没有单独参与 priority/budget/shaping。
+2. 仍然只有 `contact_normal` row 会携带 speculative 标记；没有 speculative friction row。
+3. `dynamic-static` speculative prepared contact 仍未放开。
+
+这一步的意义：
+
+1. Phase 3/4 现在不只是“开始有 speculative prepared row 的前置形态”，而是连可观测性都补上了。
+2. 后续如果继续做 speculative bias/budget policy，可以直接基于 row metadata 落地，而不是再回头重构一遍 debug/build 通路。
+3. 现有 `zig test src/physics_kernel.zig`、`zig test src/tick_engine.zig`、`zig test src/physics_world.zig` 全部保持通过。
+
+### speculative metadata 现在开始进入 row priority floor
+
+在 speculative contact 的 row metadata/debug 观察面已经补齐之后，这一轮开始让它第一次进入实际调度行为，
+但范围仍然非常保守：先只做 metadata priority floor 的轻微抬升，不改 solver 公式，也不放大到 friction 或 dynamic-static。
+
+调整：
+
+1. 新增 `measureSpeculativeContactPriorityFloor(...)`
+   - 仅当 `ConstraintRowMetadata.speculative_contact = true` 时生效
+   - 当前只给 base priority 一个非常轻的 floor 抬升（`+5%`）
+2. `measureConstraintRowMetadataPriorityFloor(...)`
+   - 在原有 `predictive_residual_hint` floor 之上
+   - 继续叠加 speculative metadata floor
+
+新增测试：
+
+1. `measureConstraintRowCachedPriority lifts speculative contact priority floor`
+   - 验证 speculative metadata 会把 `base_priority = 2.0` 抬到 `2.1`
+
+当前效果：
+
+1. speculative `contact_normal` row 不再只是“可观察”，而是开始获得最小调度倾斜。
+2. 这个倾斜仍然比 predictive residual floor 弱得多，避免 speculative metadata 直接压过真实 penetration/velocity stress。
+3. 现有世界行为保持稳定，说明这一改动目前仍然停留在低风险调度层。
+
+当前边界：
+
+1. 这一步没有把 speculative metadata 接到 iteration budget、equation bias、max impulse 或 solver apply。
+2. 仍然只对 `contact_normal` row 生效。
+3. `dynamic-static` speculative prepared contact 仍未放开。
+
+这一步的意义：
+
+1. Phase 3/4 现在已经从“speculative row 可准备、可导出”推进到“speculative row 开始影响调度”。
+2. 后续如果继续补：
+   - speculative iteration budget shaping
+   - speculative bias policy
+   - speculative row export/telemetry
+   会更自然，因为 metadata 已经进入统一 priority 入口。
+3. 现有 `zig test src/physics_kernel.zig`、`zig test src/tick_engine.zig`、`zig test src/physics_world.zig` 全部保持通过。
+
+### speculative pair 现在开始进入 iteration budget shaping
+
+在 speculative metadata 已经进入 row priority floor 之后，这一轮继续沿同一思路往前推进了一小步：
+不是直接改 equation/bias，而是先让“岛内是否存在 speculative pair”影响迭代预算。
+
+调整：
+
+1. 新增 `countSpeculativeContactPairs(...)`
+   - 扫描 broadphase pair 子集
+   - 统计当前能形成 speculative prepared pair 的 contact pair 数量
+2. 新增 `boostIterationBudgetForSpeculativeContacts(...)`
+   - 若 speculative pair 数量大于 0，则额外增加 `1` 次迭代 pass
+   - 仍保持全局上限 `6`
+3. `solveContactConstraintsForPairs(...)`
+   - contact-only 路径现在会先统计 speculative pair 数量
+   - 再在原有 `computeContactIterationBudget(...)` 基础上做 budget boost
+4. `solveConstraintBlock(...)`
+   - unified island 路径也会对当前 island 的 `pair_subset` 做同样的 speculative pair 统计
+   - 再在 `computeConstraintBlockIterationBudget(...)` 结果上应用同样的 budget boost
+
+新增测试：
+
+1. `countSpeculativeContactPairs detects predictive-only contact pair`
+   - 验证 predictive-only `dynamic-dynamic` pair 会被正确计入 speculative count
+2. `boostIterationBudgetForSpeculativeContacts adds one extra pass and clamps`
+   - 验证有 speculative pair 时预算 `+1`
+   - 验证仍然封顶在 `6`
+
+当前效果：
+
+1. speculative contact 现在不只影响 priority floor，也开始影响“愿意多解几轮”的预算。
+2. 这个预算提升仍然非常保守：
+   - 只多 `1` 次 pass
+   - 只有存在 speculative pair 时才生效
+   - 仍然不改变 row equation / bias / impulse 上限
+3. contact-only 路径与 unified constraint block 路径的预算语义现在保持一致，不会出现一边识别 speculative、另一边完全忽略的情况。
+
+当前边界：
+
+1. 这一步还是没有把 speculative metadata 接到 solver apply、warm start 或 bias 公式。
+2. budget boost 当前只看“是否存在 speculative pair”，还没有按数量、stress 或 urgency 做更细分层。
+3. `dynamic-static` speculative prepared contact 仍未放开，因此这层 boost 目前本质上还是服务 `dynamic-dynamic` predictive contact。
+
+这一步的意义：
+
+1. speculative contact 已经从“可准备 -> 可观察 -> 可排序”推进到“可多给一轮求解预算”。
+2. 后续如果继续补 speculative bias policy，会建立在更合理的调度前提上，而不是在预算完全不变的情况下硬加 bias。
+3. 现有 `zig test src/physics_kernel.zig`、`zig test src/tick_engine.zig`、`zig test src/physics_world.zig` 全部保持通过。
+
+### speculative normal 现在开始进入最小 bias shaping
+
+在 speculative pair 已经能影响 priority 与 iteration budget 之后，这一轮终于开始让它轻微触碰 equation，
+但仍然坚持最保守边界：只改 speculative `contact_normal` 的 `bias`，不改 friction、不改 `max_impulse`、不放开 dynamic-static。
+
+调整：
+
+1. 新增 `applySpeculativeContactBiasBoost(...)`
+   - 当前只对 `ConstraintRowEquation.bias` 做一个很小的提升（`x1.1`）
+   - `effective_mass` 与 `max_impulse` 保持不变
+2. `prepareContactConstraintPair(...)`
+   - 在 predictive-only `dynamic-dynamic` speculative branch 中
+   - `normal_row_plan.equation` 不再原样回填
+   - 而是先经过 `applySpeculativeContactBiasBoost(...)`
+3. 普通真实接触路径不变
+   - 已重叠接触的 normal/friction equation 没有改
+   - `dynamic-static` speculative 仍未放开，因此 environment/grounded 语义没有被这一步触碰
+
+测试：
+
+1. `prepareContactConstraintPair returns speculative normal-only payload for predictive candidate`
+   - 现在额外验证 speculative prepared pair 的 `normal_equation.bias`
+   - 会高于同一方向/深度下的 baseline `buildContactNormalRowPlan(...)`
+
+当前效果：
+
+1. speculative contact 现在第一次开始真正影响 normal equation，而不只是 priority/budget。
+2. 这个影响仍然非常轻：
+   - 只提升 `bias`
+   - 当前按 `predicted_depth - current_depth` 做三档提升：
+     - `< 1.0` -> `x1.1`
+     - `>= 1.0` -> `x1.15`
+     - `>= 2.0` -> `x1.2`
+   - 不改 `max_impulse`
+   - 不影响 friction
+3. 因为它只存在于 predictive-only speculative branch，所以现有 grounded/resting/static environment 行为保持稳定。
+
+当前边界：
+
+1. 这一步没有把 speculative shaping 扩到 friction、restitution 或 tangent row。
+2. 当前还是最小分层策略，阈值与倍率仍是硬编码常量，尚未抽成可配置 policy 入口。
+3. `dynamic-static` speculative prepared contact 仍未放开。
+
+这一步的意义：
+
+1. speculative contact 已经从“调度层影响”推进到“最小 equation shaping”。
+2. 后续如果继续补更精细的 speculative normal policy，可以在这个 helper 上做参数化，而不需要再去改 prepared branch 主体。
+3. 现有 `zig test src/physics_kernel.zig`、`zig test src/tick_engine.zig`、`zig test src/physics_world.zig` 全部保持通过。
+
+### Query Layer 兼容修复：恢复 AABB 与旧字段接口
+
+在继续 speculative 内核迭代时，仓库里暴露出一批 Query Layer 接口断层（类型和字段改名后，
+`physics/kcc/query_world/query_penetration/collision` 仍在消费旧接口）。这轮先补兼容层，避免主线开发反复被编译错误打断。
+
+调整：
+
+1. `query_types` 兼容恢复：
+   - `QueryFilter.group_mask`
+   - `QueryHit` 的 legacy 平铺字段（`body_type/material_type/medium_type/surface_condition`）
+   - `PenetrationResult` 的 legacy 字段（`entity_id/hit_environment/classification/telemetry`）
+   - `AABB/VoxelBox` 兼容类型（整型坐标语义）
+2. `physics` 兼容恢复：
+   - `aabbHit(...)`
+   - `makeAABB(...)`
+3. `query_penetration` 兼容恢复：
+   - `computePenetrationAABB(...)`（转发到 box 实现）
+4. `collision` 调用修复：
+   - `voxelBoxHit` 显式走 `physics.voxelBoxHit(...)`
+
+当前效果：
+
+1. Query Layer 新旧接口在当前仓库里重新可并存，避免一次性重构所有调用点。
+2. `AABB` 旧接口语义保持可用（包括 KCC 路径），满足主干模块回归需求。
+3. 为继续推进 speculative kernel 提供了稳定编译基线。
+
+验证：
+
+1. `zig test src/physics_kernel.zig`
+2. `zig test src/tick_engine.zig`
+3. `zig test src/physics_world.zig`
+4. 三组测试当前已恢复并全部通过（`221/221`）。
+
+### speculative bias scale 进入 row metadata/debug 导出
+
+在 speculative bias 已经接入 normal equation 后，这一轮补了行级可观测性：
+把每个 row 实际使用的 speculative bias scale 挂到 metadata。
+
+调整：
+
+1. `ConstraintRowMetadata` 新增字段：
+   - `speculative_bias_scale: f32 = 1.0`
+2. `buildContactRowSpecForPair(...)` 在 `contact_normal` 且 `prepared.speculative = true` 时：
+   - 复用 `measureSpeculativeContactBiasScale(...)`
+   - 将结果写入 `metadata.speculative_bias_scale`
+3. 非 speculative 或非 normal 行保持默认值 `1.0`。
+
+测试：
+
+1. `writeConstraintRowDebugSnapshots exports row metadata`
+   - 新增 `speculative_bias_scale` 导出断言
+2. `collectConstraintRowDebugSnapshots marks speculative contact normal metadata`
+   - `contact_normal` 断言 `speculative_bias_scale > 1.0`
+   - `contact_friction` 断言 `speculative_bias_scale == 1.0`
+
+当前效果：
+
+1. row debug snapshot 现在可以直接观察 speculative bias 档位，不需要反推 equation。
+2. 为后续 speculative policy 调参、回归比对和可视化提供稳定的行级观测点。
+
+边界：
+
+1. 这一步只扩展 metadata/debug，不改 solver 数值路径本身。
+2. 没有调整 priority、iteration budget、warm-start 或 apply 顺序。
+
+验证：
+
+1. `zig test src/physics_kernel.zig`（`221/221`）
+2. `zig test src/tick_engine.zig`（`221/221`）
+3. `zig test src/physics_world.zig`（`221/221`）
+
+### speculative bias scale 计算入口进一步收口
+
+在上一轮把 `speculative_bias_scale` 挂入 row metadata/debug 后，这一轮继续做了一个小型协议收口，
+目标是让“equation 使用的 bias scale”和“metadata 导出的 bias scale”严格共享同一套计算入口。
+
+调整：
+
+1. 新增 `measureSpeculativeContactBiasScaleWithPolicy(...)`
+   - 显式接收 `SpeculativeContactBiasPolicy`
+   - `measureSpeculativeContactBiasScale(...)` 变成薄封装（默认 policy）
+2. `applySpeculativeContactBiasBoost(...)`
+   - 先取一次 `scale`
+   - 再用于 `equation.bias` 乘法（避免隐式重复求值）
+3. `buildContactRowSpecForPair(...)`
+   - speculative `contact_normal` metadata 写入时
+   - 改为使用当前 row 的 `payload.direction`
+   - 与 row equation 路径保持同源输入
+
+测试：
+
+1. 新增 `measureSpeculativeContactBiasScale matches policy helper`
+   - 验证默认入口与显式 policy 入口数值一致
+2. 原有 speculative metadata/debug 测试保持通过
+
+当前效果：
+
+1. speculative bias 的“执行值”和“观测值”更加严格对齐。
+2. 后续如果把 policy 参数改为可配置，不需要分别修改 equation 与 metadata 路径。
+
+验证：
+
+1. `zig test src/physics_kernel.zig`（`222/222`）
+2. `zig test src/tick_engine.zig`（`222/222`）
+3. `zig test src/physics_world.zig`（`222/222`）
+
+### speculative metadata 组装收口为单一 helper
+
+在 `speculative_contact` / `speculative_bias_scale` / `speculative_predictive_excess` 三个字段都已接入后，
+这一轮把 contact-normal 的 metadata 组装逻辑进一步收口，避免 row 构建阶段分散写字段。
+
+调整：
+
+1. 新增 `withSpeculativeContactDirectionalMetadata(...)`
+   - 输入：`metadata + speculative flag + PreparedDirectionalConstraint`
+   - 输出：一次性完成
+     - `speculative_contact`
+     - `speculative_bias_scale`
+     - `speculative_predictive_excess`
+2. `buildContactRowSpecForPair(...)`
+   - `contact_normal` 路径改为直接调用该 helper
+   - 移除本地分散的三段 metadata 注入代码
+
+新增测试：
+
+1. `withSpeculativeContactDirectionalMetadata applies speculative fields from direction`
+   - 覆盖 speculative / non-speculative 两条路径
+   - 验证输入 `direction` 与 metadata 输出的 bias/excess 一致
+   - 验证非 speculative 保持默认值
+
+当前效果：
+
+1. speculative metadata 写入入口变成单点，后续扩字段不再需要回头改 row builder 多处代码。
+2. 行为无变化，属于纯结构收口。
+
+验证：
+
+1. `zig test src/physics_kernel.zig`（`223/223`）
+2. `zig test src/tick_engine.zig`（`223/223`）
+3. `zig test src/physics_world.zig`（`223/223`）
+
+### speculative bias metadata 增加 tier 档位
+
+在已有 `speculative_bias_scale` 和 `speculative_predictive_excess` 的基础上，这一轮补了策略档位可观测：
+让调试侧可以直接看到当前行命中的是 `base/mid/high` 哪一档，而不必反推。
+
+调整：
+
+1. 新增 `SpeculativeContactBiasTier`：
+   - `none/base/mid/high`
+2. `ConstraintRowMetadata` 新增：
+   - `speculative_bias_tier: SpeculativeContactBiasTier = .none`
+3. 新增 `SpeculativeContactBiasProfile` 与 `measureSpeculativeContactBiasProfile(...)`
+   - 统一产出：
+     - `scale`
+     - `tier`
+     - `predictive_excess`
+4. `measureSpeculativeContactBiasScaleWithPolicy(...)` 改为复用 profile 输出（不再单独分支判定）
+5. `withSpeculativeContactDirectionalMetadata(...)` 也改为复用同一 profile：
+   - 保证 metadata 的 `tier/scale/excess` 与 equation 路径同源
+
+测试：
+
+1. 新增 `measureSpeculativeContactBiasProfile reports tier and scale consistently`
+2. 扩展 `withSpeculativeContactDirectionalMetadata applies speculative fields from direction`
+   - 增加 tier 断言（speculative 为 `high`，non-speculative 为 `none`）
+3. 扩展 row debug 相关测试：
+   - `writeConstraintRowDebugSnapshots exports row metadata`
+   - `collectConstraintRowDebugSnapshots marks speculative contact normal metadata`
+   增加 tier 导出/一致性断言
+
+当前效果：
+
+1. speculative bias 不再只有“数值”，还带“策略档位”可观测信息。
+2. solver 与 metadata 共用一个 policy 判定入口，降低后续调参漂移风险。
+
+验证：
+
+1. `zig test src/physics_kernel.zig`（`224/224`）
+2. `zig test src/tick_engine.zig`（`224/224`）
+3. `zig test src/physics_world.zig`（`224/224`）
+
+### speculative priority floor 开始消费 tier（从观测进入行为）
+
+在 speculative `tier` 已经进入 metadata/debug 后，这一轮把它第一次接入调度行为：
+`measureSpeculativeContactPriorityFloor(...)` 不再固定 `+5%`，而是按 tier 分层抬升。
+
+调整：
+
+1. 新增 `SpeculativeContactPriorityFloorPolicy`：
+   - `legacy_fallback_scale = 1.05`
+   - `base_scale = 1.05`
+   - `mid_scale = 1.075`
+   - `high_scale = 1.1`
+2. `measureSpeculativeContactPriorityFloor(...)`：
+   - `speculative_contact = false`：不变
+   - `speculative_contact = true`：按 `speculative_bias_tier` 选择倍率
+3. `none` tier 仍保留 fallback（`1.05`）：
+   - 保持对潜在旧路径/边界数据的兼容，不引入突变
+
+测试：
+
+1. 现有 `measureConstraintRowCachedPriority lifts speculative contact priority floor` 改为显式断言 `base_scale`
+2. 新增 `measureConstraintRowCachedPriority applies stronger speculative floor for higher tier`
+   - 覆盖 `base/mid/high` 三档
+   - 断言优先级单调递增
+
+当前效果：
+
+1. speculative tier 不再只是观察字段，开始进入 priority 调度行为。
+2. 调整仍然保守，最高只到 `+10%`，不触碰 solver equation/warm-start/apply。
+
+验证：
+
+1. `zig test src/physics_kernel.zig`（`225/225`）
+2. `zig test src/tick_engine.zig`（`225/225`）
+3. `zig test src/physics_world.zig`（`225/225`）
+
+### speculative profile 默认入口进一步收口
+
+在 `SpeculativeContactBiasProfile` 已落地后，这一轮继续把默认策略入口收口，
+目标是让所有“默认 policy 下的 profile 消费点”走同一 helper，减少未来策略漂移风险。
+
+调整：
+
+1. 新增 `measureSpeculativeContactBiasProfileDefault(...)`
+   - 统一使用 `speculativeContactBiasPolicy()`
+2. `withSpeculativeContactDirectionalMetadata(...)`
+   - 改为直接使用 `measureSpeculativeContactBiasProfileDefault(...)`
+3. `applySpeculativeContactBiasBoost(...)`
+   - 改为从默认 profile 读取 `scale`
+4. `collectConstraintRowDebugSnapshots marks speculative contact normal metadata` 测试增强：
+   - 不再只做范围断言
+   - 直接与 `measureSpeculativeContactBiasProfileDefault(prepared.normal)` 做一致性校验（`tier/scale`）
+
+当前效果：
+
+1. 默认 speculative policy 的执行路径与 metadata 导出路径再次收紧到单一入口。
+2. 后续若改 policy 阈值或倍率，profile/metadata/equation 会一起变化，回归护栏更强。
+
+验证：
+
+1. `zig test src/physics_kernel.zig`（`224/224`）
+2. `zig test src/tick_engine.zig`（`224/224`）
+3. `zig test src/physics_world.zig`（`224/224`）
+
+### speculative predictive excess 进入 row metadata
+
+在已有 `speculative_bias_scale` 行级可观测的基础上，这一轮补齐了它的直接来源量：
+`predictive_excess = max(0, predicted_depth - depth)`。
+
+调整：
+
+1. `ConstraintRowMetadata` 新增：
+   - `speculative_predictive_excess: f32 = 0.0`
+2. `buildContactRowSpecForPair(...)` 在 speculative `contact_normal` 上：
+   - 计算并写入 `speculative_predictive_excess`
+   - 与 `speculative_bias_scale` 同步导出，形成“输入量 + 策略输出量”成对观测
+3. 非 speculative / friction 行保持 `0.0`
+
+测试：
+
+1. `writeConstraintRowDebugSnapshots exports row metadata`
+   - 增加 `speculative_predictive_excess` 导出断言
+2. `collectConstraintRowDebugSnapshots marks speculative contact normal metadata`
+   - 改为校验定义一致性：
+     - `>= 0`
+     - 并与 `max(0, predicted_depth - depth)` 近似相等
+   - friction 行保持 `0.0`
+
+说明：
+
+1. 该场景下 speculative 并不保证 `predictive_excess > 0`，因此测试断言按定义值校验，而不是强行要求正值。
+2. 这一步依旧只扩充 metadata/debug，不改变 solver 数值行为。
+
+验证：
+
+1. `zig test src/physics_kernel.zig`（`222/222`）
+2. `zig test src/tick_engine.zig`（`222/222`）
+3. `zig test src/physics_world.zig`（`222/222`）
+
+### speculative iteration budget 按 tier 分档并修复脆弱断言
+
+这一轮把 contact 迭代预算从“只要有 speculative pair 就 +1”升级为“按 speculative tier 分档”，同时修复了对应测试对场景参数过度耦合的问题。
+
+调整：
+
+1. 新增 `measureMaxSpeculativeContactTier(...)`
+   - 在 broadphase pair 集合内扫描 speculative contact
+   - 复用 `measureSpeculativeContactBiasProfileDefault(prepared.normal).tier`
+   - 返回该批次最高 tier（`none/base/mid/high`）
+2. 新增 `SpeculativeContactIterationBudgetPolicy` 与 `speculativeContactIterationBudgetPolicy()`
+   - `low_tier_extra_passes = 1`
+   - `high_tier_extra_passes = 2`
+3. `boostIterationBudgetForSpeculativeContacts(...)` 签名升级
+   - 从 `(base_budget, speculative_pair_count)`
+   - 升级为 `(base_budget, speculative_pair_count, max_speculative_tier)`
+   - 规则：`none/base/mid => +1`，`high => +2`，并保持 `<= 6` 上限
+4. 两个主调用点完成接线：
+   - `solveContactConstraintsForPairs(...)`
+   - `solveConstraintBlock(...)`
+
+测试：
+
+1. 新增 `measureMaxSpeculativeContactTier reports highest speculative profile tier`
+2. `boostIterationBudgetForSpeculativeContacts` 测试更新为 tier 分档与 clamp 覆盖
+3. 修复 tier 测试断言策略：
+   - 不再硬编码期望 `.high`
+   - 改为与同一 `prepared/profile` 管线推导出的 `expected_tier` 对齐
+   - 避免 fixture 数值波动导致“语义正确但断言脆弱”的失败
+
+说明：
+
+1. 本轮仅调整预算 shaping 与测试稳健性，不改 AABB 接触语义。
+2. KCC/查询相关 AABB 路径保持原策略。
+
+验证：
+
+1. `zig test src/physics_kernel.zig`（`226/226`）
+2. `zig test src/tick_engine.zig`（`226/226`）
+3. `zig test src/physics_world.zig`（`226/226`）
+
+### speculative iteration budget 增加 pair 密度微调（保守）
+
+在 tier 分档预算已经接入后，这一轮补了一个非常小的密度维度：
+当 island/contact 集中出现较多 speculative pair 时，再额外给 1 次迭代 pass。
+
+调整：
+
+1. `SpeculativeContactIterationBudgetPolicy` 扩展：
+   - `dense_pair_threshold: usize = 4`
+   - `dense_pair_extra_passes: u8 = 1`
+2. `boostIterationBudgetForSpeculativeContacts(...)`
+   - 基础仍按 `tier`：`none/base/mid => +1`，`high => +2`
+   - 当 `speculative_pair_count >= 4` 时再 `+1`
+   - 总预算仍保持 `<= 6` clamp
+3. 调整范围仍限制在预算 shaping，不改 AABB/query/contact equation。
+
+测试：
+
+1. `boostIterationBudgetForSpeculativeContacts scales by speculative tier and clamps`
+   - 新增 dense base 档断言：`(2, 4, .base) => 4`
+   - 新增 dense high 档断言：`(2, 4, .high) => 5`
+   - 新增高密度 clamp 断言：`(5, 8, .high) => 6`
+
+说明：
+
+1. 这是保守强化：仅在 speculative pair 密集场景提升迭代预算，避免单一高 tier 之外的密集场景被低估。
+2. 未引入“按 pair 数线性增长”，只保留一档阈值，控制求解开销和行为突变风险。
+3. AABB 语义保持不变。
+
+验证：
+
+1. `zig test src/physics_kernel.zig`（`226/226`）
+2. `zig test src/tick_engine.zig`（`226/226`）
+3. `zig test src/physics_world.zig`（`226/226`）
+
+### speculative 统计收口为单次遍历 summary（降重复 prepare 开销）
+
+这一轮只做内核收口，不改行为：
+把 `speculative_pair_count` 与 `max_speculative_tier` 的两次扫描合并为一次 summary 扫描。
+
+调整：
+
+1. 新增 `SpeculativeContactSummary`
+   - `pair_count`
+   - `max_tier`
+2. 新增 `measureSpeculativeContactSummary(...)`
+   - 单次遍历 `broadphase_pairs`
+   - 复用一次 `prepareContactConstraintPair(...)`
+   - 同时统计 speculative 数量和最高 tier
+3. `countSpeculativeContactPairs(...)` 与 `measureMaxSpeculativeContactTier(...)`
+   - 保留对外接口不变
+   - 内部改为转发到 summary helper
+4. 两个预算调用点改为直接读取 summary：
+   - `solveContactConstraintsForPairs(...)`
+   - `solveConstraintBlock(...)`
+
+测试：
+
+1. 新增 `measureSpeculativeContactSummary reports pair count and highest tier`
+2. 既有计数/tier/预算测试保持通过
+
+说明：
+
+1. 这是纯收口和轻量性能路径优化，AABB 语义与 solver 结果不变。
+2. 在 contact-only 与 island block 两条路径上，speculative 指标读取现在更一致，也减少了重复 prepare。
+
+验证：
+
+1. `zig test src/physics_kernel.zig`（`227/227`）
+2. `zig test src/tick_engine.zig`（`227/227`）
+3. `zig test src/physics_world.zig`（`227/227`）
+
+### speculative 预算拼装收口为统一 helper
+
+这一轮继续做低风险收口：
+把“measure summary + boost budget”的组合逻辑做成单一 helper，去掉两处入口的重复拼装代码。
+
+调整：
+
+1. 新增 `boostIterationBudgetForSpeculativePairs(...)`
+   - 输入：`s1024, entities, broadphase_pairs, base_budget`
+   - 内部流程：
+     - `measureSpeculativeContactSummary(...)`
+     - `boostIterationBudgetForSpeculativeContacts(...)`
+2. 两个调用点改用新 helper：
+   - `solveContactConstraintsForPairs(...)`
+   - `solveConstraintBlock(...)`
+
+测试：
+
+1. 新增 `boostIterationBudgetForSpeculativePairs uses summary-driven tier-aware boost`
+   - 同一场景下对比：
+     - 直接 `summary + boostIterationBudgetForSpeculativeContacts(...)`
+     - 统一 helper `boostIterationBudgetForSpeculativePairs(...)`
+   - 断言两者一致
+
+说明：
+
+1. 行为不变，属于调用层收口。
+2. AABB 路径和接触求解语义未改。
+
+验证：
+
+1. `zig test src/physics_kernel.zig`（`228/228`）
+2. `zig test src/tick_engine.zig`（`228/228`）
+3. `zig test src/physics_world.zig`（`228/228`）
+
+### speculative extra passes 计算收口为独立 helper
+
+这一轮继续做策略层收口，不改预算语义：
+把 tier + density 到 extra passes 的映射独立为 helper，降低预算主函数分支复杂度。
+
+调整：
+
+1. 新增 `computeSpeculativeIterationExtraPasses(...)`
+   - 输入：`policy, speculative_pair_count, max_speculative_tier`
+   - 输出：`extra_passes`
+   - 规则保持原样：
+     - 无 speculative pair：`0`
+     - `none/base/mid`：low 档
+     - `high`：high 档
+     - 密度阈值命中时追加 dense 档
+2. `boostIterationBudgetForSpeculativeContacts(...)`
+   - 改为调用上述 helper
+   - 仍保留 `@min(..., 6)` clamp
+
+测试：
+
+1. 新增 `computeSpeculativeIterationExtraPasses matches tier and density policy`
+   - 覆盖 `0/base/mid/high/dense` 组合
+2. 既有预算与 summary helper 测试全部保持通过
+
+说明：
+
+1. 这一步是纯收口与可读性提升。
+2. AABB 语义、speculative summary 统计、预算最终结果保持不变。
+
+验证：
+
+1. `zig test src/physics_kernel.zig`（`229/229`）
+2. `zig test src/tick_engine.zig`（`229/229`）
+3. `zig test src/physics_world.zig`（`229/229`）
+
+### speculative summary 增加 broken 过滤防护
+
+这一轮补了一个防护收口：
+在 `measureSpeculativeContactSummary(...)` 内部显式过滤 broken 实例，避免未来调用方忘记预过滤时把失效 pair 计入预算统计。
+
+调整：
+
+1. `measureSpeculativeContactSummary(...)`
+   - 新增：`if (inst_a.state == .broken or inst_b.state == .broken) continue;`
+2. 其余路径保持不变（summary 统计、tier 计算、budget boost 逻辑不变）。
+
+测试：
+
+1. 新增 `measureSpeculativeContactSummary skips broken instances`
+   - 构造可形成 speculative 的 pair
+   - 将其中一方状态设为 `.broken`
+   - 断言：`pair_count == 0` 且 `max_tier == .none`
+
+说明：
+
+1. 这是 defensive hardening，不改变现有主路径行为。
+2. AABB 语义与 solver 公式未改。
+
+验证：
+
+1. `zig test src/physics_kernel.zig`（`230/230`）
+2. `zig test src/tick_engine.zig`（`230/230`）
+3. `zig test src/physics_world.zig`（`230/230`）
+
+### 预算语义补强：零 speculative pair 时忽略 tier
+
+这一轮补了一条防误用语义测试：
+当 `speculative_pair_count == 0` 时，budget boost 必须不受 tier 影响。
+
+调整：
+
+1. 强化 `boostIterationBudgetForSpeculativeContacts scales by speculative tier and clamps`：
+   - 新增断言：`boostIterationBudgetForSpeculativeContacts(4, 0, .high) == 4`
+   - 与现有 `(..., 0, .none) == 4` 形成对照
+
+说明：
+
+1. 这一步只加测试，不改实现。
+2. 目的在于锁定函数契约，避免未来调用方错误传 tier 时造成隐性预算漂移。
+3. AABB 语义与 solver 行为未改。
+
+验证：
+
+1. `zig test src/physics_kernel.zig`（`230/230`）
+2. `zig test src/tick_engine.zig`（`230/230`）
+3. `zig test src/physics_world.zig`（`230/230`）
+
+### speculative pair budget helper 增加空列表快速路径
+
+这一轮补了一个低风险契约/性能收口：
+`boostIterationBudgetForSpeculativePairs(...)` 在空 pair 输入时直接返回基准预算（并保持 clamp）。
+
+调整：
+
+1. `boostIterationBudgetForSpeculativePairs(...)`
+   - 新增早返回：
+     - `if (broadphase_pairs.len == 0) return min(6, base_budget)`
+   - 避免空列表场景进入 summary 扫描路径
+
+测试：
+
+1. 新增 `boostIterationBudgetForSpeculativePairs returns clamped base budget when pair list is empty`
+   - 断言空列表下：
+     - `base_budget=4 -> 4`
+     - `base_budget=8 -> 6`（clamp 生效）
+
+说明：
+
+1. 行为语义与现有实现一致，仅显式化并测试固定。
+2. AABB 语义、speculative summary 与求解流程未改。
+
+验证：
+
+1. `zig test src/physics_kernel.zig`（`231/231`）
+2. `zig test src/tick_engine.zig`（`231/231`）
+3. `zig test src/physics_world.zig`（`231/231`）
+
+### iteration budget clamp 收口为统一 helper
+
+这一轮把预算路径中重复的 `min(6, ...)` 收口到统一 helper，降低分散修改风险。
+
+调整：
+
+1. 新增 `clampIterationBudget(budget: u8) u8`
+   - 统一封装 `@min(@as(u8, 6), budget)`
+2. 下列函数改为复用该 helper：
+   - `computeContactIterationBudget(...)`
+   - `boostIterationBudgetForSpeculativeContacts(...)`
+   - `boostIterationBudgetForSpeculativePairs(...)`（空列表快速返回分支）
+   - `computeEnvironmentIterationBudget(...)`
+   - `computeConstraintBlockIterationBudget(...)`
+
+测试：
+
+1. 新增 `clampIterationBudget enforces iteration cap at six`
+   - 覆盖 `0/5/6/7/255` 输入
+   - 固定上限语义
+
+说明：
+
+1. 属于纯收口，不改预算策略与求解行为。
+2. AABB 语义与 speculative pipeline 不变。
+
+验证：
+
+1. `zig test src/physics_kernel.zig`（`232/232`）
+2. `zig test src/tick_engine.zig`（`232/232`）
+3. `zig test src/physics_world.zig`（`232/232`）
+
+### speculative budget 加法防溢出收口
+
+这一轮补了预算加法的防溢出护栏：
+`base_budget + extra_passes` 先用宽位累加，再统一 clamp，避免极端输入下 `u8` 先溢出。
+
+调整：
+
+1. 新增 `addIterationBudgetWithClamp(base_budget, extra_passes)`
+   - 使用 `u16` 做中间和
+   - 对中间值做上界保护后回落到 `u8`
+   - 统一走 `clampIterationBudget(...)`
+2. `boostIterationBudgetForSpeculativeContacts(...)`
+   - 改为调用 `addIterationBudgetWithClamp(...)`
+
+测试：
+
+1. 新增 `addIterationBudgetWithClamp avoids overflow and enforces cap`
+   - 覆盖普通加法与极端输入：`(255,255)`
+   - 断言始终收口到上限 `6`
+
+说明：
+
+1. 正常业务输入下行为不变。
+2. 该改动主要提升函数在极端/误用输入下的健壮性。
+3. AABB 语义和求解主流程未改。
+
+验证：
+
+1. `zig test src/physics_kernel.zig`（`233/233`）
+2. `zig test src/tick_engine.zig`（`233/233`）
+3. `zig test src/physics_world.zig`（`233/233`）
+
+### iteration budget cap 提取为统一常量
+
+这一轮继续做预算层收口：
+把上限值 `6` 从 helper 内部硬编码提取为统一常量，减少后续调整时的散点改动。
+
+调整：
+
+1. 新增 `ITERATION_BUDGET_CAP: u8 = 6`
+2. `clampIterationBudget(...)` 改为使用该常量
+3. `clampIterationBudget` 测试中对“上限命中”断言改为引用常量
+
+说明：
+
+1. 纯命名与常量收口，不改行为。
+2. AABB 语义、预算策略和 solver 结果保持不变。
+
+验证：
+
+1. `zig test src/physics_kernel.zig`（`233/233`）
+2. `zig test src/tick_engine.zig`（`233/233`）
+3. `zig test src/physics_world.zig`（`233/233`）
+
+### speculative tier merge 比较逻辑收口
+
+这一轮继续做小型可维护性收口：
+把 speculative tier 的“取较高档位”比较从 summary 内联逻辑提成单独 helper。
+
+调整：
+
+1. 新增 `mergeHigherSpeculativeContactTier(current, candidate)`
+   - 封装基于 enum 序的高档位选择
+2. `measureSpeculativeContactSummary(...)`
+   - 改为调用该 helper 更新 `summary.max_tier`
+   - 去掉内联 `@intFromEnum(...)` 比较分支
+
+测试：
+
+1. 新增 `mergeHigherSpeculativeContactTier preserves max tier ordering`
+   - 覆盖：相等、升级、保持高档不降级
+
+说明：
+
+1. 纯收口，不改变 tier 统计结果。
+2. AABB、预算策略与求解行为保持不变。
+
+验证：
+
+1. `zig test src/physics_kernel.zig`（`234/234`）
+2. `zig test src/tick_engine.zig`（`234/234`）
+3. `zig test src/physics_world.zig`（`234/234`）
+
+### speculative extra passes 内部加法防溢出
+
+这一轮继续补预算 helper 的极端输入防护：
+`computeSpeculativeIterationExtraPasses(...)` 原先在 dense 阈值命中时直接对 `u8` 做 `+=`，默认策略下不会出问题，但如果未来 policy 被调大或测试注入极端值，会存在先溢出再返回的风险。
+
+调整：
+
+1. `computeSpeculativeIterationExtraPasses(...)`
+   - dense 额外 pass 不再直接 `extra_passes += ...`
+   - 改为复用 `addIterationBudgetWithClamp(...)`
+   - 极端 policy 输入也会收口到 `ITERATION_BUDGET_CAP`
+
+测试：
+
+1. 新增 `computeSpeculativeIterationExtraPasses clamps extreme policy inputs`
+   - 覆盖 `low_tier_extra_passes = 250`
+   - 覆盖 `high_tier_extra_passes = 255`
+   - 覆盖 `dense_pair_extra_passes = 255`
+   - 确认非零 speculative pair 下都 clamp 到上限，零 pair 仍返回 `0`
+
+说明：
+
+1. 默认 speculative budget 策略行为不变。
+2. 这是预算 helper 的健壮性补强，不改 AABB、contact equation、summary 统计或 solver 主流程。
+
+验证：
+
+1. `zig test src/kcc.zig`（`236/236`）
+2. `zig test src/physics_kernel.zig`（`236/236`）
+3. `zig test src/tick_engine.zig`（`236/236`）
+4. `zig test src/physics_world.zig`（`236/236`）
+
+### iteration budget 递增路径统一走 clamp helper
+
+这一轮继续把预算层的小分支统一到同一个加法入口：
+`contact/environment/constraint block` 三个 iteration budget helper 原先都直接写 `budget += 1`，虽然当前默认阈值下不会越界，但和 speculative budget 的防溢出路径不一致。
+
+调整：
+
+1. `computeContactIterationBudget(...)`
+   - stress 触发的两次预算提升改为 `addIterationBudgetWithClamp(budget, 1)`
+2. `computeEnvironmentIterationBudget(...)`
+   - stress 触发的两次预算提升改为同一 helper
+3. `computeConstraintBlockIterationBudget(...)`
+   - active subsystem 与 max stress 触发的预算提升都改为同一 helper
+
+测试：
+
+1. `computeContactIterationBudget increases for higher contact stress`
+   - 增加 dense pair + high stress 场景，断言 clamp 到 `ITERATION_BUDGET_CAP`
+2. `computeEnvironmentIterationBudget increases for higher environment stress`
+   - 增加 dense instance + high stress 场景，断言 clamp 到 `ITERATION_BUDGET_CAP`
+
+说明：
+
+1. 默认预算结果保持不变。
+2. 预算提升路径现在全部复用同一个 clamp 加法语义，后续调高基础预算或阈值时更不容易引入局部溢出/漏 clamp。
+3. AABB、接触方程、prepared row、apply step 和 solver 主流程未改。
+
+验证：
+
+1. `zig test src/kcc.zig`（`236/236`）
+2. `zig test src/physics_kernel.zig`（`236/236`）
+3. `zig test src/tick_engine.zig`（`236/236`）
+4. `zig test src/physics_world.zig`（`236/236`）

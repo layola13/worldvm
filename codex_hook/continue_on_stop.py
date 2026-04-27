@@ -15,7 +15,7 @@ def main() -> int:
             print(f"invalid hook input: {exc}", file=sys.stderr)
             return 1
 
-    prompt = os.environ.get("CODEX_AUTO_CONTINUE_TEXT", "contiune")
+    prompt = os.environ.get("CODEX_AUTO_CONTINUE_TEXT", "continue!")
     result = {
         "decision": "block",
         "reason": prompt,

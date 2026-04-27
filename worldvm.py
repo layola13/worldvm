@@ -71,6 +71,14 @@ class WorldVM:
         self.lib.get_trace_count.restype = ctypes.c_uint32
         self.lib.get_trace_entry.argtypes = [ctypes.c_uint32]
         self.lib.get_trace_entry.restype = ctypes.POINTER(TraceEntry)
+        self.lib.get_last_step_changed.restype = ctypes.c_int
+        self.lib.get_last_step_pair_count.restype = ctypes.c_uint32
+        self.lib.get_last_step_event_count.restype = ctypes.c_uint32
+        self.lib.get_last_step_snapshot_tick.restype = ctypes.c_uint32
+        self.lib.get_last_step_state_hash.restype = ctypes.c_uint64
+        self.lib.get_last_step_determinism_flags.restype = ctypes.c_uint32
+        self.lib.query_get_contract_version.restype = ctypes.c_uint32
+        self.lib.query_get_contract_flags.restype = ctypes.c_uint32
         self.lib.reset_context.restype = ctypes.c_int
         self.lib.apply_impulse.argtypes = [ctypes.c_uint8, ctypes.c_float, ctypes.c_float, ctypes.c_float]
         self.lib.apply_impulse.restype = ctypes.c_int
@@ -111,8 +119,72 @@ class WorldVM:
         self.lib.add_joint_spring.restype = ctypes.c_int
         self.lib.add_joint_ball_socket.argtypes = [ctypes.c_uint8, ctypes.c_uint8, ctypes.c_int32, ctypes.c_int32, ctypes.c_int32]
         self.lib.add_joint_ball_socket.restype = ctypes.c_int
+        self.lib.add_joint_pulley.argtypes = [ctypes.c_uint8, ctypes.c_uint8, ctypes.c_int32, ctypes.c_int32, ctypes.c_int32, ctypes.c_int32, ctypes.c_int32, ctypes.c_int32, ctypes.c_float]
+        self.lib.add_joint_pulley.restype = ctypes.c_int
         self.lib.solve_joints.restype = None
         self.lib.clear_joints.restype = None
+        self.lib.set_joint_breaking_force.argtypes = [ctypes.c_uint8, ctypes.c_float]
+        self.lib.set_joint_breaking_force.restype = ctypes.c_int
+        self.lib.set_joint_limits.argtypes = [ctypes.c_uint8, ctypes.c_float, ctypes.c_float]
+        self.lib.set_joint_limits.restype = ctypes.c_int
+        self.lib.get_joint_limit_min.argtypes = [ctypes.c_uint8]
+        self.lib.get_joint_limit_min.restype = ctypes.c_float
+        self.lib.get_joint_limit_max.argtypes = [ctypes.c_uint8]
+        self.lib.get_joint_limit_max.restype = ctypes.c_float
+        self.lib.set_joint_damping.argtypes = [ctypes.c_uint8, ctypes.c_float]
+        self.lib.set_joint_damping.restype = ctypes.c_int
+        self.lib.get_joint_damping.argtypes = [ctypes.c_uint8]
+        self.lib.get_joint_damping.restype = ctypes.c_float
+        self.lib.set_joint_preload.argtypes = [ctypes.c_uint8, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+        self.lib.set_joint_preload.restype = ctypes.c_int
+        self.lib.get_joint_preload_linear_x.argtypes = [ctypes.c_uint8]
+        self.lib.get_joint_preload_linear_x.restype = ctypes.c_float
+        self.lib.get_joint_preload_linear_y.argtypes = [ctypes.c_uint8]
+        self.lib.get_joint_preload_linear_y.restype = ctypes.c_float
+        self.lib.get_joint_preload_linear_z.argtypes = [ctypes.c_uint8]
+        self.lib.get_joint_preload_linear_z.restype = ctypes.c_float
+        self.lib.get_joint_preload_angular.argtypes = [ctypes.c_uint8]
+        self.lib.get_joint_preload_angular.restype = ctypes.c_float
+        self.lib.get_joint_stress.argtypes = [ctypes.c_uint8]
+        self.lib.get_joint_stress.restype = ctypes.c_float
+        self.lib.get_joint_geometry_error.argtypes = [ctypes.c_uint8]
+        self.lib.get_joint_geometry_error.restype = ctypes.c_float
+        self.lib.get_joint_limit_error.argtypes = [ctypes.c_uint8]
+        self.lib.get_joint_limit_error.restype = ctypes.c_float
+        self.lib.get_joint_drive_error.argtypes = [ctypes.c_uint8]
+        self.lib.get_joint_drive_error.restype = ctypes.c_float
+        self.lib.get_joint_residual_speed.argtypes = [ctypes.c_uint8]
+        self.lib.get_joint_residual_speed.restype = ctypes.c_float
+        self.lib.configure_joint_fatigue.argtypes = [ctypes.c_uint8, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+        self.lib.configure_joint_fatigue.restype = ctypes.c_int
+        self.lib.clear_joint_fatigue.argtypes = [ctypes.c_uint8]
+        self.lib.clear_joint_fatigue.restype = ctypes.c_int
+        self.lib.get_joint_fatigue_damage.argtypes = [ctypes.c_uint8]
+        self.lib.get_joint_fatigue_damage.restype = ctypes.c_float
+        self.lib.get_joint_fatigue_ratio.argtypes = [ctypes.c_uint8]
+        self.lib.get_joint_fatigue_ratio.restype = ctypes.c_float
+        self.lib.configure_joint_temperature.argtypes = [ctypes.c_uint8, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+        self.lib.configure_joint_temperature.restype = ctypes.c_int
+        self.lib.clear_joint_temperature.argtypes = [ctypes.c_uint8]
+        self.lib.clear_joint_temperature.restype = ctypes.c_int
+        self.lib.get_joint_temperature.argtypes = [ctypes.c_uint8]
+        self.lib.get_joint_temperature.restype = ctypes.c_float
+        self.lib.get_joint_temperature_ratio.argtypes = [ctypes.c_uint8]
+        self.lib.get_joint_temperature_ratio.restype = ctypes.c_float
+        self.lib.configure_joint_motor.argtypes = [ctypes.c_uint8, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+        self.lib.configure_joint_motor.restype = ctypes.c_int
+        self.lib.set_joint_motor_enabled.argtypes = [ctypes.c_uint8, ctypes.c_int]
+        self.lib.set_joint_motor_enabled.restype = ctypes.c_int
+        self.lib.is_joint_motor_enabled.argtypes = [ctypes.c_uint8]
+        self.lib.is_joint_motor_enabled.restype = ctypes.c_int
+        self.lib.get_joint_motor_position.argtypes = [ctypes.c_uint8]
+        self.lib.get_joint_motor_position.restype = ctypes.c_float
+        self.lib.is_joint_enabled.argtypes = [ctypes.c_uint8]
+        self.lib.is_joint_enabled.restype = ctypes.c_int
+        self.lib.is_joint_broken.argtypes = [ctypes.c_uint8]
+        self.lib.is_joint_broken.restype = ctypes.c_int
+        self.lib.get_joint_break_ratio.argtypes = [ctypes.c_uint8]
+        self.lib.get_joint_break_ratio.restype = ctypes.c_float
         self.lib.raycast_single.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.POINTER(ctypes.c_float)]
         self.lib.raycast_single.restype = ctypes.c_int
         self.lib.sphere_cast.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.POINTER(ctypes.c_float)]
@@ -121,6 +193,46 @@ class WorldVM:
         self.lib.box_cast.restype = ctypes.c_int
         self.lib.compute_toi.argtypes = [ctypes.c_float]*18 + [ctypes.POINTER(ctypes.c_float)]
         self.lib.compute_toi.restype = ctypes.c_int
+        self.lib.compute_time_of_entry.argtypes = [ctypes.c_float]*18 + [ctypes.POINTER(ctypes.c_float)]
+        self.lib.compute_time_of_entry.restype = ctypes.c_int
+        self.lib.compute_toi_iterative.argtypes = [ctypes.c_float]*18 + [ctypes.c_uint32, ctypes.c_float, ctypes.POINTER(ctypes.c_float)]
+        self.lib.compute_toi_iterative.restype = ctypes.c_int
+        self.lib.compute_ccd_iteration_limit.argtypes = [ctypes.c_uint32, ctypes.c_float, ctypes.c_float, ctypes.c_uint32, ctypes.POINTER(ctypes.c_float)]
+        self.lib.compute_ccd_iteration_limit.restype = ctypes.c_int
+        self.lib.compute_ccd_progress_watchdog.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(ctypes.c_float)]
+        self.lib.compute_ccd_progress_watchdog.restype = ctypes.c_int
+        self.lib.compute_box_ccd.argtypes = [ctypes.c_float]*18 + [ctypes.POINTER(ctypes.c_float)]
+        self.lib.compute_box_ccd.restype = ctypes.c_int
+        self.lib.compute_ccd_trigger_aabb.argtypes = [ctypes.c_float]*18 + [ctypes.c_uint32, ctypes.POINTER(ctypes.c_float)]
+        self.lib.compute_ccd_trigger_aabb.restype = ctypes.c_int
+        self.lib.compute_ccd_thin_wall_penetration.argtypes = [ctypes.c_float]*19 + [ctypes.POINTER(ctypes.c_float)]
+        self.lib.compute_ccd_thin_wall_penetration.restype = ctypes.c_int
+        self.lib.compute_ccd_tunnel_suppression.argtypes = [ctypes.c_float]*20 + [ctypes.POINTER(ctypes.c_float)]
+        self.lib.compute_ccd_tunnel_suppression.restype = ctypes.c_int
+        self.lib.compute_rotating_box_ccd.argtypes = [ctypes.c_float]*22 + [ctypes.POINTER(ctypes.c_float)]
+        self.lib.compute_rotating_box_ccd.restype = ctypes.c_int
+        self.lib.compute_angular_velocity_ccd.argtypes = [ctypes.c_float]*23 + [ctypes.POINTER(ctypes.c_float)]
+        self.lib.compute_angular_velocity_ccd.restype = ctypes.c_int
+        self.lib.compute_conservative_step.argtypes = [ctypes.c_float]*8 + [ctypes.c_uint32, ctypes.POINTER(ctypes.c_float)]
+        self.lib.compute_conservative_step.restype = ctypes.c_int
+        self.lib.compute_ccd_performance_plan.argtypes = [ctypes.c_float]*6 + [ctypes.c_uint32]*4 + [ctypes.c_float, ctypes.POINTER(ctypes.c_float)]
+        self.lib.compute_ccd_performance_plan.restype = ctypes.c_int
+        self.lib.compute_ccd_precision_plan.argtypes = [ctypes.c_float]*8 + [ctypes.c_uint32]*2 + [ctypes.POINTER(ctypes.c_float)]
+        self.lib.compute_ccd_precision_plan.restype = ctypes.c_int
+        self.lib.compute_ccd_stability_validation.argtypes = [ctypes.c_float]*13 + [ctypes.c_uint32]*3 + [ctypes.POINTER(ctypes.c_float)]
+        self.lib.compute_ccd_stability_validation.restype = ctypes.c_int
+        self.lib.compute_ccd_island_parallel_plan.argtypes = [ctypes.c_uint32]*9 + [ctypes.POINTER(ctypes.c_float)]
+        self.lib.compute_ccd_island_parallel_plan.restype = ctypes.c_int
+        self.lib.compute_ccd_sleep_interaction.argtypes = [ctypes.c_int, ctypes.c_uint32, ctypes.c_uint32] + [ctypes.c_float]*7 + [ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_float)]
+        self.lib.compute_ccd_sleep_interaction.restype = ctypes.c_int
+        self.lib.compute_ccd_substep_plan.argtypes = [ctypes.c_float]*8 + [ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(ctypes.c_float)]
+        self.lib.compute_ccd_substep_plan.restype = ctypes.c_int
+        self.lib.compute_polygon_ccd.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.c_float, ctypes.c_float, ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.POINTER(ctypes.c_float)]
+        self.lib.compute_polygon_ccd.restype = ctypes.c_int
+        self.lib.compute_sphere_ccd.argtypes = [ctypes.c_float]*14 + [ctypes.POINTER(ctypes.c_float)]
+        self.lib.compute_sphere_ccd.restype = ctypes.c_int
+        self.lib.compute_capsule_ccd.argtypes = [ctypes.c_float]*16 + [ctypes.POINTER(ctypes.c_float)]
+        self.lib.compute_capsule_ccd.restype = ctypes.c_int
 
         # KCC
         self.lib.kcc_init.restype = None
@@ -199,6 +311,22 @@ class WorldVM:
         self.lib.crash_defense_is_infinite.restype = ctypes.c_int
         self.lib.crash_defense_is_valid_float.argtypes = [ctypes.c_float]
         self.lib.crash_defense_is_valid_float.restype = ctypes.c_int
+        self.lib.crash_defense_compute_nan_handling.argtypes = [ctypes.c_float]*4 + [ctypes.c_uint32, ctypes.c_int, ctypes.POINTER(ctypes.c_float)]
+        self.lib.crash_defense_compute_nan_handling.restype = ctypes.c_int
+        self.lib.crash_defense_compute_infinity_handling.argtypes = [ctypes.c_float]*4 + [ctypes.c_uint32, ctypes.c_int, ctypes.POINTER(ctypes.c_float)]
+        self.lib.crash_defense_compute_infinity_handling.restype = ctypes.c_int
+        self.lib.crash_defense_compute_bounds_correction.argtypes = [ctypes.c_float]*6 + [ctypes.c_int, ctypes.POINTER(ctypes.c_float)]
+        self.lib.crash_defense_compute_bounds_correction.restype = ctypes.c_int
+        self.lib.crash_defense_compute_energy_limit.argtypes = [ctypes.c_float]*5 + [ctypes.c_int, ctypes.POINTER(ctypes.c_float)]
+        self.lib.crash_defense_compute_energy_limit.restype = ctypes.c_int
+        self.lib.crash_defense_compute_velocity_limit.argtypes = [ctypes.c_float]*5 + [ctypes.c_int, ctypes.POINTER(ctypes.c_float)]
+        self.lib.crash_defense_compute_velocity_limit.restype = ctypes.c_int
+        self.lib.crash_defense_compute_position_range_limit.argtypes = [ctypes.c_float]*8 + [ctypes.c_int, ctypes.POINTER(ctypes.c_float)]
+        self.lib.crash_defense_compute_position_range_limit.restype = ctypes.c_int
+        self.lib.crash_defense_compute_torque_limit.argtypes = [ctypes.c_float]*5 + [ctypes.c_int, ctypes.POINTER(ctypes.c_float)]
+        self.lib.crash_defense_compute_torque_limit.restype = ctypes.c_int
+        self.lib.crash_defense_compute_solver_divergence.argtypes = [ctypes.c_float]*5 + [ctypes.c_int, ctypes.POINTER(ctypes.c_float)]
+        self.lib.crash_defense_compute_solver_divergence.restype = ctypes.c_int
         self.lib.crash_defense_is_emergency_stopped.restype = ctypes.c_int
         self.lib.crash_defense_is_stuck.argtypes = [ctypes.c_uint32]
         self.lib.crash_defense_is_stuck.restype = ctypes.c_int
@@ -353,6 +481,22 @@ class WorldVM:
 
     def spawn(self, eid, x, y, z): self.lib.spawn_instance(eid, x, y, z)
     def run(self, t=1): return self.lib.run_ticks(t)
+    def last_step(self):
+        return {
+            "changed": bool(self.lib.get_last_step_changed()),
+            "pair_count": self.lib.get_last_step_pair_count(),
+            "event_count": self.lib.get_last_step_event_count(),
+            "snapshot_tick": self.lib.get_last_step_snapshot_tick(),
+            "state_hash": self.lib.get_last_step_state_hash(),
+            "determinism_flags": self.lib.get_last_step_determinism_flags(),
+        }
+    def query_contract_version(self): return self.lib.query_get_contract_version()
+    def query_contract_flags(self): return self.lib.query_get_contract_flags()
+    def query_contract(self):
+        return {
+            "version": self.query_contract_version(),
+            "flags": self.query_contract_flags(),
+        }
     def emotions(self): return {"v": self.lib.get_emotion_valence(), "a": self.lib.get_emotion_arousal()}
     def events(self):
         return [{"t": self.lib.get_trace_entry(i).contents.tick_id,

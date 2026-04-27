@@ -6,6 +6,10 @@
 const std = @import("std");
 const physics = @import("physics.zig");
 
+pub const CONTACT_MANIFOLD_MAX_POINTS: usize = 4;
+const CONTACT_POINT_EPSILON: f32 = 0.0001;
+const CONTACT_POINT_EPSILON_SQ: f32 = CONTACT_POINT_EPSILON * CONTACT_POINT_EPSILON;
+
 pub const ContactPoint = struct {
     x: f32,
     y: f32,
@@ -18,7 +22,21 @@ pub const ContactManifold = struct {
     normal_y: f32 = 0,
     normal_z: f32 = 0,
     penetration_depth: f32 = 0,
-    points: [4]ContactPoint = undefined,
+    points: [CONTACT_MANIFOLD_MAX_POINTS]ContactPoint = undefined,
+};
+
+pub const NarrowPhaseShapeKind = enum(u8) {
+    aabb = 0,
+};
+
+pub const NarrowPhaseShape = struct {
+    kind: NarrowPhaseShapeKind = .aabb,
+    aabb: physics.AABB,
+};
+
+pub const NarrowPhaseContact = struct {
+    hit: bool = false,
+    manifold: ContactManifold = .{},
 };
 
 pub const CollisionResult = struct {
@@ -109,9 +127,93 @@ fn appendContactPoint(manifold: *ContactManifold, x: f32, y: f32, z: f32) void {
     manifold.point_count += 1;
 }
 
+fn contactPointDistanceSq(a: ContactPoint, b: ContactPoint) f32 {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    const dz = a.z - b.z;
+    return dx * dx + dy * dy + dz * dz;
+}
+
+fn contactPointLess(a: ContactPoint, b: ContactPoint) bool {
+    if (a.x < b.x) return true;
+    if (a.x > b.x) return false;
+    if (a.y < b.y) return true;
+    if (a.y > b.y) return false;
+    return a.z < b.z;
+}
+
+pub fn sortContactManifoldPointsStable(manifold: *ContactManifold) void {
+    const limit = @min(manifold.point_count, manifold.points.len);
+    var i: u8 = 1;
+    while (i < limit) : (i += 1) {
+        const value = manifold.points[i];
+        var j = i;
+        while (j > 0 and contactPointLess(value, manifold.points[j - 1])) : (j -= 1) {
+            manifold.points[j] = manifold.points[j - 1];
+        }
+        manifold.points[j] = value;
+    }
+}
+
+pub fn computeContactManifoldCentroid(manifold: ContactManifold) ContactPoint {
+    if (manifold.point_count == 0) return .{ .x = 0.0, .y = 0.0, .z = 0.0 };
+
+    const limit = @min(manifold.point_count, manifold.points.len);
+    var sum_x: f32 = 0.0;
+    var sum_y: f32 = 0.0;
+    var sum_z: f32 = 0.0;
+    var i: u8 = 0;
+    while (i < limit) : (i += 1) {
+        sum_x += manifold.points[i].x;
+        sum_y += manifold.points[i].y;
+        sum_z += manifold.points[i].z;
+    }
+    const inv_count = 1.0 / @as(f32, @floatFromInt(limit));
+    return .{
+        .x = sum_x * inv_count,
+        .y = sum_y * inv_count,
+        .z = sum_z * inv_count,
+    };
+}
+
+fn appendUniqueContactPoint(manifold: *ContactManifold, point: ContactPoint) void {
+    var i: u8 = 0;
+    while (i < manifold.point_count) : (i += 1) {
+        if (contactPointDistanceSq(manifold.points[i], point) <= CONTACT_POINT_EPSILON_SQ) return;
+    }
+    appendContactPoint(manifold, point.x, point.y, point.z);
+}
+
+pub fn simplifyContactManifold(manifold: ContactManifold) ContactManifold {
+    if (manifold.penetration_depth <= 0.0 or manifold.point_count == 0) return .{};
+
+    const normal_len_sq = manifold.normal_x * manifold.normal_x +
+        manifold.normal_y * manifold.normal_y +
+        manifold.normal_z * manifold.normal_z;
+    if (normal_len_sq <= 0.000001) return .{};
+
+    const inv_normal_len = 1.0 / @sqrt(normal_len_sq);
+    var simplified: ContactManifold = .{
+        .normal_x = manifold.normal_x * inv_normal_len,
+        .normal_y = manifold.normal_y * inv_normal_len,
+        .normal_z = manifold.normal_z * inv_normal_len,
+        .penetration_depth = manifold.penetration_depth,
+    };
+
+    const limit = @min(manifold.point_count, manifold.points.len);
+    var i: u8 = 0;
+    while (i < limit) : (i += 1) {
+        appendUniqueContactPoint(&simplified, manifold.points[i]);
+    }
+
+    if (simplified.point_count == 0) return .{};
+    sortContactManifoldPointsStable(&simplified);
+    return simplified;
+}
+
 pub fn buildAABBContactManifold(a: physics.AABB, b: physics.AABB) ContactManifold {
     var manifold: ContactManifold = .{};
-    if (!physics.aabbHit(a, b)) return manifold;
+    if (!physics.voxelBoxHit(a, b)) return manifold;
 
     const overlap_x = @as(f32, @floatFromInt(@min(a.max_x, b.max_x) - @max(a.min_x, b.min_x)));
     const overlap_y = @as(f32, @floatFromInt(@min(a.max_y, b.max_y) - @max(a.min_y, b.min_y)));
@@ -168,12 +270,27 @@ pub fn buildAABBContactManifold(a: physics.AABB, b: physics.AABB) ContactManifol
     return manifold;
 }
 
-pub fn applyCollision(
-    pos_x: f32, pos_y: f32, pos_z: f32,
-    vel_x: f32, vel_y: f32, vel_z: f32,
-    mass: f32,
-    config: CollisionConfig
-) CollisionResult {
+pub fn buildNarrowPhaseContactManifold(a: NarrowPhaseShape, b: NarrowPhaseShape) NarrowPhaseContact {
+    const raw_manifold = switch (a.kind) {
+        .aabb => switch (b.kind) {
+            .aabb => buildAABBContactManifold(a.aabb, b.aabb),
+        },
+    };
+    const manifold = simplifyContactManifold(raw_manifold);
+    return .{
+        .hit = manifold.point_count > 0 and manifold.penetration_depth > 0.0,
+        .manifold = manifold,
+    };
+}
+
+pub fn narrowPhaseAABB(a: physics.AABB, b: physics.AABB) NarrowPhaseContact {
+    return buildNarrowPhaseContactManifold(
+        .{ .kind = .aabb, .aabb = a },
+        .{ .kind = .aabb, .aabb = b },
+    );
+}
+
+pub fn applyCollision(pos_x: f32, pos_y: f32, pos_z: f32, vel_x: f32, vel_y: f32, vel_z: f32, mass: f32, config: CollisionConfig) CollisionResult {
     var result: CollisionResult = .{
         .collided = false,
         .penetration_depth = 0,
@@ -207,7 +324,7 @@ pub fn applyCollision(
         dmg.rear_right_damage = @min(100, dmg.rear_right_damage + damage * rear_factor * 80);
 
         const total_damage = (dmg.hood_damage + dmg.front_left_damage + dmg.front_right_damage +
-                           dmg.rear_left_damage + dmg.rear_right_damage + dmg.roof_damage) / 6.0;
+            dmg.rear_left_damage + dmg.rear_right_damage + dmg.roof_damage) / 6.0;
         dmg.structural_integrity = 100.0 - total_damage;
 
         dmg.engine_damage = @min(100, dmg.engine_damage + damage * front_factor * 50);
@@ -252,7 +369,7 @@ pub fn repairDamage(amount: f32) void {
     dmg.transmission_damage = @max(0, dmg.transmission_damage - amount * 0.5);
 
     const total_damage = (dmg.hood_damage + dmg.front_left_damage + dmg.front_right_damage +
-                         dmg.rear_left_damage + dmg.rear_right_damage + dmg.roof_damage) / 6.0;
+        dmg.rear_left_damage + dmg.rear_right_damage + dmg.roof_damage) / 6.0;
     dmg.structural_integrity = 100.0 - total_damage;
 }
 
@@ -283,4 +400,105 @@ test "buildAABBContactManifold returns no points when boxes are clear" {
 
     try std.testing.expect(manifold.point_count == 0);
     try std.testing.expect(manifold.penetration_depth == 0);
+}
+
+test "buildNarrowPhaseContactManifold generates AABB contact manifold" {
+    const a = physics.AABB{ .min_x = 0, .min_y = 0, .min_z = 0, .max_x = 3, .max_y = 2, .max_z = 3 };
+    const b = physics.AABB{ .min_x = 1, .min_y = 1, .min_z = 1, .max_x = 4, .max_y = 4, .max_z = 4 };
+
+    const contact = buildNarrowPhaseContactManifold(
+        .{ .kind = .aabb, .aabb = a },
+        .{ .kind = .aabb, .aabb = b },
+    );
+
+    try std.testing.expect(contact.hit);
+    try std.testing.expect(contact.manifold.point_count > 0);
+    try std.testing.expect(contact.manifold.penetration_depth > 0.0);
+}
+
+test "narrowPhaseAABB reports clear pair without manifold points" {
+    const a = physics.AABB{ .min_x = 0, .min_y = 0, .min_z = 0, .max_x = 1, .max_y = 1, .max_z = 1 };
+    const b = physics.AABB{ .min_x = 1, .min_y = 0, .min_z = 0, .max_x = 2, .max_y = 1, .max_z = 1 };
+
+    const contact = narrowPhaseAABB(a, b);
+    try std.testing.expect(!contact.hit);
+    try std.testing.expectEqual(@as(u8, 0), contact.manifold.point_count);
+}
+
+test "simplifyContactManifold normalizes normal and removes duplicate points" {
+    const manifold: ContactManifold = .{
+        .point_count = 4,
+        .normal_x = 0.0,
+        .normal_y = 2.0,
+        .normal_z = 0.0,
+        .penetration_depth = 1.0,
+        .points = .{
+            .{ .x = 1.0, .y = 2.0, .z = 3.0 },
+            .{ .x = 1.0, .y = 2.0, .z = 3.0 },
+            .{ .x = 2.0, .y = 2.0, .z = 3.0 },
+            .{ .x = 2.0, .y = 2.0, .z = 3.0 },
+        },
+    };
+
+    const simplified = simplifyContactManifold(manifold);
+    try std.testing.expectEqual(@as(u8, 2), simplified.point_count);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), simplified.normal_y, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), simplified.penetration_depth, 0.0001);
+}
+
+test "simplifyContactManifold rejects invalid manifold" {
+    const no_normal = simplifyContactManifold(.{
+        .point_count = 1,
+        .penetration_depth = 1.0,
+        .points = .{ContactPoint{ .x = 0.0, .y = 0.0, .z = 0.0 }} ** CONTACT_MANIFOLD_MAX_POINTS,
+    });
+    try std.testing.expectEqual(@as(u8, 0), no_normal.point_count);
+
+    const no_depth = simplifyContactManifold(.{
+        .point_count = 1,
+        .normal_y = 1.0,
+        .penetration_depth = 0.0,
+        .points = .{ContactPoint{ .x = 0.0, .y = 0.0, .z = 0.0 }} ** CONTACT_MANIFOLD_MAX_POINTS,
+    });
+    try std.testing.expectEqual(@as(u8, 0), no_depth.point_count);
+}
+
+test "simplifyContactManifold keeps multipoint output stable sorted" {
+    const manifold: ContactManifold = .{
+        .point_count = 4,
+        .normal_y = 1.0,
+        .penetration_depth = 1.0,
+        .points = .{
+            .{ .x = 2.0, .y = 1.0, .z = 1.0 },
+            .{ .x = 1.0, .y = 1.0, .z = 2.0 },
+            .{ .x = 1.0, .y = 1.0, .z = 1.0 },
+            .{ .x = 2.0, .y = 1.0, .z = 2.0 },
+        },
+    };
+
+    const simplified = simplifyContactManifold(manifold);
+    try std.testing.expectEqual(@as(u8, 4), simplified.point_count);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), simplified.points[0].x, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), simplified.points[0].z, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), simplified.points[3].x, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), simplified.points[3].z, 0.0001);
+}
+
+test "computeContactManifoldCentroid averages active contact points" {
+    const manifold: ContactManifold = .{
+        .point_count = 4,
+        .normal_y = 1.0,
+        .penetration_depth = 1.0,
+        .points = .{
+            .{ .x = 0.0, .y = 2.0, .z = 0.0 },
+            .{ .x = 2.0, .y = 2.0, .z = 0.0 },
+            .{ .x = 0.0, .y = 2.0, .z = 2.0 },
+            .{ .x = 2.0, .y = 2.0, .z = 2.0 },
+        },
+    };
+
+    const centroid = computeContactManifoldCentroid(manifold);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), centroid.x, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), centroid.y, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), centroid.z, 0.0001);
 }

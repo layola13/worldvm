@@ -26,20 +26,32 @@ const rewind = @import("rewind.zig");
 const query = @import("query.zig");
 
 pub const FIXED_DT: f32 = 1.0 / 60.0;
-pub const SLEEP_TIME_THRESHOLD: u8 = 30;
+pub const SLEEP_TIME_THRESHOLD: u8 = sleep_response.SLEEP_TIME_THRESHOLD;
 pub const MAX_BROADPHASE_PAIRS: usize = physics_kernel.MAX_BROADPHASE_PAIRS;
 pub const BroadPhasePair = physics_kernel.BroadPhasePair;
+pub const SleepIsland = physics_kernel.SleepIsland;
 
 pub const StepConfig = struct {
     dt: f32 = FIXED_DT,
     time_scale: f32 = 1.0,
     run_pre_motion_constraint: bool = true,
     apply_continuous_physics: bool = false,
+    authority: StepAuthority = .physics_world_compat,
+};
+
+pub const StepAuthority = enum(u8) {
+    tick_engine = 1,
+    physics_world_compat = 2,
 };
 
 pub const StepResult = struct {
-    changed: bool,
-    pair_count: usize,
+    changed: bool = false,
+    pair_count: usize = 0,
+    event_count: u8 = 0,
+    snapshot_tick: u32 = 0,
+    state_hash: u64 = 0,
+    determinism_flags: u32 = 0,
+    authority: StepAuthority = .physics_world_compat,
 };
 
 /// PhysicsWorld - bundles all physics subsystem handles
@@ -51,6 +63,11 @@ pub const PhysicsWorld = struct {
     tick: u32,
     world_bus: ?*bus.Bus,
     pending_collisions: collision_event.PendingCollisionQueue,
+    pending_sounds: collision_event.PendingSoundQueue,
+    pending_particles: collision_event.PendingParticleQueue,
+    pending_deformations: collision_event.PendingDeformationQueue,
+    pending_breaks: collision_event.PendingBreakQueue,
+    pending_joint_breaks: collision_event.PendingJointBreakQueue,
     broadphase_pairs: [MAX_BROADPHASE_PAIRS]BroadPhasePair,
     broadphase_pair_count: usize,
 };
@@ -58,6 +75,38 @@ pub const PhysicsWorld = struct {
 fn queueCollisionPairEvent(world: *PhysicsWorld, inst: *const scene32.Instance, impact_velocity: i16, blocker_id: u8) void {
     physics_kernel.enqueueCollisionPairEvent(
         &world.pending_collisions,
+        world.s1024.instances[0..world.s1024.instance_count],
+        world.entities,
+        inst,
+        impact_velocity,
+        blocker_id,
+    );
+    physics_kernel.enqueueSoundPairEvent(
+        &world.pending_sounds,
+        world.s1024.instances[0..world.s1024.instance_count],
+        world.entities,
+        inst,
+        impact_velocity,
+        blocker_id,
+    );
+    physics_kernel.enqueueParticlePairEvent(
+        &world.pending_particles,
+        world.s1024.instances[0..world.s1024.instance_count],
+        world.entities,
+        inst,
+        impact_velocity,
+        blocker_id,
+    );
+    physics_kernel.enqueueDeformationPairEvent(
+        &world.pending_deformations,
+        world.s1024.instances[0..world.s1024.instance_count],
+        world.entities,
+        inst,
+        impact_velocity,
+        blocker_id,
+    );
+    physics_kernel.enqueueBreakPairEvent(
+        &world.pending_breaks,
         world.s1024.instances[0..world.s1024.instance_count],
         world.entities,
         inst,
@@ -209,6 +258,7 @@ fn integrateDynamicInstance(
 
     inst_moved = physics_kernel.finalizeMotionState(
         inst,
+        entity,
         next_x,
         next_y,
         next_z,
@@ -230,6 +280,11 @@ pub fn initWorld(world: *PhysicsWorld, s1024: *scene1024.Scene1024, entities: []
         .tick = 0,
         .world_bus = null,
         .pending_collisions = .{},
+        .pending_sounds = .{},
+        .pending_particles = .{},
+        .pending_deformations = .{},
+        .pending_breaks = .{},
+        .pending_joint_breaks = .{},
         .broadphase_pairs = undefined,
         .broadphase_pair_count = 0,
     };
@@ -258,6 +313,16 @@ pub fn solveConstraints(world: *PhysicsWorld) void {
         world.entities,
         world.joints[0..world.joint_count],
         world.broadphase_pairs[0..world.broadphase_pair_count],
+        &world.pending_joint_breaks,
+    );
+}
+
+pub fn detectSleepIslands(world: *const PhysicsWorld, out_islands: []SleepIsland) usize {
+    return physics_kernel.detectSleepIslands(
+        world.s1024.instances[0..world.s1024.instance_count],
+        world.entities,
+        world.broadphase_pairs[0..world.broadphase_pair_count],
+        out_islands,
     );
 }
 
@@ -269,6 +334,10 @@ pub const IntegrateResult = struct {
 
 pub fn integrate(world: *PhysicsWorld) IntegrateResult {
     physics_kernel.clearPendingCollisions(&world.pending_collisions);
+    physics_kernel.clearPendingSounds(&world.pending_sounds);
+    physics_kernel.clearPendingParticles(&world.pending_particles);
+    physics_kernel.clearPendingDeformations(&world.pending_deformations);
+    physics_kernel.clearPendingBreaks(&world.pending_breaks);
     var moved = false;
     var topology_changed = false;
     var i: u8 = 0;
@@ -286,6 +355,11 @@ pub fn integrate(world: *PhysicsWorld) IntegrateResult {
 /// Handle events: collision callbacks, triggers
 pub fn handleEvents(world: *PhysicsWorld) void {
     physics_kernel.publishPendingCollisions(&world.pending_collisions, world.world_bus, world.tick);
+    physics_kernel.publishPendingSounds(&world.pending_sounds, world.world_bus, world.tick);
+    physics_kernel.publishPendingParticles(&world.pending_particles, world.world_bus, world.tick);
+    physics_kernel.publishPendingDeformations(&world.pending_deformations, world.world_bus, world.tick);
+    physics_kernel.publishPendingBreaks(&world.pending_breaks, world.world_bus, world.tick);
+    physics_kernel.publishPendingJointBreaks(&world.pending_joint_breaks, world.world_bus, world.tick);
 }
 
 /// Record snapshot for rewind
@@ -307,6 +381,7 @@ fn runStep(world: *PhysicsWorld, cfg: StepConfig) StepResult {
             cfg.time_scale,
             SLEEP_TIME_THRESHOLD,
             cfg.dt,
+            &world.pending_joint_breaks,
         );
         world.broadphase_pair_count = pre_constraint.pair_count;
         observed_pair_count = pre_constraint.pair_count;
@@ -327,15 +402,23 @@ fn runStep(world: *PhysicsWorld, cfg: StepConfig) StepResult {
         world.entities,
         world.joints[0..world.joint_count],
         world.broadphase_pairs[0..],
+        &world.pending_joint_breaks,
     );
     world.broadphase_pair_count = physics_kernel.mergeObservedPairCount(
         observed_pair_count,
         constraint_result.pair_count,
     );
-    physics_kernel.finishWorldStep(&world.pending_collisions, world.world_bus, world.tick, world.s1024, world.entities, cfg.dt);
+    const event_count = world.pending_collisions.count + world.pending_sounds.count + world.pending_particles.count + world.pending_deformations.count + world.pending_breaks.count + world.pending_joint_breaks.count;
+    physics_kernel.finishWorldStep(&world.pending_collisions, &world.pending_sounds, &world.pending_particles, &world.pending_deformations, &world.pending_breaks, &world.pending_joint_breaks, world.world_bus, world.tick, world.s1024, world.entities, cfg.dt);
+    const snapshot = rewind.getWorldSnapshotAtTick(world.tick);
     return .{
         .changed = pre_changed or integrate_result.moved or integrate_result.topology_changed or constraint_result.changed,
         .pair_count = world.broadphase_pair_count,
+        .event_count = event_count,
+        .snapshot_tick = world.tick,
+        .state_hash = if (snapshot) |s| s.world_hash else 0,
+        .determinism_flags = 0,
+        .authority = cfg.authority,
     };
 }
 
@@ -816,6 +899,7 @@ test "PhysicsWorld unified constraint block separates vertical dynamic stack ove
         world.entities,
         world.joints[0..world.joint_count],
         world.broadphase_pairs[0..world.broadphase_pair_count],
+        null,
     );
 
     const aabb_lower = physics.computeEntityWorldAABB(&s1024.instances[0], &entities[0]).?;
@@ -871,6 +955,7 @@ test "PhysicsWorld unified constraint block depenetrates dynamic body from envir
         world.entities,
         world.joints[0..world.joint_count],
         world.broadphase_pairs[0..world.broadphase_pair_count],
+        null,
     );
 
     try std.testing.expect(
@@ -908,10 +993,13 @@ test "PhysicsWorld step records rewind snapshot" {
 
     var world: PhysicsWorld = undefined;
     initWorld(&world, &s1024, entities[0..]);
-    stepPhysics(&world);
+    const result = stepPhysicsConfigured(&world, .{});
 
     try std.testing.expect(world.tick == 1);
-    try std.testing.expect(rewind.getWorldSnapshotAtTick(1) != null);
+    try std.testing.expectEqual(@as(u32, 1), result.snapshot_tick);
+    try std.testing.expect(result.state_hash != 0);
+    try std.testing.expectEqual(result.state_hash, rewind.getWorldSnapshotAtTick(1).?.world_hash);
+    try std.testing.expectEqual(StepAuthority.physics_world_compat, result.authority);
 }
 
 test "PhysicsWorld step advances dynamic instance position" {
@@ -1567,9 +1655,91 @@ test "PhysicsWorld handleEvents marks breakable impact in bus payload" {
     world.world_bus = &event_bus;
     stepPhysics(&world);
 
-    try std.testing.expect(event_bus.msg_count == 2);
-    try std.testing.expect(event_bus.messages[0].priority == .HIGH);
-    try std.testing.expect(event_bus.messages[0].payload.collision.did_break);
+    var collision_events: u8 = 0;
+    var msg_idx: u16 = 0;
+    while (msg_idx < event_bus.msg_count) : (msg_idx += 1) {
+        if (event_bus.messages[msg_idx].msg_type != .PHYSICS_EVENT) continue;
+        collision_events += 1;
+        try std.testing.expect(event_bus.messages[msg_idx].priority == .HIGH);
+        try std.testing.expect(event_bus.messages[msg_idx].payload.collision.did_break);
+    }
+    try std.testing.expectEqual(@as(u8, 2), collision_events);
+}
+
+test "PhysicsWorld handleEvents broadcasts break events for fragile collision" {
+    var s1024 = scene1024.Scene1024.init(std.testing.allocator);
+    defer s1024.deinit();
+    _ = try s1024.getPage(0);
+
+    var mover = entity16.initEntity16();
+    mover.physics.mass = 400;
+    mover.physics.material = .fragile;
+    mover.physics.hardness = 10;
+    entity16.setVoxel(&mover, 0, 0, 0);
+
+    var floor = entity16.initEntity16();
+    floor.physics.mass = 0;
+    floor.physics.material = .solid;
+    floor.physics.hardness = 200;
+    floor.physics.flags |= 0x01;
+    entity16.setVoxel(&floor, 0, 0, 0);
+
+    var entities = [_]entity16.Entity16{ mover, floor };
+    s1024.instance_count = 2;
+    s1024.instances[0] = .{
+        .entity_id = 0,
+        .pos_x = 0,
+        .pos_y = 2,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .falling,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = -20,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    s1024.instances[1] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .resting,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+
+    var world: PhysicsWorld = undefined;
+    initWorld(&world, &s1024, entities[0..]);
+
+    var event_bus = bus.Bus.init();
+    world.world_bus = &event_bus;
+    stepPhysics(&world);
+
+    var break_events: u8 = 0;
+    var msg_idx: u16 = 0;
+    while (msg_idx < event_bus.msg_count) : (msg_idx += 1) {
+        if (event_bus.messages[msg_idx].msg_type != .BREAK_EVENT) continue;
+        break_events += 1;
+        try std.testing.expectEqual(@as(u16, 0), event_bus.messages[msg_idx].entity_id);
+        try std.testing.expectEqual(@as(u16, 10), event_bus.messages[msg_idx].payload.breakage.hardness);
+        try std.testing.expect(event_bus.messages[msg_idx].payload.breakage.fragment_count > 0);
+    }
+    try std.testing.expectEqual(@as(u8, 2), break_events);
 }
 
 test "PhysicsWorld handleEvents broadcasts both participants for instance collision" {
@@ -1635,9 +1805,235 @@ test "PhysicsWorld handleEvents broadcasts both participants for instance collis
     world.world_bus = &event_bus;
     stepPhysics(&world);
 
-    try std.testing.expect(event_bus.msg_count == 4);
-    try std.testing.expect(event_bus.messages[0].entity_id == 0);
-    try std.testing.expect(event_bus.messages[2].entity_id == 1);
+    var mover_collision_events: u8 = 0;
+    var target_collision_events: u8 = 0;
+    var msg_idx: u16 = 0;
+    while (msg_idx < event_bus.msg_count) : (msg_idx += 1) {
+        if (event_bus.messages[msg_idx].msg_type != .PHYSICS_EVENT) continue;
+        if (event_bus.messages[msg_idx].entity_id == 0) mover_collision_events += 1;
+        if (event_bus.messages[msg_idx].entity_id == 1) target_collision_events += 1;
+    }
+    try std.testing.expectEqual(@as(u8, 2), mover_collision_events);
+    try std.testing.expectEqual(@as(u8, 2), target_collision_events);
+}
+
+test "PhysicsWorld handleEvents broadcasts sound events for instance collision" {
+    var s1024 = scene1024.Scene1024.init(std.testing.allocator);
+    defer s1024.deinit();
+    _ = try s1024.getPage(0);
+
+    var mover = entity16.initEntity16();
+    mover.physics.mass = 50;
+    mover.physics.material = .solid;
+    entity16.setVoxel(&mover, 0, 0, 0);
+
+    var target = entity16.initEntity16();
+    target.physics.mass = 20;
+    target.physics.material = .solid;
+    target.physics.flags |= 0x01;
+    entity16.setVoxel(&target, 0, 0, 0);
+
+    var entities = [_]entity16.Entity16{ mover, target };
+    s1024.instance_count = 2;
+    s1024.instances[0] = .{
+        .entity_id = 0,
+        .pos_x = 0,
+        .pos_y = 10,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .sleep_tick = 0,
+        .vel_x = 2,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    s1024.instances[1] = .{
+        .entity_id = 1,
+        .pos_x = 1,
+        .pos_y = 10,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .resting,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+
+    var world: PhysicsWorld = undefined;
+    initWorld(&world, &s1024, entities[0..]);
+
+    var event_bus = bus.Bus.init();
+    world.world_bus = &event_bus;
+    stepPhysics(&world);
+
+    var sound_events: u8 = 0;
+    var msg_idx: u16 = 0;
+    while (msg_idx < event_bus.msg_count) : (msg_idx += 1) {
+        if (event_bus.messages[msg_idx].msg_type != .SOUND_EVENT) continue;
+        sound_events += 1;
+        try std.testing.expect(event_bus.messages[msg_idx].payload.sound.sound_type != 0);
+        try std.testing.expect(event_bus.messages[msg_idx].payload.sound.volume > 0.0);
+    }
+    try std.testing.expect(sound_events >= 2);
+}
+
+test "PhysicsWorld handleEvents broadcasts particle events for instance collision" {
+    var s1024 = scene1024.Scene1024.init(std.testing.allocator);
+    defer s1024.deinit();
+    _ = try s1024.getPage(0);
+
+    var mover = entity16.initEntity16();
+    mover.physics.mass = 50;
+    mover.physics.material = .solid;
+    entity16.setVoxel(&mover, 0, 0, 0);
+
+    var target = entity16.initEntity16();
+    target.physics.mass = 20;
+    target.physics.material = .solid;
+    target.physics.flags |= 0x01;
+    entity16.setVoxel(&target, 0, 0, 0);
+
+    var entities = [_]entity16.Entity16{ mover, target };
+    s1024.instance_count = 2;
+    s1024.instances[0] = .{
+        .entity_id = 0,
+        .pos_x = 0,
+        .pos_y = 10,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .sleep_tick = 0,
+        .vel_x = 2,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    s1024.instances[1] = .{
+        .entity_id = 1,
+        .pos_x = 1,
+        .pos_y = 10,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .resting,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+
+    var world: PhysicsWorld = undefined;
+    initWorld(&world, &s1024, entities[0..]);
+
+    var event_bus = bus.Bus.init();
+    world.world_bus = &event_bus;
+    stepPhysics(&world);
+
+    var particle_events: u8 = 0;
+    var msg_idx: u16 = 0;
+    while (msg_idx < event_bus.msg_count) : (msg_idx += 1) {
+        if (event_bus.messages[msg_idx].msg_type != .PARTICLE_EVENT) continue;
+        particle_events += 1;
+        try std.testing.expect(event_bus.messages[msg_idx].payload.particle.particle_type != 0);
+        try std.testing.expect(event_bus.messages[msg_idx].payload.particle.intensity > 0.0);
+    }
+    try std.testing.expect(particle_events >= 2);
+}
+
+test "PhysicsWorld handleEvents broadcasts deformation events for instance collision" {
+    var s1024 = scene1024.Scene1024.init(std.testing.allocator);
+    defer s1024.deinit();
+    _ = try s1024.getPage(0);
+
+    var mover = entity16.initEntity16();
+    mover.physics.mass = 50;
+    mover.physics.material = .solid;
+    entity16.setVoxel(&mover, 0, 0, 0);
+
+    var target = entity16.initEntity16();
+    target.physics.mass = 20;
+    target.physics.material = .solid;
+    target.physics.flags |= 0x01;
+    entity16.setVoxel(&target, 0, 0, 0);
+
+    var entities = [_]entity16.Entity16{ mover, target };
+    s1024.instance_count = 2;
+    s1024.instances[0] = .{
+        .entity_id = 0,
+        .pos_x = 0,
+        .pos_y = 10,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .sleep_tick = 0,
+        .vel_x = 2,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    s1024.instances[1] = .{
+        .entity_id = 1,
+        .pos_x = 1,
+        .pos_y = 10,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .resting,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+
+    var world: PhysicsWorld = undefined;
+    initWorld(&world, &s1024, entities[0..]);
+
+    var event_bus = bus.Bus.init();
+    world.world_bus = &event_bus;
+    stepPhysics(&world);
+
+    var deformation_events: u8 = 0;
+    var msg_idx: u16 = 0;
+    while (msg_idx < event_bus.msg_count) : (msg_idx += 1) {
+        if (event_bus.messages[msg_idx].msg_type != .DEFORMATION_EVENT) continue;
+        deformation_events += 1;
+        try std.testing.expect(event_bus.messages[msg_idx].payload.deformation.total_depth > 0.0);
+        try std.testing.expect(event_bus.messages[msg_idx].payload.deformation.recovery_fraction >= 0.0);
+    }
+    try std.testing.expect(deformation_events >= 2);
 }
 
 test "PhysicsWorld step applies elastic bounce response on rubber terrain" {
@@ -1648,7 +2044,13 @@ test "PhysicsWorld step applies elastic bounce response on rubber terrain" {
     defer s1024.deinit();
     _ = try s1024.getPage(0);
     try s1024.setVoxelAtGlobal(address.encode(.{
-        .world = 0, .px = 0, .py = 0, .pz = 0, .lx = 0, .ly = 0, .lz = 0,
+        .world = 0,
+        .px = 0,
+        .py = 0,
+        .pz = 0,
+        .lx = 0,
+        .ly = 0,
+        .lz = 0,
     }), true);
 
     var ball = entity16.initEntity16();
@@ -1694,7 +2096,13 @@ test "PhysicsWorld step applies soft-ground absorption on mud terrain" {
     defer s1024.deinit();
     _ = try s1024.getPage(0);
     try s1024.setVoxelAtGlobal(address.encode(.{
-        .world = 0, .px = 0, .py = 0, .pz = 0, .lx = 0, .ly = 0, .lz = 0,
+        .world = 0,
+        .px = 0,
+        .py = 0,
+        .pz = 0,
+        .lx = 0,
+        .ly = 0,
+        .lz = 0,
     }), true);
 
     var mover = entity16.initEntity16();
@@ -2073,7 +2481,13 @@ test "PhysicsWorld lateral environment collision applies tangential friction res
     defer s1024.deinit();
     _ = try s1024.getPage(0);
     try s1024.setVoxelAtGlobal(address.encode(.{
-        .world = 0, .px = 0, .py = 0, .pz = 0, .lx = 1, .ly = 10, .lz = 0,
+        .world = 0,
+        .px = 0,
+        .py = 0,
+        .pz = 0,
+        .lx = 1,
+        .ly = 10,
+        .lz = 0,
     }), true);
 
     var mover = entity16.initEntity16();

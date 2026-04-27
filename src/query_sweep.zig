@@ -123,25 +123,19 @@ fn updateClosestSweepHit(closest_hit: *QueryHit, hit: QueryHit, offset: SampleOf
     if (closest_hit.hit and hit.distance >= closest_hit.distance) return;
 
     var adjusted = hit;
-    adjusted.position_x -= offset.x;
-    adjusted.position_y -= offset.y;
-    adjusted.position_z -= offset.z;
+    query_types.setQueryHitPosition(&adjusted, hit.position_x - offset.x, hit.position_y - offset.y, hit.position_z - offset.z);
     closest_hit.* = adjusted;
 }
 
 fn hitFromOverlapResult(overlap: query_types.OverlapResult, base_x: f32, base_y: f32, base_z: f32, world: *const QueryWorldView) QueryHit {
     if (!overlap.hit) return .{};
 
-    var hit: QueryHit = .{
-        .hit = true,
-        .distance = 0.0,
-        .toi = 0.0,
-        .position_x = base_x,
-        .position_y = base_y,
-        .position_z = base_z,
-        .instance_idx = overlap.first_instance_idx,
-        .hit_environment = overlap.environment_overlap,
-    };
+    var hit: QueryHit = if (overlap.first_hit.hit) overlap.first_hit else .{ .hit = true };
+    hit.distance = 0.0;
+    hit.toi = 0.0;
+    hit.instance_idx = overlap.first_instance_idx;
+    hit.hit_environment = overlap.environment_overlap;
+    query_types.setQueryHitPosition(&hit, base_x, base_y, base_z);
 
     if (overlap.first_instance_idx >= 0) {
         const idx: usize = @intCast(overlap.first_instance_idx);
@@ -149,25 +143,26 @@ fn hitFromOverlapResult(overlap: query_types.OverlapResult, base_x: f32, base_y:
             hit.entity_id = @intCast(world.instances[idx].entity_id);
         }
     }
+    query_types.normalizeQueryHitNormal(&hit);
     return hit;
 }
 
 fn overlapFromSamples(world: *const QueryWorldView, base_x: f32, base_y: f32, base_z: f32, offsets: []const SampleOffset, filter: QueryFilter) QueryHit {
+    var cache = query_world.QueryAnyVoxelCache.init(filter);
     for (offsets) |offset| {
-        const hit = query_world.queryAnyVoxel(
+        const hit = query_world.queryAnyVoxelCached(
             world,
+            &cache,
             @intFromFloat(@floor(base_x + offset.x)),
             @intFromFloat(@floor(base_y + offset.y)),
             @intFromFloat(@floor(base_z + offset.z)),
-            filter,
         );
         if (hit.hit) {
             var adjusted = hit;
             adjusted.distance = 0;
             adjusted.toi = 0;
-            adjusted.position_x = base_x;
-            adjusted.position_y = base_y;
-            adjusted.position_z = base_z;
+            query_types.setQueryHitPosition(&adjusted, base_x, base_y, base_z);
+            query_types.normalizeQueryHitNormal(&adjusted);
             return adjusted;
         }
     }
@@ -274,6 +269,7 @@ test "sphereCast hits offset obstacle within radius even when center ray would m
 
     const hit = sphereCast(&world, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 5.0, .{});
     try std.testing.expect(hit.hit);
+    try std.testing.expect(query_types.queryHitIsConsistent(hit));
     try std.testing.expect(hit.hit_environment);
     try std.testing.expect(hit.distance <= 3.0);
 }
@@ -374,7 +370,10 @@ test "sphereCast zero direction reuses real overlap semantics for edge contact" 
     const scene1024 = @import("scene1024.zig");
     const entity16 = @import("entity16.zig");
     const address = @import("address.zig");
+    const terrain = @import("terrain.zig");
 
+    terrain.init();
+    terrain.addTerrainPatch(0, 0, 8, .mud);
     var s1024 = scene1024.Scene1024.init(std.testing.allocator);
     defer s1024.deinit();
     const addr = address.encode(.{
@@ -397,6 +396,12 @@ test "sphereCast zero direction reuses real overlap semantics for edge contact" 
 
     const hit = sphereCast(&world, 0.9, 0.9, 0.5, 0.2, 0.0, 0.0, 0.0, 0.0, .{});
     try std.testing.expect(hit.hit);
+    try std.testing.expect(query_types.queryHitIsConsistent(hit));
     try std.testing.expect(hit.hit_environment);
     try std.testing.expect(hit.distance == 0.0);
+    try std.testing.expect(hit.classification.surface_type == .mud);
+    try std.testing.expect(hit.material_type == hit.classification.material_type);
+    try std.testing.expect(hit.surface_condition == hit.classification.surface_condition);
+    try std.testing.expect(hit.medium_type == hit.classification.medium_type);
+    try std.testing.expect(hit.body_type == hit.classification.body_type);
 }

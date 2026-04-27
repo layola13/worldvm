@@ -10,6 +10,7 @@ const query_world = @import("query_world.zig");
 
 const PenetrationResult = query_types.PenetrationResult;
 const ContactPoint = query_types.ContactPoint;
+const QueryAABB = query_types.QueryAABB;
 const QueryFilter = query_types.QueryFilter;
 const QueryWorldView = query_types.QueryWorldView;
 
@@ -61,7 +62,7 @@ pub const CapsuleVoxelRange = struct {
     end_z: i32,
 };
 
-fn updateBestPenetration(result: *PenetrationResult, depth: f32, dir_x: f32, dir_y: f32, dir_z: f32, instance_idx: i16) void {
+fn updateBestPenetration(result: *PenetrationResult, depth: f32, dir_x: f32, dir_y: f32, dir_z: f32, hit: query_types.QueryHit) void {
     if (depth <= 0) return;
     if (!result.overlapping or depth < result.depth) {
         result.overlapping = true;
@@ -69,7 +70,11 @@ fn updateBestPenetration(result: *PenetrationResult, depth: f32, dir_x: f32, dir
         result.dir_x = dir_x;
         result.dir_y = dir_y;
         result.dir_z = dir_z;
-        result.instance_idx = instance_idx;
+        result.instance_idx = hit.instance_idx;
+        result.entity_id = hit.entity_id;
+        result.hit_environment = hit.hit_environment;
+        result.classification = hit.classification;
+        result.telemetry = hit.telemetry;
     }
 }
 
@@ -260,13 +265,18 @@ fn clampf(value: f32, min_value: f32, max_value: f32) f32 {
 }
 
 pub fn computeAABBVoxelRange(min_x: f32, min_y: f32, min_z: f32, max_x: f32, max_y: f32, max_z: f32) AABBVoxelRange {
+    return computeQueryAABBVoxelRange(QueryAABB.init(min_x, min_y, min_z, max_x, max_y, max_z));
+}
+
+pub fn computeQueryAABBVoxelRange(aabb: QueryAABB) AABBVoxelRange {
+    const box = aabb.normalized();
     return .{
-        .start_x = @intFromFloat(@floor(min_x)),
-        .start_y = @intFromFloat(@floor(min_y)),
-        .start_z = @intFromFloat(@floor(min_z)),
-        .end_x = @as(i32, @intFromFloat(@ceil(max_x))) - 1,
-        .end_y = @as(i32, @intFromFloat(@ceil(max_y))) - 1,
-        .end_z = @as(i32, @intFromFloat(@ceil(max_z))) - 1,
+        .start_x = @intFromFloat(@floor(box.min_x)),
+        .start_y = @intFromFloat(@floor(box.min_y)),
+        .start_z = @intFromFloat(@floor(box.min_z)),
+        .end_x = @as(i32, @intFromFloat(@ceil(box.max_x))) - 1,
+        .end_y = @as(i32, @intFromFloat(@ceil(box.max_y))) - 1,
+        .end_z = @as(i32, @intFromFloat(@ceil(box.max_z))) - 1,
     };
 }
 
@@ -340,7 +350,40 @@ pub fn computeCapsuleBoxClosestPoint(center_x: f32, center_y: f32, center_z: f32
     };
 }
 
-fn updateBestCapsulePenetration(result: *PenetrationResult, depth: f32, dir_x: f32, dir_y: f32, dir_z: f32, instance_idx: i16) void {
+pub const PlaneBoxDistance = struct {
+    min_dot: f32,
+    max_dot: f32,
+};
+
+/// Compute min/max dot products of box corners with plane normal
+pub fn computePlaneBoxDistance(plane_origin_x: f32, plane_origin_y: f32, plane_origin_z: f32, axis_x: f32, axis_y: f32, axis_z: f32, box_min_x: f32, box_min_y: f32, box_min_z: f32, box_max_x: f32, box_max_y: f32, box_max_z: f32) PlaneBoxDistance {
+    const corners = [_][3]f32{
+        .{ box_min_x, box_min_y, box_min_z },
+        .{ box_min_x, box_min_y, box_max_z },
+        .{ box_min_x, box_max_y, box_min_z },
+        .{ box_min_x, box_max_y, box_max_z },
+        .{ box_max_x, box_min_y, box_min_z },
+        .{ box_max_x, box_min_y, box_max_z },
+        .{ box_max_x, box_max_y, box_min_z },
+        .{ box_max_x, box_max_y, box_max_z },
+    };
+
+    var min_dot: f32 = std.math.inf(f32);
+    var max_dot: f32 = -std.math.inf(f32);
+
+    for (corners) |c| {
+        const dx = c[0] - plane_origin_x;
+        const dy = c[1] - plane_origin_y;
+        const dz = c[2] - plane_origin_z;
+        const dot = dx * axis_x + dy * axis_y + dz * axis_z;
+        min_dot = @min(min_dot, dot);
+        max_dot = @max(max_dot, dot);
+    }
+
+    return .{ .min_dot = min_dot, .max_dot = max_dot };
+}
+
+fn updateBestCapsulePenetration(result: *PenetrationResult, depth: f32, dir_x: f32, dir_y: f32, dir_z: f32, hit: query_types.QueryHit) void {
     if (depth <= 0) return;
     if (!result.overlapping or depth > result.depth) {
         result.overlapping = true;
@@ -348,8 +391,75 @@ fn updateBestCapsulePenetration(result: *PenetrationResult, depth: f32, dir_x: f
         result.dir_x = dir_x;
         result.dir_y = dir_y;
         result.dir_z = dir_z;
-        result.instance_idx = instance_idx;
+        result.instance_idx = hit.instance_idx;
+        result.entity_id = hit.entity_id;
+        result.hit_environment = hit.hit_environment;
+        result.classification = hit.classification;
+        result.telemetry = hit.telemetry;
     }
+}
+
+/// Compute penetration of hemisphere into world
+pub fn computePenetrationHemisphere(world: *const QueryWorldView, center_x: f32, center_y: f32, center_z: f32, radius: f32, axis_x: f32, axis_y: f32, axis_z: f32, filter: QueryFilter) PenetrationResult {
+    var result: PenetrationResult = .{};
+    const radius_sq = radius * radius;
+    const range = computeSphereVoxelRange(center_x, center_y, center_z, radius);
+    var cache = query_world.QueryAnyVoxelCache.init(filter);
+
+    var gx = range.start_x;
+    while (gx <= range.end_x) : (gx += 1) {
+        var gy = range.start_y;
+        while (gy <= range.end_y) : (gy += 1) {
+            var gz = range.start_z;
+            while (gz <= range.end_z) : (gz += 1) {
+                const box_min_x = @as(f32, @floatFromInt(gx));
+                const box_min_y = @as(f32, @floatFromInt(gy));
+                const box_min_z = @as(f32, @floatFromInt(gz));
+                const box_max_x = box_min_x + 1.0;
+                const box_max_y = box_min_y + 1.0;
+                const box_max_z = box_min_z + 1.0;
+
+                const closest = computeSphereBoxClosestPoint(center_x, center_y, center_z, box_min_x, box_min_y, box_min_z, box_max_x, box_max_y, box_max_z);
+                if (closest.dist_sq > radius_sq) continue;
+
+                // Check if the closest point is on the hemisphere side
+                const dx = closest.closest_x - center_x;
+                const dy = closest.closest_y - center_y;
+                const dz = closest.closest_z - center_z;
+                const dot = dx * axis_x + dy * axis_y + dz * axis_z;
+
+                if (dot < 0) {
+                    const plane_dist = computePlaneBoxDistance(center_x, center_y, center_z, axis_x, axis_y, axis_z, box_min_x, box_min_y, box_min_z, box_max_x, box_max_y, box_max_z);
+                    if (plane_dist.max_dot < 0) continue;
+                }
+
+                const hit = query_world.queryAnyVoxelCached(world, &cache, gx, gy, gz);
+                if (!hit.hit) continue;
+
+                // If it's a deep penetration (inside), we need to resolve it.
+                // For simplicity, we use the sphere resolution if it's in front of the plane,
+                // or we push it to the plane if it's straddling.
+
+                if (dot >= 0) {
+                    if (closest.dist_sq > 0.000001) {
+                        const dist = @sqrt(closest.dist_sq);
+                        const depth = radius - dist;
+                        updateBestPenetration(&result, depth, closest.dir_x / dist, closest.dir_y / dist, closest.dir_z / dist, hit);
+                    } else {
+                        // Interior - push out shortest way
+                        const pdir = resolveInteriorCapsuleDirection(center_x, center_y, center_z, box_min_x, box_min_y, box_min_z, box_max_x, box_max_y, box_max_z);
+                        updateBestPenetration(&result, radius, pdir.x, pdir.y, pdir.z, hit);
+                    }
+                } else {
+                    // Straddling the plane from behind - push to plane
+                    const plane_dist = computePlaneBoxDistance(center_x, center_y, center_z, axis_x, axis_y, axis_z, box_min_x, box_min_y, box_min_z, box_max_x, box_max_y, box_max_z);
+                    updateBestPenetration(&result, plane_dist.max_dot, axis_x, axis_y, axis_z, hit);
+                }
+            }
+        }
+    }
+
+    return result;
 }
 
 const PenetrationDir = struct {
@@ -392,10 +502,18 @@ fn resolveInteriorCapsuleDirection(seg_x: f32, seg_y: f32, seg_z: f32, box_min_x
     return dir;
 }
 
-/// Compute penetration of AABB into world
-pub fn computePenetrationAABB(world: *const QueryWorldView, min_x: f32, min_y: f32, min_z: f32, max_x: f32, max_y: f32, max_z: f32, filter: QueryFilter) PenetrationResult {
+/// Compute penetration of Box (AABB) into world
+pub fn computePenetrationBox(world: *const QueryWorldView, min_x: f32, min_y: f32, min_z: f32, max_x: f32, max_y: f32, max_z: f32, filter: QueryFilter) PenetrationResult {
+    return computePenetrationQueryAABB(world, QueryAABB.init(min_x, min_y, min_z, max_x, max_y, max_z), filter);
+}
+
+pub fn computePenetrationQueryAABB(world: *const QueryWorldView, aabb: QueryAABB, filter: QueryFilter) PenetrationResult {
+    const box = aabb.normalized();
+    if (box.isEmpty()) return .{};
+
     var result: PenetrationResult = .{};
-    const range = computeAABBVoxelRange(min_x, min_y, min_z, max_x, max_y, max_z);
+    const range = computeQueryAABBVoxelRange(box);
+    var cache = query_world.QueryAnyVoxelCache.init(filter);
 
     var gx = range.start_x;
     while (gx <= range.end_x) : (gx += 1) {
@@ -403,7 +521,6 @@ pub fn computePenetrationAABB(world: *const QueryWorldView, min_x: f32, min_y: f
         while (gy <= range.end_y) : (gy += 1) {
             var gz = range.start_z;
             while (gz <= range.end_z) : (gz += 1) {
-
                 const voxel_min_x = @as(f32, @floatFromInt(gx));
                 const voxel_min_y = @as(f32, @floatFromInt(gy));
                 const voxel_min_z = @as(f32, @floatFromInt(gz));
@@ -411,26 +528,26 @@ pub fn computePenetrationAABB(world: *const QueryWorldView, min_x: f32, min_y: f
                 const voxel_max_y = voxel_min_y + 1.0;
                 const voxel_max_z = voxel_min_z + 1.0;
 
-                const overlap_x = @min(max_x, voxel_max_x) - @max(min_x, voxel_min_x);
-                const overlap_y = @min(max_y, voxel_max_y) - @max(min_y, voxel_min_y);
-                const overlap_z = @min(max_z, voxel_max_z) - @max(min_z, voxel_min_z);
+                const overlap_x = @min(box.max_x, voxel_max_x) - @max(box.min_x, voxel_min_x);
+                const overlap_y = @min(box.max_y, voxel_max_y) - @max(box.min_y, voxel_min_y);
+                const overlap_z = @min(box.max_z, voxel_max_z) - @max(box.min_z, voxel_min_z);
 
                 if (overlap_x > 0 and overlap_y > 0 and overlap_z > 0) {
-                    const hit = query_world.queryAnyVoxel(world, gx, gy, gz, filter);
+                    const hit = query_world.queryAnyVoxelCached(world, &cache, gx, gy, gz);
                     if (hit.hit) {
-                        const push_neg_x = max_x - voxel_min_x;
-                        const push_pos_x = voxel_max_x - min_x;
-                        const push_neg_y = max_y - voxel_min_y;
-                        const push_pos_y = voxel_max_y - min_y;
-                        const push_neg_z = max_z - voxel_min_z;
-                        const push_pos_z = voxel_max_z - min_z;
+                        const push_neg_x = box.max_x - voxel_min_x;
+                        const push_pos_x = voxel_max_x - box.min_x;
+                        const push_neg_y = box.max_y - voxel_min_y;
+                        const push_pos_y = voxel_max_y - box.min_y;
+                        const push_neg_z = box.max_z - voxel_min_z;
+                        const push_pos_z = voxel_max_z - box.min_z;
 
-                        updateBestPenetration(&result, push_neg_x, -1, 0, 0, hit.instance_idx);
-                        updateBestPenetration(&result, push_pos_x, 1, 0, 0, hit.instance_idx);
-                        updateBestPenetration(&result, push_neg_y, 0, -1, 0, hit.instance_idx);
-                        updateBestPenetration(&result, push_pos_y, 0, 1, 0, hit.instance_idx);
-                        updateBestPenetration(&result, push_neg_z, 0, 0, -1, hit.instance_idx);
-                        updateBestPenetration(&result, push_pos_z, 0, 0, 1, hit.instance_idx);
+                        updateBestPenetration(&result, push_neg_x, -1, 0, 0, hit);
+                        updateBestPenetration(&result, push_pos_x, 1, 0, 0, hit);
+                        updateBestPenetration(&result, push_neg_y, 0, -1, 0, hit);
+                        updateBestPenetration(&result, push_pos_y, 0, 1, 0, hit);
+                        updateBestPenetration(&result, push_neg_z, 0, 0, -1, hit);
+                        updateBestPenetration(&result, push_pos_z, 0, 0, 1, hit);
                     }
                 }
             }
@@ -446,7 +563,6 @@ pub fn computePenetrationAABB(world: *const QueryWorldView, min_x: f32, min_y: f
         while (gy <= range.end_y) : (gy += 1) {
             var gz = range.start_z;
             while (gz <= range.end_z) : (gz += 1) {
-
                 const voxel_min_x = @as(f32, @floatFromInt(gx));
                 const voxel_min_y = @as(f32, @floatFromInt(gy));
                 const voxel_min_z = @as(f32, @floatFromInt(gz));
@@ -454,24 +570,24 @@ pub fn computePenetrationAABB(world: *const QueryWorldView, min_x: f32, min_y: f
                 const voxel_max_y = voxel_min_y + 1.0;
                 const voxel_max_z = voxel_min_z + 1.0;
 
-                const overlap_x = @min(max_x, voxel_max_x) - @max(min_x, voxel_min_x);
-                const overlap_y = @min(max_y, voxel_max_y) - @max(min_y, voxel_min_y);
-                const overlap_z = @min(max_z, voxel_max_z) - @max(min_z, voxel_min_z);
+                const overlap_x = @min(box.max_x, voxel_max_x) - @max(box.min_x, voxel_min_x);
+                const overlap_y = @min(box.max_y, voxel_max_y) - @max(box.min_y, voxel_min_y);
+                const overlap_z = @min(box.max_z, voxel_max_z) - @max(box.min_z, voxel_min_z);
                 if (overlap_x <= 0 or overlap_y <= 0 or overlap_z <= 0) continue;
 
-                const hit = query_world.queryAnyVoxel(world, gx, gy, gz, filter);
+                const hit = query_world.queryAnyVoxelCached(world, &cache, gx, gy, gz);
                 if (!hit.hit) continue;
 
                 accumulateBestFacePatch(
                     &accumulator,
                     result,
                     hit.instance_idx,
-                    min_x,
-                    min_y,
-                    min_z,
-                    max_x,
-                    max_y,
-                    max_z,
+                    box.min_x,
+                    box.min_y,
+                    box.min_z,
+                    box.max_x,
+                    box.max_y,
+                    box.max_z,
                     voxel_min_x,
                     voxel_min_y,
                     voxel_min_z,
@@ -485,6 +601,29 @@ pub fn computePenetrationAABB(world: *const QueryWorldView, min_x: f32, min_y: f
 
     writeAccumulatedManifold(&result, accumulator);
     return result;
+}
+
+/// Backward-compatible alias for AABB penetration queries.
+pub fn computePenetrationAABB(
+    world: *const QueryWorldView,
+    min_x: f32,
+    min_y: f32,
+    min_z: f32,
+    max_x: f32,
+    max_y: f32,
+    max_z: f32,
+    filter: QueryFilter,
+) PenetrationResult {
+    return computePenetrationBox(
+        world,
+        min_x,
+        min_y,
+        min_z,
+        max_x,
+        max_y,
+        max_z,
+        filter,
+    );
 }
 
 test "computePenetrationAABB returns smallest translation for single voxel overlap" {
@@ -512,7 +651,7 @@ test "computePenetrationAABB returns smallest translation for single voxel overl
         .entities = entities[0..],
     };
 
-    const result = computePenetrationAABB(&world, 1.8, 2.1, 2.1, 2.4, 2.9, 2.9, .{});
+    const result = computePenetrationBox(&world, 1.8, 2.1, 2.1, 2.4, 2.9, 2.9, .{});
     try std.testing.expect(result.overlapping);
     try std.testing.expectApproxEqAbs(@as(f32, 0.4), result.depth, 0.0001);
     try std.testing.expect(result.dir_x == -1);
@@ -535,7 +674,7 @@ test "computePenetrationAABB returns no overlap when box is clear" {
         .entities = entities[0..],
     };
 
-    const result = computePenetrationAABB(&world, 1.1, 1.1, 1.1, 1.8, 1.8, 1.8, .{});
+    const result = computePenetrationBox(&world, 1.1, 1.1, 1.1, 1.8, 1.8, 1.8, .{});
     try std.testing.expect(!result.overlapping);
     try std.testing.expect(result.depth == 0);
     try std.testing.expect(result.manifold_point_count == 0);
@@ -577,7 +716,7 @@ test "computePenetrationAABB keeps manifold aligned with best translation voxel"
         .entities = entities[0..],
     };
 
-    const result = computePenetrationAABB(&world, 1.8, 0.2, 0.2, 2.2, 0.8, 0.8, .{});
+    const result = computePenetrationBox(&world, 1.8, 0.2, 0.2, 2.2, 0.8, 0.8, .{});
     try std.testing.expect(result.overlapping);
     try std.testing.expectApproxEqAbs(@as(f32, 0.2), result.depth, 0.0001);
     try std.testing.expect(result.dir_x == 1);
@@ -619,7 +758,7 @@ test "computePenetrationAABB aggregates manifold across coplanar support voxels"
         .entities = entities[0..],
     };
 
-    const result = computePenetrationAABB(&world, 1.8, 0.2, 0.2, 2.2, 1.8, 0.8, .{});
+    const result = computePenetrationBox(&world, 1.8, 0.2, 0.2, 2.2, 1.8, 0.8, .{});
     try std.testing.expect(result.overlapping);
     try std.testing.expect(result.dir_x == 1);
     try std.testing.expectApproxEqAbs(@as(f32, 2.0), result.manifold_points[0].x, 0.0001);
@@ -634,6 +773,7 @@ pub fn computePenetrationCapsule(world: *const QueryWorldView, center_x: f32, ce
     const seg_max_y = center_y + half_height;
     const radius_sq = radius * radius;
     const range = computeCapsuleVoxelRange(center_x, center_y, center_z, radius, half_height);
+    var cache = query_world.QueryAnyVoxelCache.init(filter);
 
     var gx = range.start_x;
     while (gx <= range.end_x) : (gx += 1) {
@@ -641,7 +781,7 @@ pub fn computePenetrationCapsule(world: *const QueryWorldView, center_x: f32, ce
         while (gy <= range.end_y) : (gy += 1) {
             var gz = range.start_z;
             while (gz <= range.end_z) : (gz += 1) {
-                const hit = query_world.queryAnyVoxel(world, gx, gy, gz, filter);
+                const hit = query_world.queryAnyVoxelCached(world, &cache, gx, gy, gz);
                 if (!hit.hit) continue;
 
                 const box_min_x = @as(f32, @floatFromInt(gx));
@@ -657,10 +797,10 @@ pub fn computePenetrationCapsule(world: *const QueryWorldView, center_x: f32, ce
                 if (closest.dist_sq > 0.000001) {
                     const dist = @sqrt(closest.dist_sq);
                     const depth = radius - dist;
-                    updateBestCapsulePenetration(&result, depth, closest.dir_x / dist, closest.dir_y / dist, closest.dir_z / dist, hit.instance_idx);
+                    updateBestCapsulePenetration(&result, depth, closest.dir_x / dist, closest.dir_y / dist, closest.dir_z / dist, hit);
                 } else {
                     const interior_dir = resolveInteriorCapsuleDirection(center_x, closest.seg_y, center_z, box_min_x, box_min_y, box_min_z, box_max_x, box_max_y, box_max_z);
-                    updateBestCapsulePenetration(&result, radius, interior_dir.x, interior_dir.y, interior_dir.z, hit.instance_idx);
+                    updateBestCapsulePenetration(&result, radius, interior_dir.x, interior_dir.y, interior_dir.z, hit);
                 }
             }
         }

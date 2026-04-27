@@ -14,10 +14,10 @@ const address = @import("address.zig");
 // Constants
 // ============================================================================
 
-pub const GRAVITY: i16 = -100;           // Default gravity acceleration per tick
-pub const TERMINAL_VELOCITY: i32 = 500;  // Max fall velocity
-pub const DAMPING: u8 = 245;             // Velocity damping (0-255, 255=no damping)
-pub const ANGULAR_DAMPING: u8 = 240;      // Angular velocity damping
+pub const GRAVITY: i16 = -100; // Default gravity acceleration per tick
+pub const TERMINAL_VELOCITY: i32 = 500; // Max fall velocity
+pub const DAMPING: u8 = 245; // Velocity damping (0-255, 255=no damping)
+pub const ANGULAR_DAMPING: u8 = 240; // Angular velocity damping
 pub const SweepAxis = enum { x, y, z };
 
 // ============================================================================
@@ -35,7 +35,7 @@ pub const SweepResult = struct {
 
 /// Apply gravity acceleration to velocity
 pub fn applyGravity(vel_y: *i16, mass: u16) void {
-    if (mass == 0) return;  // Static objects don't fall
+    if (mass == 0) return; // Static objects don't fall
     const new_vel = @as(i32, vel_y.*) + @as(i32, GRAVITY);
     vel_y.* = clampVerticalVelocity(new_vel);
 }
@@ -119,9 +119,7 @@ pub fn isOccupiedGlobal(s1024: *scene1024.Scene1024, inst: ?*const scene32.Insta
     const ly: u5 = @intCast(@mod(gy, 32));
     const lz: u5 = @intCast(@mod(gz, 32));
 
-    const addr = address.encode(.{
-        .world = 0, .px = px, .py = py, .pz = pz, .lx = lx, .ly = ly, .lz = lz
-    });
+    const addr = address.encode(.{ .world = 0, .px = px, .py = py, .pz = pz, .lx = lx, .ly = ly, .lz = lz });
 
     // Check all instances in s1024 for this voxel (slow but correct for MVP)
     for (0..s1024.instance_count) |i| {
@@ -250,7 +248,7 @@ pub fn checkContinuousFall(s1024: *scene1024.Scene1024, inst: *const scene32.Ins
 
     // Calculate target Y position
     var target_y = inst.pos_y;
-    var remaining = @as(i32, -vel_y);  // How many voxels to fall
+    var remaining = @as(i32, -vel_y); // How many voxels to fall
     var blocker: u8 = 0;
 
     while (remaining > 0) {
@@ -284,7 +282,10 @@ pub fn checkContinuousFall(s1024: *scene1024.Scene1024, inst: *const scene32.Ins
     return .{ .can_fall = true, .target_y = target_y, .blocked = false, .blocker_id = 0 };
 }
 
-pub fn applyFall(inst: *scene32.Instance, target_y: i32) void { inst.pos_y = target_y; inst.state = .falling; }
+pub fn applyFall(inst: *scene32.Instance, target_y: i32) void {
+    inst.pos_y = target_y;
+    inst.state = .falling;
+}
 
 // ============================================================================
 // Flow (for liquids)
@@ -296,13 +297,11 @@ pub const FlowResult = struct { flowed: bool, dir: FlowDir, new_x: i32, new_y: i
 pub fn checkFlow(s1024: *scene1024.Scene1024, inst: *const scene32.Instance, entities: []entity16.Entity16) FlowResult {
     const entity = &entities[inst.entity_id];
     if (entity.physics.material != .liquid) return .{ .flowed = false, .dir = .hold, .new_x = inst.pos_x, .new_y = inst.pos_y, .new_z = inst.pos_z };
-    const dirs = [_]struct { dx: i8, dy: i8, dz: i8, dir: FlowDir }{
-        .{.dx=0,.dy=-1,.dz=0,.dir=.down},
-        .{.dx=1,.dy=0,.dz=0,.dir=.side_pos_x}, .{.dx=-1,.dy=0,.dz=0,.dir=.side_neg_x},
-        .{.dx=0,.dy=0,.dz=1,.dir=.side_pos_z}, .{.dx=0,.dy=0,.dz=-1,.dir=.side_neg_z}
-    };
+    const dirs = [_]struct { dx: i8, dy: i8, dz: i8, dir: FlowDir }{ .{ .dx = 0, .dy = -1, .dz = 0, .dir = .down }, .{ .dx = 1, .dy = 0, .dz = 0, .dir = .side_pos_x }, .{ .dx = -1, .dy = 0, .dz = 0, .dir = .side_neg_x }, .{ .dx = 0, .dy = 0, .dz = 1, .dir = .side_pos_z }, .{ .dx = 0, .dy = 0, .dz = -1, .dir = .side_neg_z } };
     for (dirs) |d| {
-        const nx = inst.pos_x + d.dx; const ny = inst.pos_y + d.dy; const nz = inst.pos_z + d.dz;
+        const nx = inst.pos_x + d.dx;
+        const ny = inst.pos_y + d.dy;
+        const nz = inst.pos_z + d.dz;
         var ok = true;
         for (0..64) |w_idx| {
             const word = entity.topology[w_idx];
@@ -314,7 +313,8 @@ pub fn checkFlow(s1024: *scene1024.Scene1024, inst: *const scene32.Instance, ent
                     const ey: i32 = @intCast(idx >> 8);
                     const ez: i32 = @intCast(idx & 0xF);
                     if (isOccupiedGlobal(s1024, inst, entities, nx + ex, ny + ey, nz + ez, null)) {
-                        ok = false; break;
+                        ok = false;
+                        break;
                     }
                 }
             }
@@ -325,7 +325,12 @@ pub fn checkFlow(s1024: *scene1024.Scene1024, inst: *const scene32.Instance, ent
     return .{ .flowed = false, .dir = .hold, .new_x = inst.pos_x, .new_y = inst.pos_y, .new_z = inst.pos_z };
 }
 
-pub fn applyFlow(inst: *scene32.Instance, r: FlowResult) void { inst.pos_x = r.new_x; inst.pos_y = r.new_y; inst.pos_z = r.new_z; inst.state = .flowing; }
+pub fn applyFlow(inst: *scene32.Instance, r: FlowResult) void {
+    inst.pos_x = r.new_x;
+    inst.pos_y = r.new_y;
+    inst.pos_z = r.new_z;
+    inst.state = .flowing;
+}
 
 // ============================================================================
 // Break
@@ -352,11 +357,28 @@ pub fn calcImpact(vel: i16, mass: u16) u16 {
 // AABB
 // ============================================================================
 
-pub const AABB = struct { min_x: i32, min_y: i32, min_z: i32, max_x: i32, max_y: i32, max_z: i32 };
-pub fn makeAABB(x: i32, y: i32, z: i32, d: usize) AABB { return .{ .min_x=x, .min_y=y, .min_z=z, .max_x=x+@as(i32,@intCast(d)), .max_y=y+@as(i32,@intCast(d)), .max_z=z+@as(i32,@intCast(d)) }; }
-pub fn aabbHit(a: AABB, b: AABB) bool { return !(a.max_x <= b.min_x or b.max_x <= a.min_x or a.max_y <= b.min_y or b.max_y <= a.min_y or a.max_z <= b.min_z or b.max_z <= a.min_z); }
+const query_types = @import("query_types.zig");
+pub const AABB = query_types.AABB;
+pub const VoxelBox = query_types.VoxelBox;
 
-pub fn computeEntityLocalAABB(entity: *const entity16.Entity16) ?AABB {
+pub fn makeVoxelBox(x: i32, y: i32, z: i32, d: usize) VoxelBox {
+    const extent: i32 = @intCast(d);
+    return VoxelBox.init(x, y, z, x + extent, y + extent, z + extent);
+}
+
+pub fn voxelBoxHit(a: VoxelBox, b: VoxelBox) bool {
+    return query_types.voxelBoxOverlaps(a, b);
+}
+
+pub fn aabbHit(a: AABB, b: AABB) bool {
+    return voxelBoxHit(a, b);
+}
+
+pub fn makeAABB(x: i32, y: i32, z: i32, d: usize) AABB {
+    return makeVoxelBox(x, y, z, d);
+}
+
+pub fn computeEntityLocalAABB(entity: *const entity16.Entity16) ?VoxelBox {
     var has_voxel = false;
     var min_x: i32 = 16;
     var min_y: i32 = 16;
@@ -396,7 +418,7 @@ pub fn computeEntityLocalAABB(entity: *const entity16.Entity16) ?AABB {
     };
 }
 
-pub fn computeEntityWorldAABB(inst: *const scene32.Instance, entity: *const entity16.Entity16) ?AABB {
+pub fn computeEntityWorldAABB(inst: *const scene32.Instance, entity: *const entity16.Entity16) ?VoxelBox {
     const local = computeEntityLocalAABB(entity) orelse return null;
     return .{
         .min_x = inst.pos_x + local.min_x,
@@ -408,7 +430,7 @@ pub fn computeEntityWorldAABB(inst: *const scene32.Instance, entity: *const enti
     };
 }
 
-pub fn computeSweptEntityWorldAABB(inst: *const scene32.Instance, entity: *const entity16.Entity16) ?AABB {
+pub fn computeSweptEntityWorldAABB(inst: *const scene32.Instance, entity: *const entity16.Entity16) ?VoxelBox {
     var bounds = computeEntityWorldAABB(inst, entity) orelse return null;
 
     if (inst.vel_x < 0) {
@@ -440,7 +462,9 @@ pub const PushResult = struct { pushed: bool, new_x: i32, new_y: i32, new_z: i32
 pub fn checkPush(s1024: *scene1024.Scene1024, inst: *const scene32.Instance, entities: []entity16.Entity16, dx: i8, dy: i8, dz: i8) PushResult {
     const entity = &entities[inst.entity_id];
     if ((entity.physics.flags & 0x01) != 0) return .{ .pushed = false, .new_x = inst.pos_x, .new_y = inst.pos_y, .new_z = inst.pos_z };
-    const nx = inst.pos_x + dx; const ny = inst.pos_y + dy; const nz = inst.pos_z + dz;
+    const nx = inst.pos_x + dx;
+    const ny = inst.pos_y + dy;
+    const nz = inst.pos_z + dz;
 
     var ok = true;
     for (0..64) |w_idx| {
@@ -453,7 +477,8 @@ pub fn checkPush(s1024: *scene1024.Scene1024, inst: *const scene32.Instance, ent
                 const ey: i32 = @intCast(idx >> 8);
                 const ez: i32 = @intCast(idx & 0xF);
                 if (isOccupiedGlobal(s1024, inst, entities, nx + ex, ny + ey, nz + ez, null)) {
-                    ok = false; break;
+                    ok = false;
+                    break;
                 }
             }
         }
@@ -462,7 +487,12 @@ pub fn checkPush(s1024: *scene1024.Scene1024, inst: *const scene32.Instance, ent
     if (ok) return .{ .pushed = true, .new_x = nx, .new_y = ny, .new_z = nz };
     return .{ .pushed = false, .new_x = inst.pos_x, .new_y = inst.pos_y, .new_z = inst.pos_z };
 }
-pub fn applyPush(inst: *scene32.Instance, r: PushResult) void { inst.pos_x = r.new_x; inst.pos_y = r.new_y; inst.pos_z = r.new_z; inst.state = .moving; }
+pub fn applyPush(inst: *scene32.Instance, r: PushResult) void {
+    inst.pos_x = r.new_x;
+    inst.pos_y = r.new_y;
+    inst.pos_z = r.new_z;
+    inst.state = .moving;
+}
 
 test "applyGravity clamps downward velocity to terminal speed" {
     var vel_y: i16 = -480;
@@ -524,4 +554,11 @@ test "computeSweptEntityWorldAABB expands bounds by velocity" {
     try std.testing.expectEqual(@as(i32, 15), bounds.max_x);
     try std.testing.expectEqual(@as(i32, 29), bounds.max_y);
     try std.testing.expectEqual(@as(i32, 37), bounds.max_z);
+}
+
+test "aabbHit uses standardized half-open voxel box intersection" {
+    const a = AABB.init(4, 4, 4, 1, 1, 1);
+    try std.testing.expect(aabbHit(a, AABB.init(3, 1, 1, 5, 3, 3)));
+    try std.testing.expect(!aabbHit(a, AABB.init(4, 1, 1, 6, 3, 3)));
+    try std.testing.expect(!aabbHit(a, AABB.init(2, 2, 2, 2, 5, 5)));
 }

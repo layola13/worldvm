@@ -13,6 +13,7 @@ pub const PhysicsBlock = struct {
     mass: u16 = 0, hardness: u16 = 100, material: MaterialType = .solid,
     friction: u8 = 128, restitution: u8 = 64, conductivity: u8 = 0,
     flags: u8 = 0, temp_state: u8 = 0, stability: u16 = 100,
+    group_id: u8 = 0,
 };
 
 pub const VisualBlock = struct {

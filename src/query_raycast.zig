@@ -51,6 +51,8 @@ pub fn raycastSingle(world: *const QueryWorldView, ray: QueryRay, filter: QueryF
         std.math.inf(f32);
 
     var t: f32 = 0.0;
+    const dir_len = query_types.queryRayDirectionLength(ray);
+    const max_t = query_types.queryRayDistanceToParameter(ray, ray.max_distance);
     var normal_x: f32 = 0.0;
     var normal_y: f32 = 0.0;
     var normal_z: f32 = 0.0;
@@ -58,16 +60,13 @@ pub fn raycastSingle(world: *const QueryWorldView, ray: QueryRay, filter: QueryF
     const max_steps: i32 = 2048;
     var steps: i32 = 0;
 
-    while (t <= ray.max_distance and steps < max_steps) : (steps += 1) {
+    while (dir_len > 0.000001 and t <= max_t and steps < max_steps) : (steps += 1) {
         const base_hit = query_world.queryAnyVoxel(world, px, py, pz, filter);
         if (base_hit.hit) {
-            return .{
+            var result = QueryHit{
                 .hit = true,
-                .distance = t,
+                .distance = query_types.queryRayParameterToDistance(ray, t),
                 .toi = t,
-                .position_x = ray.origin_x + ray.dir_x * t,
-                .position_y = ray.origin_y + ray.dir_y * t,
-                .position_z = ray.origin_z + ray.dir_z * t,
                 .normal_x = normal_x,
                 .normal_y = normal_y,
                 .normal_z = normal_z,
@@ -75,9 +74,12 @@ pub fn raycastSingle(world: *const QueryWorldView, ray: QueryRay, filter: QueryF
                 .entity_id = base_hit.entity_id,
                 .hit_environment = base_hit.hit_environment,
                 .hit_sensor = base_hit.hit_sensor,
-                .classification = base_hit.classification,
                 .telemetry = base_hit.telemetry,
             };
+            query_types.setQueryHitPosition(&result, ray.origin_x + ray.dir_x * t, ray.origin_y + ray.dir_y * t, ray.origin_z + ray.dir_z * t);
+            query_types.setQueryHitClassification(&result, base_hit.classification);
+            query_types.normalizeQueryHitNormal(&result);
+            return result;
         }
 
         // Advance to next voxel
@@ -121,6 +123,7 @@ pub fn raycastIgnoreSelf(world: *const QueryWorldView, ray: QueryRay, ignore_idx
 
 /// Get all hits along a ray
 pub fn raycastAll(world: *const QueryWorldView, ray: QueryRay, filter: QueryFilter, out_hits: []QueryHit) u16 {
+    query_types.recordRaycastAllQuery();
     var hits: [32]QueryHit = undefined;
     var count: u16 = 0;
 
@@ -156,6 +159,8 @@ pub fn raycastAll(world: *const QueryWorldView, ray: QueryRay, filter: QueryFilt
         std.math.inf(f32);
 
     var t: f32 = 0.0;
+    const dir_len = query_types.queryRayDirectionLength(ray);
+    const max_t = query_types.queryRayDistanceToParameter(ray, ray.max_distance);
     var normal_x: f32 = 0.0;
     var normal_y: f32 = 0.0;
     var normal_z: f32 = 0.0;
@@ -163,16 +168,13 @@ pub fn raycastAll(world: *const QueryWorldView, ray: QueryRay, filter: QueryFilt
     const max_steps: i32 = 2048;
     var steps: i32 = 0;
 
-    while (t <= ray.max_distance and steps < max_steps and count < 32) : (steps += 1) {
+    while (dir_len > 0.000001 and t <= max_t and steps < max_steps and count < 32) : (steps += 1) {
         const hit = query_world.queryAnyVoxel(world, px, py, pz, filter);
         if (hit.hit) {
-            hits[count] = .{
+            var result = QueryHit{
                 .hit = true,
-                .distance = t,
+                .distance = query_types.queryRayParameterToDistance(ray, t),
                 .toi = t,
-                .position_x = ray.origin_x + ray.dir_x * t,
-                .position_y = ray.origin_y + ray.dir_y * t,
-                .position_z = ray.origin_z + ray.dir_z * t,
                 .normal_x = normal_x,
                 .normal_y = normal_y,
                 .normal_z = normal_z,
@@ -180,9 +182,12 @@ pub fn raycastAll(world: *const QueryWorldView, ray: QueryRay, filter: QueryFilt
                 .entity_id = hit.entity_id,
                 .hit_environment = hit.hit_environment,
                 .hit_sensor = hit.hit_sensor,
-                .classification = hit.classification,
                 .telemetry = hit.telemetry,
             };
+            query_types.setQueryHitPosition(&result, ray.origin_x + ray.dir_x * t, ray.origin_y + ray.dir_y * t, ray.origin_z + ray.dir_z * t);
+            query_types.setQueryHitClassification(&result, hit.classification);
+            query_types.normalizeQueryHitNormal(&result);
+            hits[count] = result;
             count += 1;
         }
 
@@ -211,13 +216,15 @@ pub fn raycastAll(world: *const QueryWorldView, ray: QueryRay, filter: QueryFilt
         }
     }
 
+    query_types.sortQueryHitsByDistanceStable(hits[0..count]);
+
     // Copy to output buffer
     var i: u16 = 0;
     while (i < count and i < out_hits.len) : (i += 1) {
         out_hits[i] = hits[i];
     }
 
-    return count;
+    return i;
 }
 
 test "raycastSingle preserves query classification metadata" {
@@ -258,8 +265,13 @@ test "raycastSingle preserves query classification metadata" {
     }, .{});
 
     try testing.expect(hit.hit);
+    try testing.expect(query_types.queryHitIsConsistent(hit));
     try testing.expect(hit.classification.surface_type == .ice);
     try testing.expect(hit.classification.surface_condition == .slippery);
+    try testing.expect(hit.material_type == hit.classification.material_type);
+    try testing.expect(hit.surface_condition == hit.classification.surface_condition);
+    try testing.expect(hit.medium_type == hit.classification.medium_type);
+    try testing.expect(hit.body_type == hit.classification.body_type);
     try testing.expect(hit.telemetry.friction < 0.2);
 }
 
@@ -335,4 +347,94 @@ test "raycastSingle respects layer mask and can ignore environment" {
     try testing.expect(dyn_hit.hit);
     try testing.expect(!dyn_hit.hit_environment);
     try testing.expect(dyn_hit.instance_idx == 0);
+}
+
+test "raycastAll returns distance-sorted hits and clamps to output length" {
+    const testing = std.testing;
+
+    var s1024 = scene1024.Scene1024.init(testing.allocator);
+    defer s1024.deinit();
+
+    try s1024.setVoxelAtGlobal(address.encode(.{
+        .world = 0,
+        .px = 0,
+        .py = 0,
+        .pz = 0,
+        .lx = 1,
+        .ly = 0,
+        .lz = 0,
+    }), true);
+    try s1024.setVoxelAtGlobal(address.encode(.{
+        .world = 0,
+        .px = 0,
+        .py = 0,
+        .pz = 0,
+        .lx = 3,
+        .ly = 0,
+        .lz = 0,
+    }), true);
+
+    var entities = [_]entity16.Entity16{};
+    const world = QueryWorldView{
+        .s1024 = &s1024,
+        .instances = s1024.instances[0..s1024.instance_count],
+        .entities = entities[0..],
+    };
+
+    var hits: [1]QueryHit = undefined;
+    const written = raycastAll(&world, .{
+        .origin_x = 0.25,
+        .origin_y = 0.0,
+        .origin_z = 0.0,
+        .dir_x = 1.0,
+        .dir_y = 0.0,
+        .dir_z = 0.0,
+        .max_distance = 5.0,
+    }, .{}, hits[0..]);
+
+    try testing.expectEqual(@as(u16, 1), written);
+    try testing.expect(hits[0].hit);
+    try testing.expectApproxEqAbs(@as(f32, 0.75), hits[0].distance, 0.0001);
+}
+
+test "raycastSingle reports world distance for non-normalized direction" {
+    const testing = std.testing;
+
+    var s1024 = scene1024.Scene1024.init(testing.allocator);
+    defer s1024.deinit();
+
+    try s1024.setVoxelAtGlobal(address.encode(.{
+        .world = 0,
+        .px = 0,
+        .py = 0,
+        .pz = 0,
+        .lx = 2,
+        .ly = 0,
+        .lz = 0,
+    }), true);
+
+    var entities = [_]entity16.Entity16{};
+    const world = QueryWorldView{
+        .s1024 = &s1024,
+        .instances = s1024.instances[0..s1024.instance_count],
+        .entities = entities[0..],
+    };
+
+    const hit = raycastSingle(&world, .{
+        .origin_x = 0.0,
+        .origin_y = 0.0,
+        .origin_z = 0.0,
+        .dir_x = 2.0,
+        .dir_y = 0.0,
+        .dir_z = 0.0,
+        .max_distance = 3.0,
+    }, .{});
+
+    try testing.expect(hit.hit);
+    try testing.expect(query_types.queryHitIsConsistent(hit));
+    try testing.expectApproxEqAbs(@as(f32, 2.0), hit.distance, 0.0001);
+    try testing.expectApproxEqAbs(@as(f32, 1.0), hit.toi, 0.0001);
+    try testing.expectApproxEqAbs(@as(f32, 2.0), hit.position_x, 0.0001);
+    try testing.expectApproxEqAbs(@as(f32, 0.0), hit.position_y, 0.0001);
+    try testing.expectApproxEqAbs(@as(f32, 0.0), hit.position_z, 0.0001);
 }

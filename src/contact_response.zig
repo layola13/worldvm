@@ -5,12 +5,13 @@ const entity16 = @import("entity16.zig");
 const physics = @import("physics.zig");
 const terrain = @import("terrain.zig");
 const material_pairing = @import("material_pairing.zig");
+const sleep_response = @import("sleep_response.zig");
 
 pub const ContactAxis = enum { x, z };
 
-pub const GROUND_SETTLE_VERTICAL_THRESHOLD: i16 = 12;
-pub const GROUND_SETTLE_LATERAL_THRESHOLD: i16 = 6;
-pub const SLEEP_TIME_THRESHOLD: u8 = 30;
+pub const GROUND_SETTLE_VERTICAL_THRESHOLD: i16 = sleep_response.GROUND_SETTLE_VERTICAL_THRESHOLD;
+pub const GROUND_SETTLE_LATERAL_THRESHOLD: i16 = sleep_response.GROUND_SETTLE_LATERAL_THRESHOLD;
+pub const SLEEP_TIME_THRESHOLD: u8 = sleep_response.SLEEP_TIME_THRESHOLD;
 
 pub fn settleGroundContact(inst: *scene32.Instance) void {
     if (@abs(inst.vel_y) <= GROUND_SETTLE_VERTICAL_THRESHOLD) {

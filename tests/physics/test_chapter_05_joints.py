@@ -96,9 +96,14 @@ class Test43HingeAngleLimit(PhysicsTestHarness):
 
         result = self.vm.lib.add_joint_hinge(0, 1, 16, 5, 16, 0, 0, 1)
         self.assertEqual(result, 0)
+        self.assertEqual(self.vm.lib.set_joint_limits(result, -0.25, 0.25), 0)
+        self.assertAlmostEqual(self.vm.lib.get_joint_limit_min(result), -0.25, places=4)
+        self.assertAlmostEqual(self.vm.lib.get_joint_limit_max(result), 0.25, places=4)
+        self.assertEqual(self.vm.lib.configure_joint_motor(result, 1.0, 6.0, 100.0), 0)
 
-        for _ in range(30):
-            self.vm.run(1)
+        self.vm.lib.solve_joints()
+
+        self.assertLessEqual(self.vm.lib.get_joint_motor_position(result), 0.35)
 
 
 class Test44MotorizedJoint(PhysicsTestHarness):
@@ -111,8 +116,14 @@ class Test44MotorizedJoint(PhysicsTestHarness):
 
         result = self.vm.lib.add_joint_hinge(0, 1, 16, 5, 16, 0, 0, 1)
         self.assertEqual(result, 0)
+        self.assertEqual(self.vm.lib.configure_joint_motor(result, 0.6, 6.0, 100.0), 0)
+        self.assertEqual(self.vm.lib.is_joint_motor_enabled(result), 1)
 
-        # Note: Motor functionality depends on implementation
+        initial_error = abs(0.6 - self.vm.lib.get_joint_motor_position(result))
+        self.vm.lib.solve_joints()
+        final_error = abs(0.6 - self.vm.lib.get_joint_motor_position(result))
+
+        self.assertLess(final_error, initial_error)
 
 
 class Test45SliderJoint(PhysicsTestHarness):
@@ -180,8 +191,7 @@ class Test48PulleyJoint(PhysicsTestHarness):
         self.vm.spawn(0, 16, 10, 16)
         self.vm.spawn(1, 16, 20, 16)
 
-        # Note: Pulley implementation may vary
-        result = self.vm.lib.add_joint_spring(0, 1, 16, 5, 16, 50.0, 5.0)
+        result = self.vm.lib.add_joint_pulley(1, 2, 16, 15, 16, 0, 1, 0, 1.0)
         self.assertEqual(result, 0)
 
 
@@ -195,12 +205,18 @@ class Test49BreakableJoint(PhysicsTestHarness):
 
         result = self.vm.lib.add_joint_fixed(0, 1, 16, 5, 16)
         self.assertEqual(result, 0)
+        self.assertEqual(self.vm.lib.set_joint_breaking_force(result, 5.0), 0)
+        self.assertEqual(self.vm.lib.is_joint_enabled(result), 1)
 
         # Apply extreme force
         self.vm.apply_impulse(1, 1000, 0, 0)
 
         for _ in range(30):
             self.vm.run(1)
+
+        self.assertEqual(self.vm.lib.is_joint_broken(result), 1)
+        self.assertEqual(self.vm.lib.is_joint_enabled(result), 0)
+        self.assertTrue(any(event["type"] == "joint_breakage" and event["id"] == result for event in self.vm.events()))
 
 
 class Test50RagdollChain(PhysicsTestHarness):

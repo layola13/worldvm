@@ -83,15 +83,33 @@ pub fn init() void {
     g_kcc_system.count = 0;
     for (0..MAX_KCC) |i| {
         g_kcc_system.characters[i] = .{
-            .pos_x = 0, .pos_y = 0, .pos_z = 0,
-            .vel_x = 0, .vel_y = 0, .vel_z = 0,
-            .yaw = 0, .grounded = false, .crouching = false, .jumping = false,
-            .stand_height = 14, .crouch_height = 8, .radius = 4, .mass = 80,
-            .move_speed = 200.0, .jump_force = 350.0, .gravity = -800.0,
-            .crouch_speed_mult = 0.5, .push_force = 100.0, .step_height = 2,
-            .max_slope_angle = 45.0, .step_offset = 0.25, .prevent_fall_off_ledges = false,
+            .pos_x = 0,
+            .pos_y = 0,
+            .pos_z = 0,
+            .vel_x = 0,
+            .vel_y = 0,
+            .vel_z = 0,
+            .yaw = 0,
+            .grounded = false,
+            .crouching = false,
+            .jumping = false,
+            .stand_height = 14,
+            .crouch_height = 8,
+            .radius = 4,
+            .mass = 80,
+            .move_speed = 200.0,
+            .jump_force = 350.0,
+            .gravity = -800.0,
+            .crouch_speed_mult = 0.5,
+            .push_force = 100.0,
+            .step_height = 2,
+            .max_slope_angle = 45.0,
+            .step_offset = 0.25,
+            .prevent_fall_off_ledges = false,
             .was_grounded = false,
-            .ground_normal_x = 0, .ground_normal_y = 1, .ground_normal_z = 0,
+            .ground_normal_x = 0,
+            .ground_normal_y = 1,
+            .ground_normal_z = 0,
             .support_instance_idx = -1,
             .support_pos_x = 0,
             .support_pos_y = 0,
@@ -112,9 +130,16 @@ pub fn createCharacter(x: f32, y: f32, z: f32, config: KCCConfig) ?*KCCState {
     g_kcc_system.count += 1;
     const char = &g_kcc_system.characters[idx];
     char.* = .{
-        .pos_x = x, .pos_y = y, .pos_z = z,
-        .vel_x = 0, .vel_y = 0, .vel_z = 0,
-        .yaw = 0, .grounded = false, .crouching = false, .jumping = false,
+        .pos_x = x,
+        .pos_y = y,
+        .pos_z = z,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .yaw = 0,
+        .grounded = false,
+        .crouching = false,
+        .jumping = false,
         .stand_height = config.stand_height,
         .crouch_height = config.crouch_height,
         .radius = config.radius,
@@ -129,7 +154,9 @@ pub fn createCharacter(x: f32, y: f32, z: f32, config: KCCConfig) ?*KCCState {
         .step_offset = config.step_offset,
         .prevent_fall_off_ledges = config.prevent_fall_off_ledges,
         .was_grounded = false,
-        .ground_normal_x = 0, .ground_normal_y = 1, .ground_normal_z = 0,
+        .ground_normal_x = 0,
+        .ground_normal_y = 1,
+        .ground_normal_z = 0,
         .support_instance_idx = -1,
         .support_pos_x = 0,
         .support_pos_y = 0,
@@ -819,28 +846,6 @@ fn slideVelocityAlongSurface3D(
     };
 }
 
-fn computeCharacterCapsulePenetration(
-    state: *const KCCState,
-    height: i32,
-    radius: i32,
-    world_view: *const query_types.QueryWorldView,
-    filter: query_types.QueryFilter,
-) query_types.PenetrationResult {
-    const radius_f = @as(f32, @floatFromInt(radius));
-    const height_f = @as(f32, @floatFromInt(height));
-    const cylinder_half_height = @max(0.0, height_f * 0.5 - radius_f);
-
-    return query_penetration.computePenetrationCapsule(
-        world_view,
-        state.pos_x,
-        state.pos_y + height_f * 0.5,
-        state.pos_z,
-        radius_f,
-        cylinder_half_height,
-        filter,
-    );
-}
-
 fn enforceSlopeLimit(state: *KCCState, config: KCCConfig) void {
     if (!state.grounded) return;
 
@@ -945,6 +950,7 @@ pub fn resolveCollision(
 ) void {
     const height = getHeight(state);
     const radius = state.radius;
+    const had_upward_velocity = state.vel_y > 0;
     const old_x = state.pos_x;
     const old_y = state.pos_y;
     const old_z = state.pos_z;
@@ -960,14 +966,53 @@ pub fn resolveCollision(
         .include_sensors = false,
     };
 
+    var penetration = query_penetration.computePenetrationAABB(
+        &world_view,
+        state.pos_x - @as(f32, @floatFromInt(radius)),
+        state.pos_y,
+        state.pos_z - @as(f32, @floatFromInt(radius)),
+        state.pos_x + @as(f32, @floatFromInt(radius)),
+        state.pos_y + @as(f32, @floatFromInt(height)),
+        state.pos_z + @as(f32, @floatFromInt(radius)),
+        filter,
+    );
     const overlapping_aabb = checkCollision(state.pos_x, state.pos_y, state.pos_z, height, radius, s1024, entities);
-    const capsule_penetration = computeCharacterCapsulePenetration(state, height, radius, &world_view, filter);
-    const ceiling_hit = state.vel_y > 0 and capsule_penetration.overlapping and capsule_penetration.dir_y < -0.0001;
+    const has_overlap = overlapping_aabb or (penetration.overlapping and penetration.depth > 0);
+    if (!has_overlap) return;
 
-    if (!overlapping_aabb and !ceiling_hit) return;
+    var iter: u8 = 0;
+    while (iter < 4) : (iter += 1) {
+        if (!penetration.overlapping or penetration.depth <= 0) break;
 
-    const penetration = if (overlapping_aabb)
-        query_penetration.computePenetrationAABB(
+        if (iter == 0 and tryStepUpFromHorizontalBlockage(state, height, radius, s1024, entities, config, penetration)) {
+            return;
+        }
+
+        const depenetration = penetration.depth + 0.05;
+        state.pos_x += penetration.dir_x * depenetration;
+        state.pos_y += penetration.dir_y * depenetration;
+        state.pos_z += penetration.dir_z * depenetration;
+
+        if (had_upward_velocity and penetration.dir_y <= 0.0001) {
+            state.vel_y = 0;
+            state.pos_y -= @min(0.05, depenetration);
+        }
+
+        if (penetration.dir_y > 0) {
+            state.vel_y = 0;
+            state.grounded = true;
+            state.jumping = false;
+        } else if (had_upward_velocity and penetration.dir_y < 0) {
+            state.vel_y = 0;
+        }
+
+        if ((penetration.dir_x != 0 or penetration.dir_z != 0) and !had_upward_velocity) {
+            const slid = slideAlongWall(state.vel_x, state.vel_z, penetration.dir_x, penetration.dir_z);
+            state.vel_x = slid.x;
+            state.vel_z = slid.z;
+        }
+
+        penetration = query_penetration.computePenetrationAABB(
             &world_view,
             state.pos_x - @as(f32, @floatFromInt(radius)),
             state.pos_y,
@@ -976,77 +1021,18 @@ pub fn resolveCollision(
             state.pos_y + @as(f32, @floatFromInt(height)),
             state.pos_z + @as(f32, @floatFromInt(radius)),
             filter,
-        )
-    else
-        query_types.PenetrationResult{};
-
-    if (penetration.overlapping and penetration.depth > 0) {
-        if (tryStepUpFromHorizontalBlockage(state, height, radius, s1024, entities, config, penetration)) {
-            return;
-        }
-    }
-
-    if (ceiling_hit) {
-        const depenetration = capsule_penetration.depth + 0.05;
-        state.pos_x += capsule_penetration.dir_x * depenetration;
-        state.pos_y += capsule_penetration.dir_y * depenetration;
-        state.pos_z += capsule_penetration.dir_z * depenetration;
-
-        const slid = slideVelocityAlongSurface3D(
-            state.vel_x,
-            state.vel_y,
-            state.vel_z,
-            capsule_penetration.dir_x,
-            capsule_penetration.dir_y,
-            capsule_penetration.dir_z,
         );
-        state.vel_x = slid.x;
-        state.vel_y = @min(slid.y, 0.0);
-        state.vel_z = slid.z;
-    } else if (penetration.overlapping and penetration.depth > 0) {
-        const depenetration = penetration.depth + 0.05;
-        state.pos_x += penetration.dir_x * depenetration;
-        state.pos_y += penetration.dir_y * depenetration;
-        state.pos_z += penetration.dir_z * depenetration;
-
-        if (penetration.dir_y > 0) {
-            state.vel_y = 0;
-            state.grounded = true;
-            state.jumping = false;
-        } else if (penetration.dir_y < 0 and state.vel_y > 0) {
-            state.vel_y = 0;
-        }
-
-        if (penetration.dir_x != 0 or penetration.dir_z != 0) {
-            const slid = slideAlongWall(state.vel_x, state.vel_z, penetration.dir_x, penetration.dir_z);
-            state.vel_x = slid.x;
-            state.vel_z = slid.z;
-        }
-    }
-
-    if (checkCollision(state.pos_x, state.pos_y, state.pos_z, height, radius, s1024, entities)) {
-        var attempts: u8 = 0;
-        const max_step_attempts: u8 = @intCast(@max(config.step_height, 1));
-        while (attempts < max_step_attempts) : (attempts += 1) {
-            state.pos_y += 1;
-            if (!checkCollision(state.pos_x, state.pos_y, state.pos_z, height, radius, s1024, entities)) {
-                break;
-            }
-        }
-
-        if (checkCollision(state.pos_x, state.pos_y, state.pos_z, height, radius, s1024, entities)) {
-            state.pos_x = old_x;
-            state.pos_y = old_y;
-            state.pos_z = old_z;
-            state.vel_x = 0;
-            state.vel_z = 0;
-            state.vel_y = 0;
-        }
     }
 
     if (checkCollision(state.pos_x, state.pos_y, state.pos_z, height, radius, s1024, entities)) {
         state.pos_x = old_x;
+        state.pos_y = old_y;
+        state.pos_z = old_z;
         state.vel_y = 0;
+        if (!had_upward_velocity) {
+            state.vel_x = 0;
+            state.vel_z = 0;
+        }
     }
 }
 
