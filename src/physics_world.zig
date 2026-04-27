@@ -411,13 +411,14 @@ fn runStep(world: *PhysicsWorld, cfg: StepConfig) StepResult {
     const event_count = world.pending_collisions.count + world.pending_sounds.count + world.pending_particles.count + world.pending_deformations.count + world.pending_breaks.count + world.pending_joint_breaks.count;
     physics_kernel.finishWorldStep(&world.pending_collisions, &world.pending_sounds, &world.pending_particles, &world.pending_deformations, &world.pending_breaks, &world.pending_joint_breaks, world.world_bus, world.tick, world.s1024, world.entities, cfg.dt);
     const snapshot = rewind.getWorldSnapshotAtTick(world.tick);
+    const determinism_flags = if (snapshot) |s| rewind.computeWorldDeterminismFlags(s) else 0;
     return .{
         .changed = pre_changed or integrate_result.moved or integrate_result.topology_changed or constraint_result.changed,
         .pair_count = world.broadphase_pair_count,
         .event_count = event_count,
         .snapshot_tick = world.tick,
         .state_hash = if (snapshot) |s| s.world_hash else 0,
-        .determinism_flags = 0,
+        .determinism_flags = determinism_flags,
         .authority = cfg.authority,
     };
 }

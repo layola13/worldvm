@@ -102,6 +102,38 @@ pub const WorldSnapshotDiff = struct {
 
 pub const MAX_REWIND_STATES: usize = 1200;
 pub const MAX_INPUT_LOG: usize = 4096;
+pub const MAX_WORLD_SNAPSHOTS: usize = 120;
+pub const MAX_WORLD_SNAPSHOT_BRANCHES: usize = 8;
+pub const INVALID_WORLD_SNAPSHOT_BRANCH_ID: u8 = 0xFF;
+pub const MAX_COMPRESSED_WORLD_SNAPSHOT_BYTES: usize = @sizeOf(WorldSnapshot) * 2;
+pub const DETERMINISM_FLAG_FLOAT_NON_FINITE: u32 = 1 << 0;
+pub const DETERMINISM_FLAG_FLOAT_NEGATIVE_ZERO: u32 = 1 << 1;
+pub const DETERMINISM_FLAG_FLOAT_SUBNORMAL: u32 = 1 << 2;
+pub const DETERMINISM_FLAG_SIMD_REDUCTION_MISMATCH: u32 = 1 << 3;
+const WORLD_SNAPSHOT_PERSIST_MAGIC: u32 = 0x57565350; // "WVSP"
+const WORLD_SNAPSHOT_PERSIST_VERSION: u16 = 1;
+const WORLD_SNAPSHOT_NETWORK_MAGIC: u32 = 0x5756534E; // "WVSN"
+const WORLD_SNAPSHOT_NETWORK_VERSION: u16 = 1;
+const WORLD_SNAPSHOT_NETWORK_ENCRYPTION_NONE: u8 = 0;
+const WORLD_SNAPSHOT_NETWORK_ENCRYPTION_XOR_STREAM: u8 = 1;
+
+pub const FloatDeterminismReport = struct {
+    inspected_float_count: u32 = 0,
+    non_finite_count: u32 = 0,
+    negative_zero_count: u32 = 0,
+    subnormal_count: u32 = 0,
+    flags: u32 = 0,
+};
+
+pub const SimdDeterminismReport = struct {
+    inspected_float_count: u32 = 0,
+    scalar_sum: f32 = 0.0,
+    simd_sum: f32 = 0.0,
+    absolute_delta: f32 = 0.0,
+    allowed_delta: f32 = 0.0,
+    mismatch: bool = false,
+    flags: u32 = 0,
+};
 
 pub const InputLog = struct {
     tick: u32,
@@ -113,6 +145,87 @@ pub const InputLog = struct {
     brake: bool,
     mouse_dx: f32,
     mouse_dy: f32,
+};
+
+pub const CompressedWorldSnapshot = struct {
+    tick: u32 = 0,
+    world_hash: u64 = 0,
+    original_size: u32 = @as(u32, @intCast(@sizeOf(WorldSnapshot))),
+    compressed_size: u32 = 0,
+    data: [MAX_COMPRESSED_WORLD_SNAPSHOT_BYTES]u8 = [_]u8{0} ** MAX_COMPRESSED_WORLD_SNAPSHOT_BYTES,
+};
+
+pub const WorldSnapshotPlaybackState = struct {
+    active: bool = false,
+    loop: bool = false,
+    reverse: bool = false,
+    branch_id: u8 = 0,
+    start_tick: u32 = 0,
+    end_tick: u32 = 0,
+    last_tick: u32 = 0,
+    has_emitted: bool = false,
+};
+
+pub const WorldSnapshotBranchInfo = struct {
+    id: u8,
+    parent_id: u8,
+    fork_tick: u32,
+    head_tick: u32,
+    snapshot_count: u16,
+    active: bool,
+};
+
+pub const WorldSnapshotMergeStrategy = enum(u8) {
+    keep_target = 0,
+    keep_source = 1,
+    keep_latest = 2,
+};
+
+pub const WorldSnapshotMergeReport = struct {
+    target_branch_id: u8,
+    source_branch_id: u8,
+    strategy: WorldSnapshotMergeStrategy,
+    moved_count: u16,
+    conflict_count: u16,
+    resolved_by_source: u16,
+    resolved_by_target: u16,
+};
+
+pub const WorldSnapshotBudgetInfo = struct {
+    budget: u8,
+    count: u8,
+    capacity: u8,
+    evicted_count: u32,
+};
+
+pub const WorldSnapshotGCReport = struct {
+    scanned_count: u16,
+    removed_count: u16,
+    removed_orphan_count: u16,
+    removed_duplicate_count: u16,
+};
+
+const WorldSnapshotNetworkPacketHeader = struct {
+    magic: u32,
+    version: u16,
+    encryption: u8,
+    _reserved: u8,
+    branch_id: u8,
+    parent_id: u8,
+    fork_tick: u32,
+    head_tick: u32,
+    tick: u32,
+    world_hash: u64,
+    original_size: u32,
+    compressed_size: u32,
+};
+
+const WorldSnapshotBranch = struct {
+    id: u8 = INVALID_WORLD_SNAPSHOT_BRANCH_ID,
+    parent_id: u8 = INVALID_WORLD_SNAPSHOT_BRANCH_ID,
+    fork_tick: u32 = 0,
+    head_tick: u32 = 0,
+    active: bool = false,
 };
 
 // ============================================================================
@@ -146,7 +259,7 @@ pub const WorldSnapshot = struct {
     instances: [scene32.MAX_INSTANCES]InstanceSnapshot,
 
     // Entity states (simplified - just flags that affect physics)
-    entity_hp: [256]f32,  // Health for destructible entities
+    entity_hp: [256]f32, // Health for destructible entities
 
     // KCC states
     kcc_count: u8,
@@ -304,9 +417,16 @@ pub const RewindSystem = struct {
     deterministic: bool,
 
     // Full world snapshots
-    world_snapshots: [120]WorldSnapshot,
+    world_snapshots: [MAX_WORLD_SNAPSHOTS]WorldSnapshot,
+    compressed_world_snapshots: [MAX_WORLD_SNAPSHOTS]CompressedWorldSnapshot,
+    world_snapshot_branch_ids: [MAX_WORLD_SNAPSHOTS]u8,
     world_snapshot_count: u8,
     world_snapshot_index: u8,
+    world_snapshot_budget: u8,
+    world_snapshot_budget_evicted_count: u32,
+    world_snapshot_branches: [MAX_WORLD_SNAPSHOT_BRANCHES]WorldSnapshotBranch,
+    world_snapshot_branch_count: u8,
+    active_world_snapshot_branch_id: u8,
 
     // Input log
     input_log: [MAX_INPUT_LOG]InputLog,
@@ -317,6 +437,9 @@ pub const RewindSystem = struct {
     proof_ticks: u32,
     proof_initial_hash: u64,
     proof_final_hash: u64,
+
+    // Snapshot playback state
+    playback: WorldSnapshotPlaybackState = .{},
 };
 
 var g_rewind_system: RewindSystem = undefined;
@@ -335,16 +458,103 @@ pub fn init() void {
     g_rewind_system.deterministic = true;
     g_rewind_system.world_snapshot_count = 0;
     g_rewind_system.world_snapshot_index = 0;
+    g_rewind_system.world_snapshot_budget = @as(u8, @intCast(MAX_WORLD_SNAPSHOTS));
+    g_rewind_system.world_snapshot_budget_evicted_count = 0;
+    g_rewind_system.world_snapshot_branch_ids = [_]u8{0} ** MAX_WORLD_SNAPSHOTS;
+    g_rewind_system.world_snapshot_branches = [_]WorldSnapshotBranch{.{}} ** MAX_WORLD_SNAPSHOT_BRANCHES;
+    g_rewind_system.world_snapshot_branches[0] = .{
+        .id = 0,
+        .parent_id = INVALID_WORLD_SNAPSHOT_BRANCH_ID,
+        .fork_tick = 0,
+        .head_tick = 0,
+        .active = true,
+    };
+    g_rewind_system.world_snapshot_branch_count = 1;
+    g_rewind_system.active_world_snapshot_branch_id = 0;
     g_rewind_system.input_count = 0;
     g_rewind_system.max_input_tick = 0;
     g_rewind_system.proof_ticks = 0;
     g_rewind_system.proof_initial_hash = 0;
     g_rewind_system.proof_final_hash = 0;
+    g_rewind_system.playback = .{};
 }
 
 // ============================================================================
 // World State Snapshot Operations
 // ============================================================================
+
+fn rleCompressBytes(input: []const u8, out: []u8) usize {
+    if (input.len == 0) return 0;
+    var src_idx: usize = 0;
+    var dst_idx: usize = 0;
+    while (src_idx < input.len) {
+        const value = input[src_idx];
+        var run_len: usize = 1;
+        while (src_idx + run_len < input.len and run_len < 255 and input[src_idx + run_len] == value) : (run_len += 1) {}
+        if (dst_idx + 2 > out.len) break;
+        out[dst_idx] = @intCast(run_len);
+        out[dst_idx + 1] = value;
+        dst_idx += 2;
+        src_idx += run_len;
+    }
+    return dst_idx;
+}
+
+fn rleDecompressBytes(input: []const u8, out: []u8) !void {
+    if ((input.len % 2) != 0) return error.InvalidCompressedSnapshot;
+    var src_idx: usize = 0;
+    var dst_idx: usize = 0;
+    while (src_idx < input.len) : (src_idx += 2) {
+        const run_len = input[src_idx];
+        const value = input[src_idx + 1];
+        if (run_len == 0) return error.InvalidCompressedSnapshot;
+        if (dst_idx + run_len > out.len) return error.InvalidCompressedSnapshot;
+        @memset(out[dst_idx .. dst_idx + run_len], value);
+        dst_idx += run_len;
+    }
+    if (dst_idx != out.len) return error.InvalidCompressedSnapshot;
+}
+
+fn writePersistValue(writer: anytype, value: anytype) !void {
+    var copy = value;
+    try writer.writeAll(std.mem.asBytes(&copy));
+}
+
+fn readPersistValue(reader: anytype, comptime T: type) !T {
+    var value: T = undefined;
+    try reader.readNoEof(std.mem.asBytes(&value));
+    return value;
+}
+
+fn applyXorStreamInPlace(buf: []u8, key: u64, nonce: u64) void {
+    var rolling = key ^ (nonce *% 0x9E3779B97F4A7C15);
+    var i: usize = 0;
+    while (i < buf.len) : (i += 1) {
+        rolling = rolling *% 0xD1342543DE82EF95 +% 0xA0761D6478BD642F +% @as(u64, @intCast(i));
+        const mask: u8 = @intCast((rolling >> @as(u6, @intCast((i & 7) * 8))) & 0xFF);
+        buf[i] ^= mask;
+    }
+}
+
+pub fn compressWorldSnapshot(snapshot: *const WorldSnapshot) CompressedWorldSnapshot {
+    var compressed: CompressedWorldSnapshot = .{
+        .tick = snapshot.tick,
+        .world_hash = snapshot.world_hash,
+        .original_size = @as(u32, @intCast(@sizeOf(WorldSnapshot))),
+    };
+    const raw = std.mem.asBytes(snapshot);
+    compressed.compressed_size = @intCast(rleCompressBytes(raw, compressed.data[0..]));
+    return compressed;
+}
+
+pub fn decompressWorldSnapshot(compressed: *const CompressedWorldSnapshot) !WorldSnapshot {
+    var snapshot = std.mem.zeroes(WorldSnapshot);
+    try rleDecompressBytes(
+        compressed.data[0..compressed.compressed_size],
+        std.mem.asBytes(&snapshot),
+    );
+    return snapshot;
+}
 
 /// Capture full world state snapshot
 pub fn captureWorldSnapshot(
@@ -352,7 +562,7 @@ pub fn captureWorldSnapshot(
     s1024: *scene1024.Scene1024,
     entities: []entity16.Entity16,
 ) WorldSnapshot {
-    var snapshot: WorldSnapshot = undefined;
+    var snapshot = std.mem.zeroes(WorldSnapshot);
     snapshot.tick = tick;
     snapshot.global_tick = s1024.global_tick;
     snapshot.instance_count = s1024.instance_count;
@@ -383,7 +593,7 @@ pub fn captureWorldSnapshot(
     // Capture entity HP (for destructibles)
     i = 0;
     while (i < entities.len and i < 256) : (i += 1) {
-        snapshot.entity_hp[i] = @as(f32, @floatFromInt(entities[i].physics.hardness));  // Reuse hardness field as HP proxy
+        snapshot.entity_hp[i] = @as(f32, @floatFromInt(entities[i].physics.hardness)); // Reuse hardness field as HP proxy
     }
 
     // Capture KCC states
@@ -609,33 +819,836 @@ pub fn captureWorldSnapshot(
     return snapshot;
 }
 
+fn findWorldSnapshotBranchSlot(branch_id: u8) ?usize {
+    var i: usize = 0;
+    while (i < MAX_WORLD_SNAPSHOT_BRANCHES) : (i += 1) {
+        const branch = g_rewind_system.world_snapshot_branches[i];
+        if (branch.active and branch.id == branch_id) return i;
+    }
+    return null;
+}
+
+fn recomputeWorldSnapshotBranchHeadTick(branch_id: u8) void {
+    const slot = findWorldSnapshotBranchSlot(branch_id) orelse return;
+    var has_snapshot = false;
+    var head_tick = g_rewind_system.world_snapshot_branches[slot].fork_tick;
+
+    var i: u8 = 0;
+    while (i < g_rewind_system.world_snapshot_count) : (i += 1) {
+        const idx = (@as(usize, g_rewind_system.world_snapshot_index) + MAX_WORLD_SNAPSHOTS - @as(usize, g_rewind_system.world_snapshot_count) + @as(usize, i)) % MAX_WORLD_SNAPSHOTS;
+        if (g_rewind_system.world_snapshot_branch_ids[idx] != branch_id) continue;
+        const tick = g_rewind_system.world_snapshots[idx].tick;
+        if (!has_snapshot or tick > head_tick) {
+            head_tick = tick;
+            has_snapshot = true;
+        }
+    }
+
+    if (!has_snapshot) {
+        head_tick = g_rewind_system.world_snapshot_branches[slot].fork_tick;
+    }
+    g_rewind_system.world_snapshot_branches[slot].head_tick = head_tick;
+}
+
+fn worldSnapshotInsertionRank(slot_idx: usize) ?u16 {
+    var rank: u16 = 0;
+    var i: u8 = 0;
+    while (i < g_rewind_system.world_snapshot_count) : (i += 1) {
+        const idx = (@as(usize, g_rewind_system.world_snapshot_index) + MAX_WORLD_SNAPSHOTS - @as(usize, g_rewind_system.world_snapshot_count) + @as(usize, i)) % MAX_WORLD_SNAPSHOTS;
+        if (idx == slot_idx) return rank;
+        rank += 1;
+    }
+    return null;
+}
+
+fn findLatestWorldSnapshotIndexAtTickInBranch(tick: u32, branch_id: u8) ?usize {
+    var latest_idx: ?usize = null;
+    var i: u8 = 0;
+    while (i < g_rewind_system.world_snapshot_count) : (i += 1) {
+        const idx = (@as(usize, g_rewind_system.world_snapshot_index) + MAX_WORLD_SNAPSHOTS - @as(usize, g_rewind_system.world_snapshot_count) + @as(usize, i)) % MAX_WORLD_SNAPSHOTS;
+        if (g_rewind_system.world_snapshot_branch_ids[idx] != branch_id) continue;
+        if (g_rewind_system.world_snapshots[idx].tick != tick) continue;
+        latest_idx = idx;
+    }
+    return latest_idx;
+}
+
+fn countWorldSnapshotsInBranch(branch_id: u8) u16 {
+    var count: u16 = 0;
+    var i: u8 = 0;
+    while (i < g_rewind_system.world_snapshot_count) : (i += 1) {
+        const idx = (@as(usize, g_rewind_system.world_snapshot_index) + MAX_WORLD_SNAPSHOTS - @as(usize, g_rewind_system.world_snapshot_count) + @as(usize, i)) % MAX_WORLD_SNAPSHOTS;
+        if (g_rewind_system.world_snapshot_branch_ids[idx] == branch_id) count += 1;
+    }
+    return count;
+}
+
+pub fn getActiveWorldSnapshotBranchId() u8 {
+    return g_rewind_system.active_world_snapshot_branch_id;
+}
+
+fn evictOldestWorldSnapshot() ?u8 {
+    if (g_rewind_system.world_snapshot_count == 0) return null;
+    const oldest_idx = (@as(usize, g_rewind_system.world_snapshot_index) + MAX_WORLD_SNAPSHOTS - @as(usize, g_rewind_system.world_snapshot_count)) % MAX_WORLD_SNAPSHOTS;
+    const branch_id = g_rewind_system.world_snapshot_branch_ids[oldest_idx];
+    g_rewind_system.world_snapshot_count -= 1;
+    g_rewind_system.world_snapshot_budget_evicted_count += 1;
+    return branch_id;
+}
+
+pub fn setWorldSnapshotBudget(budget: u8) bool {
+    if (budget == 0 or budget > MAX_WORLD_SNAPSHOTS) return false;
+    g_rewind_system.world_snapshot_budget = budget;
+
+    var touched_branches: [MAX_WORLD_SNAPSHOT_BRANCHES]bool = [_]bool{false} ** MAX_WORLD_SNAPSHOT_BRANCHES;
+    while (g_rewind_system.world_snapshot_count > budget) {
+        const evicted_branch_id = evictOldestWorldSnapshot() orelse break;
+        if (findWorldSnapshotBranchSlot(evicted_branch_id)) |slot| {
+            touched_branches[slot] = true;
+        }
+    }
+
+    var slot_idx: usize = 0;
+    while (slot_idx < MAX_WORLD_SNAPSHOT_BRANCHES) : (slot_idx += 1) {
+        if (!touched_branches[slot_idx]) continue;
+        recomputeWorldSnapshotBranchHeadTick(g_rewind_system.world_snapshot_branches[slot_idx].id);
+    }
+    return true;
+}
+
+pub fn getWorldSnapshotBudgetInfo() WorldSnapshotBudgetInfo {
+    return .{
+        .budget = g_rewind_system.world_snapshot_budget,
+        .count = g_rewind_system.world_snapshot_count,
+        .capacity = @as(u8, @intCast(MAX_WORLD_SNAPSHOTS)),
+        .evicted_count = g_rewind_system.world_snapshot_budget_evicted_count,
+    };
+}
+
+pub fn collectWorldSnapshotGarbage() WorldSnapshotGCReport {
+    const snapshot_count = g_rewind_system.world_snapshot_count;
+    var report = WorldSnapshotGCReport{
+        .scanned_count = snapshot_count,
+        .removed_count = 0,
+        .removed_orphan_count = 0,
+        .removed_duplicate_count = 0,
+    };
+    if (snapshot_count == 0) return report;
+
+    const oldest_idx = (@as(usize, g_rewind_system.world_snapshot_index) + MAX_WORLD_SNAPSHOTS - @as(usize, snapshot_count)) % MAX_WORLD_SNAPSHOTS;
+    var keep_by_pos: [MAX_WORLD_SNAPSHOTS]bool = [_]bool{false} ** MAX_WORLD_SNAPSHOTS;
+
+    var i: u8 = 0;
+    while (i < snapshot_count) : (i += 1) {
+        const idx = (oldest_idx + @as(usize, i)) % MAX_WORLD_SNAPSHOTS;
+        const branch_id = g_rewind_system.world_snapshot_branch_ids[idx];
+        if (findWorldSnapshotBranchSlot(branch_id) == null) {
+            report.removed_count += 1;
+            report.removed_orphan_count += 1;
+            continue;
+        }
+
+        const tick = g_rewind_system.world_snapshots[idx].tick;
+        var has_newer_duplicate = false;
+        var j: u8 = i + 1;
+        while (j < snapshot_count) : (j += 1) {
+            const newer_idx = (oldest_idx + @as(usize, j)) % MAX_WORLD_SNAPSHOTS;
+            if (g_rewind_system.world_snapshot_branch_ids[newer_idx] != branch_id) continue;
+            if (g_rewind_system.world_snapshots[newer_idx].tick != tick) continue;
+            has_newer_duplicate = true;
+            break;
+        }
+        if (has_newer_duplicate) {
+            report.removed_count += 1;
+            report.removed_duplicate_count += 1;
+            continue;
+        }
+
+        keep_by_pos[i] = true;
+    }
+
+    var write_pos: u8 = 0;
+    i = 0;
+    while (i < snapshot_count) : (i += 1) {
+        if (!keep_by_pos[i]) continue;
+        const src_idx = (oldest_idx + @as(usize, i)) % MAX_WORLD_SNAPSHOTS;
+        const dst_idx = (oldest_idx + @as(usize, write_pos)) % MAX_WORLD_SNAPSHOTS;
+        if (src_idx != dst_idx) {
+            g_rewind_system.world_snapshots[dst_idx] = g_rewind_system.world_snapshots[src_idx];
+            g_rewind_system.compressed_world_snapshots[dst_idx] = g_rewind_system.compressed_world_snapshots[src_idx];
+            g_rewind_system.world_snapshot_branch_ids[dst_idx] = g_rewind_system.world_snapshot_branch_ids[src_idx];
+        }
+        write_pos += 1;
+    }
+
+    g_rewind_system.world_snapshot_count = write_pos;
+    g_rewind_system.world_snapshot_index = @intCast((oldest_idx + @as(usize, write_pos)) % MAX_WORLD_SNAPSHOTS);
+
+    var slot_idx: usize = 0;
+    while (slot_idx < MAX_WORLD_SNAPSHOT_BRANCHES) : (slot_idx += 1) {
+        const branch = g_rewind_system.world_snapshot_branches[slot_idx];
+        if (!branch.active) continue;
+        recomputeWorldSnapshotBranchHeadTick(branch.id);
+    }
+
+    if (g_rewind_system.playback.active and findWorldSnapshotPlaybackIndex(g_rewind_system.playback) == null) {
+        stopWorldSnapshotPlayback();
+    }
+
+    return report;
+}
+
+pub fn saveWorldSnapshotsToFile(path: []const u8) !void {
+    if (path.len == 0) return error.InvalidSnapshotPersistencePath;
+    var file = try std.fs.cwd().createFile(path, .{ .truncate = true });
+    defer file.close();
+
+    var buffered_writer = std.io.bufferedWriter(file.writer());
+    const writer = buffered_writer.writer();
+
+    var branch_count: u8 = 0;
+    var slot_idx: usize = 0;
+    while (slot_idx < MAX_WORLD_SNAPSHOT_BRANCHES) : (slot_idx += 1) {
+        if (g_rewind_system.world_snapshot_branches[slot_idx].active) branch_count += 1;
+    }
+
+    try writePersistValue(writer, WORLD_SNAPSHOT_PERSIST_MAGIC);
+    try writePersistValue(writer, WORLD_SNAPSHOT_PERSIST_VERSION);
+    try writePersistValue(writer, g_rewind_system.world_snapshot_count);
+    try writePersistValue(writer, branch_count);
+    try writePersistValue(writer, g_rewind_system.active_world_snapshot_branch_id);
+    try writePersistValue(writer, g_rewind_system.world_snapshot_budget);
+    try writePersistValue(writer, g_rewind_system.world_snapshot_budget_evicted_count);
+
+    slot_idx = 0;
+    while (slot_idx < MAX_WORLD_SNAPSHOT_BRANCHES) : (slot_idx += 1) {
+        const branch = g_rewind_system.world_snapshot_branches[slot_idx];
+        if (!branch.active) continue;
+        try writePersistValue(writer, branch.id);
+        try writePersistValue(writer, branch.parent_id);
+        try writePersistValue(writer, branch.fork_tick);
+        try writePersistValue(writer, branch.head_tick);
+    }
+
+    var i: u8 = 0;
+    while (i < g_rewind_system.world_snapshot_count) : (i += 1) {
+        const idx = (@as(usize, g_rewind_system.world_snapshot_index) + MAX_WORLD_SNAPSHOTS - @as(usize, g_rewind_system.world_snapshot_count) + @as(usize, i)) % MAX_WORLD_SNAPSHOTS;
+        const branch_id = g_rewind_system.world_snapshot_branch_ids[idx];
+        if (findWorldSnapshotBranchSlot(branch_id) == null) return error.InvalidSnapshotPersistenceState;
+        try writePersistValue(writer, branch_id);
+        try writer.writeAll(std.mem.asBytes(&g_rewind_system.world_snapshots[idx]));
+    }
+
+    try buffered_writer.flush();
+}
+
+pub fn loadWorldSnapshotsFromFile(path: []const u8) !void {
+    if (path.len == 0) return error.InvalidSnapshotPersistencePath;
+    var file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
+
+    var buffered_reader = std.io.bufferedReader(file.reader());
+    const reader = buffered_reader.reader();
+
+    const magic = try readPersistValue(reader, u32);
+    if (magic != WORLD_SNAPSHOT_PERSIST_MAGIC) return error.InvalidSnapshotPersistenceMagic;
+
+    const version = try readPersistValue(reader, u16);
+    if (version != WORLD_SNAPSHOT_PERSIST_VERSION) return error.InvalidSnapshotPersistenceVersion;
+
+    const snapshot_count = try readPersistValue(reader, u8);
+    const branch_count = try readPersistValue(reader, u8);
+    const active_branch_id = try readPersistValue(reader, u8);
+    const snapshot_budget = try readPersistValue(reader, u8);
+    const budget_evicted_count = try readPersistValue(reader, u32);
+
+    if (snapshot_count > MAX_WORLD_SNAPSHOTS) return error.InvalidSnapshotPersistenceState;
+    if (branch_count == 0 or branch_count > MAX_WORLD_SNAPSHOT_BRANCHES) return error.InvalidSnapshotPersistenceState;
+    if (snapshot_budget == 0 or snapshot_budget > MAX_WORLD_SNAPSHOTS) return error.InvalidSnapshotPersistenceState;
+
+    g_rewind_system.world_snapshot_count = 0;
+    g_rewind_system.world_snapshot_index = 0;
+    g_rewind_system.world_snapshot_budget = snapshot_budget;
+    g_rewind_system.world_snapshot_budget_evicted_count = budget_evicted_count;
+    g_rewind_system.world_snapshot_branch_ids = [_]u8{0} ** MAX_WORLD_SNAPSHOTS;
+    g_rewind_system.world_snapshot_branches = [_]WorldSnapshotBranch{.{}} ** MAX_WORLD_SNAPSHOT_BRANCHES;
+    g_rewind_system.world_snapshot_branch_count = 0;
+    g_rewind_system.active_world_snapshot_branch_id = 0;
+    g_rewind_system.playback = .{};
+
+    var loaded_branch_count: u8 = 0;
+    while (loaded_branch_count < branch_count) : (loaded_branch_count += 1) {
+        const id = try readPersistValue(reader, u8);
+        const parent_id = try readPersistValue(reader, u8);
+        const fork_tick = try readPersistValue(reader, u32);
+        const head_tick = try readPersistValue(reader, u32);
+
+        if (id == INVALID_WORLD_SNAPSHOT_BRANCH_ID) return error.InvalidSnapshotPersistenceState;
+        if (findWorldSnapshotBranchSlot(id) != null) return error.InvalidSnapshotPersistenceState;
+        g_rewind_system.world_snapshot_branches[loaded_branch_count] = .{
+            .id = id,
+            .parent_id = parent_id,
+            .fork_tick = fork_tick,
+            .head_tick = head_tick,
+            .active = true,
+        };
+    }
+    g_rewind_system.world_snapshot_branch_count = branch_count;
+
+    if (findWorldSnapshotBranchSlot(0) == null) return error.InvalidSnapshotPersistenceState;
+    if (findWorldSnapshotBranchSlot(active_branch_id) == null) return error.InvalidSnapshotPersistenceState;
+    g_rewind_system.active_world_snapshot_branch_id = active_branch_id;
+
+    var i: u8 = 0;
+    while (i < snapshot_count) : (i += 1) {
+        const branch_id = try readPersistValue(reader, u8);
+        if (findWorldSnapshotBranchSlot(branch_id) == null) return error.InvalidSnapshotPersistenceState;
+
+        var snapshot = std.mem.zeroes(WorldSnapshot);
+        try reader.readNoEof(std.mem.asBytes(&snapshot));
+
+        const idx = g_rewind_system.world_snapshot_index;
+        g_rewind_system.world_snapshot_branch_ids[idx] = branch_id;
+        g_rewind_system.world_snapshots[idx] = snapshot;
+        g_rewind_system.compressed_world_snapshots[idx] = compressWorldSnapshot(&snapshot);
+        g_rewind_system.world_snapshot_index = @intCast((@as(usize, idx) + 1) % MAX_WORLD_SNAPSHOTS);
+        g_rewind_system.world_snapshot_count += 1;
+    }
+
+    var slot_idx: usize = 0;
+    while (slot_idx < MAX_WORLD_SNAPSHOT_BRANCHES) : (slot_idx += 1) {
+        const branch = g_rewind_system.world_snapshot_branches[slot_idx];
+        if (!branch.active) continue;
+        recomputeWorldSnapshotBranchHeadTick(branch.id);
+    }
+}
+
+fn ensureWorldSnapshotBranchForNetworkImport(branch_id: u8, parent_id: u8, fork_tick: u32, head_tick: u32) bool {
+    if (branch_id == INVALID_WORLD_SNAPSHOT_BRANCH_ID) return false;
+
+    if (findWorldSnapshotBranchSlot(branch_id)) |slot| {
+        if (branch_id != 0 and parent_id != INVALID_WORLD_SNAPSHOT_BRANCH_ID and parent_id != branch_id and findWorldSnapshotBranchSlot(parent_id) != null) {
+            g_rewind_system.world_snapshot_branches[slot].parent_id = parent_id;
+        }
+        if (fork_tick < g_rewind_system.world_snapshot_branches[slot].fork_tick) {
+            g_rewind_system.world_snapshot_branches[slot].fork_tick = fork_tick;
+        }
+        if (head_tick > g_rewind_system.world_snapshot_branches[slot].head_tick) {
+            g_rewind_system.world_snapshot_branches[slot].head_tick = head_tick;
+        }
+        return true;
+    }
+
+    if (g_rewind_system.world_snapshot_branch_count >= MAX_WORLD_SNAPSHOT_BRANCHES) return false;
+
+    var free_slot: ?usize = null;
+    var slot_idx: usize = 0;
+    while (slot_idx < MAX_WORLD_SNAPSHOT_BRANCHES) : (slot_idx += 1) {
+        if (!g_rewind_system.world_snapshot_branches[slot_idx].active) {
+            free_slot = slot_idx;
+            break;
+        }
+    }
+    const slot = free_slot orelse return false;
+
+    const resolved_parent: u8 = blk: {
+        if (branch_id == 0) break :blk INVALID_WORLD_SNAPSHOT_BRANCH_ID;
+        if (parent_id != INVALID_WORLD_SNAPSHOT_BRANCH_ID and parent_id != branch_id and findWorldSnapshotBranchSlot(parent_id) != null) break :blk parent_id;
+        break :blk 0;
+    };
+
+    g_rewind_system.world_snapshot_branches[slot] = .{
+        .id = branch_id,
+        .parent_id = resolved_parent,
+        .fork_tick = if (branch_id == 0) 0 else fork_tick,
+        .head_tick = if (head_tick > fork_tick) head_tick else fork_tick,
+        .active = true,
+    };
+    g_rewind_system.world_snapshot_branch_count += 1;
+    return true;
+}
+
+fn upsertWorldSnapshotFromNetwork(snapshot: WorldSnapshot, compressed: CompressedWorldSnapshot, branch_id: u8) bool {
+    _ = findWorldSnapshotBranchSlot(branch_id) orelse return false;
+    if (snapshot.tick != compressed.tick or snapshot.world_hash != compressed.world_hash) return false;
+
+    if (findLatestWorldSnapshotIndexAtTickInBranch(snapshot.tick, branch_id)) |existing_idx| {
+        g_rewind_system.world_snapshot_branch_ids[existing_idx] = branch_id;
+        g_rewind_system.world_snapshots[existing_idx] = snapshot;
+        g_rewind_system.compressed_world_snapshots[existing_idx] = compressed;
+        recomputeWorldSnapshotBranchHeadTick(branch_id);
+        return true;
+    }
+
+    while (g_rewind_system.world_snapshot_count >= g_rewind_system.world_snapshot_budget and g_rewind_system.world_snapshot_count > 0) {
+        const evicted_branch_id = evictOldestWorldSnapshot() orelse break;
+        recomputeWorldSnapshotBranchHeadTick(evicted_branch_id);
+    }
+
+    const idx = g_rewind_system.world_snapshot_index;
+    g_rewind_system.world_snapshot_branch_ids[idx] = branch_id;
+    g_rewind_system.world_snapshots[idx] = snapshot;
+    g_rewind_system.compressed_world_snapshots[idx] = compressed;
+    g_rewind_system.world_snapshot_index = @intCast((@as(usize, idx) + 1) % MAX_WORLD_SNAPSHOTS);
+    if (g_rewind_system.world_snapshot_count < MAX_WORLD_SNAPSHOTS) {
+        g_rewind_system.world_snapshot_count += 1;
+    }
+    recomputeWorldSnapshotBranchHeadTick(branch_id);
+
+    if (g_rewind_system.playback.active and findWorldSnapshotPlaybackIndex(g_rewind_system.playback) == null) {
+        stopWorldSnapshotPlayback();
+    }
+    return true;
+}
+
+pub fn exportWorldSnapshotToNetworkPacket(tick: u32, branch_id: u8, out: []u8) ?usize {
+    return exportWorldSnapshotToNetworkPacketEncrypted(tick, branch_id, out, 0, 0);
+}
+
+pub fn exportWorldSnapshotToNetworkPacketEncrypted(tick: u32, branch_id: u8, out: []u8, encryption_key: u64, nonce: u64) ?usize {
+    _ = findWorldSnapshotBranchSlot(branch_id) orelse return null;
+    const snapshot_idx = findLatestWorldSnapshotIndexAtTickInBranch(tick, branch_id) orelse return null;
+    const branch = getWorldSnapshotBranchInfo(branch_id) orelse return null;
+    const compressed = g_rewind_system.compressed_world_snapshots[snapshot_idx];
+    const encryption_mode: u8 = if (encryption_key == 0) WORLD_SNAPSHOT_NETWORK_ENCRYPTION_NONE else WORLD_SNAPSHOT_NETWORK_ENCRYPTION_XOR_STREAM;
+
+    const header = WorldSnapshotNetworkPacketHeader{
+        .magic = WORLD_SNAPSHOT_NETWORK_MAGIC,
+        .version = WORLD_SNAPSHOT_NETWORK_VERSION,
+        .encryption = encryption_mode,
+        ._reserved = 0,
+        .branch_id = branch_id,
+        .parent_id = branch.parent_id,
+        .fork_tick = branch.fork_tick,
+        .head_tick = branch.head_tick,
+        .tick = compressed.tick,
+        .world_hash = compressed.world_hash,
+        .original_size = compressed.original_size,
+        .compressed_size = compressed.compressed_size,
+    };
+
+    const required_size = @sizeOf(WorldSnapshotNetworkPacketHeader) + @as(usize, compressed.compressed_size);
+    if (out.len < required_size) return null;
+    const compressed_len: usize = @intCast(compressed.compressed_size);
+
+    var cursor: usize = 0;
+    const header_bytes = std.mem.asBytes(&header);
+    @memcpy(out[cursor .. cursor + header_bytes.len], header_bytes);
+    cursor += header_bytes.len;
+    @memcpy(out[cursor .. cursor + compressed_len], compressed.data[0..compressed_len]);
+    if (encryption_mode == WORLD_SNAPSHOT_NETWORK_ENCRYPTION_XOR_STREAM) {
+        applyXorStreamInPlace(out[cursor .. cursor + compressed_len], encryption_key, nonce);
+    }
+    cursor += compressed_len;
+    return cursor;
+}
+
+pub fn importWorldSnapshotFromNetworkPacket(packet: []const u8) bool {
+    return importWorldSnapshotFromNetworkPacketEncrypted(packet, 0, 0);
+}
+
+pub fn importWorldSnapshotFromNetworkPacketEncrypted(packet: []const u8, encryption_key: u64, nonce: u64) bool {
+    const header_size = @sizeOf(WorldSnapshotNetworkPacketHeader);
+    if (packet.len < header_size) return false;
+
+    var header = std.mem.zeroes(WorldSnapshotNetworkPacketHeader);
+    @memcpy(std.mem.asBytes(&header), packet[0..header_size]);
+
+    if (header.magic != WORLD_SNAPSHOT_NETWORK_MAGIC) return false;
+    if (header.version != WORLD_SNAPSHOT_NETWORK_VERSION) return false;
+    if (header.encryption != WORLD_SNAPSHOT_NETWORK_ENCRYPTION_NONE and header.encryption != WORLD_SNAPSHOT_NETWORK_ENCRYPTION_XOR_STREAM) return false;
+    if (header._reserved != 0) return false;
+    if (header.compressed_size > MAX_COMPRESSED_WORLD_SNAPSHOT_BYTES) return false;
+    if (header.original_size != @sizeOf(WorldSnapshot)) return false;
+    if (packet.len != header_size + @as(usize, header.compressed_size)) return false;
+
+    if (header.encryption == WORLD_SNAPSHOT_NETWORK_ENCRYPTION_NONE and encryption_key != 0) return false;
+    if (header.encryption == WORLD_SNAPSHOT_NETWORK_ENCRYPTION_XOR_STREAM and encryption_key == 0) return false;
+
+    if (!ensureWorldSnapshotBranchForNetworkImport(header.branch_id, header.parent_id, header.fork_tick, header.head_tick)) return false;
+
+    var compressed = std.mem.zeroes(CompressedWorldSnapshot);
+    compressed.tick = header.tick;
+    compressed.world_hash = header.world_hash;
+    compressed.original_size = header.original_size;
+    compressed.compressed_size = header.compressed_size;
+    const compressed_len: usize = @intCast(compressed.compressed_size);
+    @memcpy(compressed.data[0..compressed_len], packet[header_size .. header_size + compressed_len]);
+    if (header.encryption == WORLD_SNAPSHOT_NETWORK_ENCRYPTION_XOR_STREAM) {
+        applyXorStreamInPlace(compressed.data[0..compressed_len], encryption_key, nonce);
+    }
+
+    const snapshot = decompressWorldSnapshot(&compressed) catch return false;
+    if (snapshot.tick != header.tick) return false;
+    if (snapshot.world_hash != header.world_hash) return false;
+
+    return upsertWorldSnapshotFromNetwork(snapshot, compressed, header.branch_id);
+}
+
+pub fn getWorldSnapshotAtTickInBranch(tick: u32, branch_id: u8) ?*const WorldSnapshot {
+    var i: u8 = 0;
+    while (i < g_rewind_system.world_snapshot_count) : (i += 1) {
+        const idx = (@as(usize, g_rewind_system.world_snapshot_index) + MAX_WORLD_SNAPSHOTS - @as(usize, g_rewind_system.world_snapshot_count) + @as(usize, i)) % MAX_WORLD_SNAPSHOTS;
+        if (g_rewind_system.world_snapshot_branch_ids[idx] != branch_id) continue;
+        if (g_rewind_system.world_snapshots[idx].tick == tick) {
+            return &g_rewind_system.world_snapshots[idx];
+        }
+    }
+    return null;
+}
+
+pub fn getCompressedWorldSnapshotAtTickInBranch(tick: u32, branch_id: u8) ?*const CompressedWorldSnapshot {
+    var i: u8 = 0;
+    while (i < g_rewind_system.world_snapshot_count) : (i += 1) {
+        const idx = (@as(usize, g_rewind_system.world_snapshot_index) + MAX_WORLD_SNAPSHOTS - @as(usize, g_rewind_system.world_snapshot_count) + @as(usize, i)) % MAX_WORLD_SNAPSHOTS;
+        if (g_rewind_system.world_snapshot_branch_ids[idx] != branch_id) continue;
+        if (g_rewind_system.compressed_world_snapshots[idx].tick == tick) {
+            return &g_rewind_system.compressed_world_snapshots[idx];
+        }
+    }
+    return null;
+}
+
+pub fn getWorldSnapshotBranchInfo(branch_id: u8) ?WorldSnapshotBranchInfo {
+    const slot = findWorldSnapshotBranchSlot(branch_id) orelse return null;
+    const branch = g_rewind_system.world_snapshot_branches[slot];
+    return .{
+        .id = branch.id,
+        .parent_id = branch.parent_id,
+        .fork_tick = branch.fork_tick,
+        .head_tick = branch.head_tick,
+        .snapshot_count = countWorldSnapshotsInBranch(branch.id),
+        .active = branch.id == g_rewind_system.active_world_snapshot_branch_id,
+    };
+}
+
+pub fn listWorldSnapshotBranches(out: []WorldSnapshotBranchInfo) u8 {
+    var written: usize = 0;
+    var i: usize = 0;
+    while (i < MAX_WORLD_SNAPSHOT_BRANCHES and written < out.len) : (i += 1) {
+        const branch = g_rewind_system.world_snapshot_branches[i];
+        if (!branch.active) continue;
+        out[written] = .{
+            .id = branch.id,
+            .parent_id = branch.parent_id,
+            .fork_tick = branch.fork_tick,
+            .head_tick = branch.head_tick,
+            .snapshot_count = countWorldSnapshotsInBranch(branch.id),
+            .active = branch.id == g_rewind_system.active_world_snapshot_branch_id,
+        };
+        written += 1;
+    }
+    return @intCast(written);
+}
+
+pub fn createWorldSnapshotBranch(fork_tick: u32) ?u8 {
+    if (g_rewind_system.world_snapshot_branch_count >= MAX_WORLD_SNAPSHOT_BRANCHES) return null;
+    const parent_id = g_rewind_system.active_world_snapshot_branch_id;
+    _ = getWorldSnapshotAtTickInBranch(fork_tick, parent_id) orelse return null;
+
+    var free_slot: ?usize = null;
+    var i: usize = 0;
+    while (i < MAX_WORLD_SNAPSHOT_BRANCHES) : (i += 1) {
+        if (!g_rewind_system.world_snapshot_branches[i].active) {
+            free_slot = i;
+            break;
+        }
+    }
+    const slot = free_slot orelse return null;
+
+    var next_id: u16 = 1;
+    var selected_id: ?u8 = null;
+    while (next_id < INVALID_WORLD_SNAPSHOT_BRANCH_ID) : (next_id += 1) {
+        const candidate: u8 = @intCast(next_id);
+        if (findWorldSnapshotBranchSlot(candidate) == null) {
+            selected_id = candidate;
+            break;
+        }
+    }
+    const branch_id = selected_id orelse return null;
+
+    g_rewind_system.world_snapshot_branches[slot] = .{
+        .id = branch_id,
+        .parent_id = parent_id,
+        .fork_tick = fork_tick,
+        .head_tick = fork_tick,
+        .active = true,
+    };
+    g_rewind_system.world_snapshot_branch_count += 1;
+    return branch_id;
+}
+
+pub fn switchWorldSnapshotBranch(branch_id: u8) bool {
+    _ = findWorldSnapshotBranchSlot(branch_id) orelse return false;
+    g_rewind_system.active_world_snapshot_branch_id = branch_id;
+    stopWorldSnapshotPlayback();
+    return true;
+}
+
+pub fn deleteWorldSnapshotBranch(branch_id: u8) bool {
+    if (branch_id == 0 or branch_id == g_rewind_system.active_world_snapshot_branch_id) return false;
+    const slot = findWorldSnapshotBranchSlot(branch_id) orelse return false;
+
+    var i: usize = 0;
+    while (i < MAX_WORLD_SNAPSHOT_BRANCHES) : (i += 1) {
+        const branch = g_rewind_system.world_snapshot_branches[i];
+        if (branch.active and branch.parent_id == branch_id) return false;
+    }
+
+    const parent_id = g_rewind_system.world_snapshot_branches[slot].parent_id;
+    const fallback_parent = if (parent_id == INVALID_WORLD_SNAPSHOT_BRANCH_ID) @as(u8, 0) else parent_id;
+    var snap_i: u8 = 0;
+    while (snap_i < g_rewind_system.world_snapshot_count) : (snap_i += 1) {
+        const snapshot_idx = (@as(usize, g_rewind_system.world_snapshot_index) + MAX_WORLD_SNAPSHOTS - @as(usize, g_rewind_system.world_snapshot_count) + @as(usize, snap_i)) % MAX_WORLD_SNAPSHOTS;
+        if (g_rewind_system.world_snapshot_branch_ids[snapshot_idx] == branch_id) {
+            g_rewind_system.world_snapshot_branch_ids[snapshot_idx] = fallback_parent;
+        }
+    }
+
+    g_rewind_system.world_snapshot_branches[slot] = .{};
+    g_rewind_system.world_snapshot_branch_count -= 1;
+    recomputeWorldSnapshotBranchHeadTick(fallback_parent);
+    return true;
+}
+
+pub fn mergeWorldSnapshotBranches(
+    target_branch_id: u8,
+    source_branch_id: u8,
+    strategy: WorldSnapshotMergeStrategy,
+) ?WorldSnapshotMergeReport {
+    _ = findWorldSnapshotBranchSlot(target_branch_id) orelse return null;
+    _ = findWorldSnapshotBranchSlot(source_branch_id) orelse return null;
+    if (target_branch_id == source_branch_id) return null;
+
+    var report = WorldSnapshotMergeReport{
+        .target_branch_id = target_branch_id,
+        .source_branch_id = source_branch_id,
+        .strategy = strategy,
+        .moved_count = 0,
+        .conflict_count = 0,
+        .resolved_by_source = 0,
+        .resolved_by_target = 0,
+    };
+
+    var i: u8 = 0;
+    while (i < g_rewind_system.world_snapshot_count) : (i += 1) {
+        const source_idx = (@as(usize, g_rewind_system.world_snapshot_index) + MAX_WORLD_SNAPSHOTS - @as(usize, g_rewind_system.world_snapshot_count) + @as(usize, i)) % MAX_WORLD_SNAPSHOTS;
+        if (g_rewind_system.world_snapshot_branch_ids[source_idx] != source_branch_id) continue;
+        const tick = g_rewind_system.world_snapshots[source_idx].tick;
+
+        var has_conflict = false;
+        var latest_target_rank: ?u16 = null;
+        var j: u8 = 0;
+        while (j < g_rewind_system.world_snapshot_count) : (j += 1) {
+            const target_idx = (@as(usize, g_rewind_system.world_snapshot_index) + MAX_WORLD_SNAPSHOTS - @as(usize, g_rewind_system.world_snapshot_count) + @as(usize, j)) % MAX_WORLD_SNAPSHOTS;
+            if (target_idx == source_idx) continue;
+            if (g_rewind_system.world_snapshot_branch_ids[target_idx] != target_branch_id) continue;
+            if (g_rewind_system.world_snapshots[target_idx].tick != tick) continue;
+            has_conflict = true;
+            const rank = worldSnapshotInsertionRank(target_idx) orelse 0;
+            if (latest_target_rank == null or rank > latest_target_rank.?) {
+                latest_target_rank = rank;
+            }
+        }
+
+        if (!has_conflict) {
+            g_rewind_system.world_snapshot_branch_ids[source_idx] = target_branch_id;
+            report.moved_count += 1;
+            continue;
+        }
+
+        report.conflict_count += 1;
+        const choose_source = switch (strategy) {
+            .keep_target => false,
+            .keep_source => true,
+            .keep_latest => blk: {
+                const source_rank = worldSnapshotInsertionRank(source_idx) orelse 0;
+                break :blk latest_target_rank == null or source_rank >= latest_target_rank.?;
+            },
+        };
+
+        if (!choose_source) {
+            report.resolved_by_target += 1;
+            continue;
+        }
+
+        j = 0;
+        while (j < g_rewind_system.world_snapshot_count) : (j += 1) {
+            const target_idx = (@as(usize, g_rewind_system.world_snapshot_index) + MAX_WORLD_SNAPSHOTS - @as(usize, g_rewind_system.world_snapshot_count) + @as(usize, j)) % MAX_WORLD_SNAPSHOTS;
+            if (target_idx == source_idx) continue;
+            if (g_rewind_system.world_snapshot_branch_ids[target_idx] != target_branch_id) continue;
+            if (g_rewind_system.world_snapshots[target_idx].tick != tick) continue;
+            g_rewind_system.world_snapshot_branch_ids[target_idx] = source_branch_id;
+        }
+        g_rewind_system.world_snapshot_branch_ids[source_idx] = target_branch_id;
+        report.moved_count += 1;
+        report.resolved_by_source += 1;
+    }
+
+    recomputeWorldSnapshotBranchHeadTick(target_branch_id);
+    recomputeWorldSnapshotBranchHeadTick(source_branch_id);
+    return report;
+}
+
 /// Record world snapshot
 pub fn recordWorldSnapshot(
     tick: u32,
     s1024: *scene1024.Scene1024,
     entities: []entity16.Entity16,
 ) void {
+    while (g_rewind_system.world_snapshot_count >= g_rewind_system.world_snapshot_budget and g_rewind_system.world_snapshot_count > 0) {
+        const evicted_branch_id = evictOldestWorldSnapshot() orelse break;
+        recomputeWorldSnapshotBranchHeadTick(evicted_branch_id);
+    }
+
     const snapshot = captureWorldSnapshot(tick, s1024, entities);
+    const determinism_flags = computeWorldDeterminismFlags(&snapshot);
+    if (determinism_flags != 0) {
+        g_rewind_system.deterministic = false;
+    }
 
     const idx = g_rewind_system.world_snapshot_index;
+    g_rewind_system.world_snapshot_branch_ids[idx] = g_rewind_system.active_world_snapshot_branch_id;
     g_rewind_system.world_snapshots[idx] = snapshot;
+    g_rewind_system.compressed_world_snapshots[idx] = compressWorldSnapshot(&snapshot);
+    if (findWorldSnapshotBranchSlot(g_rewind_system.active_world_snapshot_branch_id)) |branch_slot| {
+        g_rewind_system.world_snapshot_branches[branch_slot].head_tick = tick;
+    }
 
-    g_rewind_system.world_snapshot_index = (g_rewind_system.world_snapshot_index + 1) % 120;
-    if (g_rewind_system.world_snapshot_count < 120) {
+    g_rewind_system.world_snapshot_index = @intCast((@as(usize, g_rewind_system.world_snapshot_index) + 1) % MAX_WORLD_SNAPSHOTS);
+    if (g_rewind_system.world_snapshot_count < MAX_WORLD_SNAPSHOTS) {
         g_rewind_system.world_snapshot_count += 1;
     }
 }
 
 /// Get world snapshot at specific tick
 pub fn getWorldSnapshotAtTick(tick: u32) ?*const WorldSnapshot {
+    if (getWorldSnapshotAtTickInBranch(tick, g_rewind_system.active_world_snapshot_branch_id)) |snapshot| {
+        return snapshot;
+    }
+
     var i: u8 = 0;
     while (i < g_rewind_system.world_snapshot_count) : (i += 1) {
-        const idx = (g_rewind_system.world_snapshot_index + 120 - g_rewind_system.world_snapshot_count + i) % 120;
+        const idx = (@as(usize, g_rewind_system.world_snapshot_index) + MAX_WORLD_SNAPSHOTS - @as(usize, g_rewind_system.world_snapshot_count) + @as(usize, i)) % MAX_WORLD_SNAPSHOTS;
         if (g_rewind_system.world_snapshots[idx].tick == tick) {
             return &g_rewind_system.world_snapshots[idx];
         }
     }
     return null;
+}
+
+pub fn getCompressedWorldSnapshotAtTick(tick: u32) ?*const CompressedWorldSnapshot {
+    if (getCompressedWorldSnapshotAtTickInBranch(tick, g_rewind_system.active_world_snapshot_branch_id)) |snapshot| {
+        return snapshot;
+    }
+
+    var i: u8 = 0;
+    while (i < g_rewind_system.world_snapshot_count) : (i += 1) {
+        const idx = (@as(usize, g_rewind_system.world_snapshot_index) + MAX_WORLD_SNAPSHOTS - @as(usize, g_rewind_system.world_snapshot_count) + @as(usize, i)) % MAX_WORLD_SNAPSHOTS;
+        if (g_rewind_system.compressed_world_snapshots[idx].tick == tick) {
+            return &g_rewind_system.compressed_world_snapshots[idx];
+        }
+    }
+    return null;
+}
+
+fn findWorldSnapshotPlaybackIndex(state: WorldSnapshotPlaybackState) ?usize {
+    var found = false;
+    var best_idx: usize = 0;
+    var best_tick: u32 = if (state.reverse) 0 else std.math.maxInt(u32);
+
+    var i: u8 = 0;
+    while (i < g_rewind_system.world_snapshot_count) : (i += 1) {
+        const idx = (@as(usize, g_rewind_system.world_snapshot_index) + MAX_WORLD_SNAPSHOTS - @as(usize, g_rewind_system.world_snapshot_count) + @as(usize, i)) % MAX_WORLD_SNAPSHOTS;
+        if (g_rewind_system.world_snapshot_branch_ids[idx] != state.branch_id) continue;
+        const tick = g_rewind_system.world_snapshots[idx].tick;
+        if (tick < state.start_tick or tick > state.end_tick) continue;
+
+        if (!state.has_emitted) {
+            if (state.reverse) {
+                if (!found or tick > best_tick) {
+                    best_tick = tick;
+                    best_idx = idx;
+                    found = true;
+                }
+            } else {
+                if (!found or tick < best_tick) {
+                    best_tick = tick;
+                    best_idx = idx;
+                    found = true;
+                }
+            }
+            continue;
+        }
+
+        if (state.reverse) {
+            if (tick >= state.last_tick) continue;
+            if (!found or tick > best_tick) {
+                best_tick = tick;
+                best_idx = idx;
+                found = true;
+            }
+        } else {
+            if (tick <= state.last_tick) continue;
+            if (!found or tick < best_tick) {
+                best_tick = tick;
+                best_idx = idx;
+                found = true;
+            }
+        }
+    }
+
+    return if (found) best_idx else null;
+}
+
+pub fn startWorldSnapshotPlayback(start_tick: u32, end_tick: u32, loop: bool, reverse: bool) bool {
+    const normalized_start = @min(start_tick, end_tick);
+    const normalized_end = @max(start_tick, end_tick);
+
+    const state = WorldSnapshotPlaybackState{
+        .active = true,
+        .loop = loop,
+        .reverse = reverse,
+        .branch_id = g_rewind_system.active_world_snapshot_branch_id,
+        .start_tick = normalized_start,
+        .end_tick = normalized_end,
+    };
+    if (findWorldSnapshotPlaybackIndex(state) == null) {
+        g_rewind_system.playback = .{};
+        return false;
+    }
+    g_rewind_system.playback = state;
+    return true;
+}
+
+pub fn stopWorldSnapshotPlayback() void {
+    g_rewind_system.playback = .{};
+}
+
+pub fn getWorldSnapshotPlaybackState() WorldSnapshotPlaybackState {
+    return g_rewind_system.playback;
+}
+
+pub fn nextWorldSnapshotPlaybackFrame() ?*const WorldSnapshot {
+    if (!g_rewind_system.playback.active) return null;
+
+    var allow_loop_reset = true;
+    while (true) {
+        const idx = findWorldSnapshotPlaybackIndex(g_rewind_system.playback) orelse {
+            if (!g_rewind_system.playback.loop or !allow_loop_reset) {
+                g_rewind_system.playback.active = false;
+                return null;
+            }
+            g_rewind_system.playback.has_emitted = false;
+            allow_loop_reset = false;
+            continue;
+        };
+
+        const snapshot = &g_rewind_system.world_snapshots[idx];
+        g_rewind_system.playback.last_tick = snapshot.tick;
+        g_rewind_system.playback.has_emitted = true;
+        return snapshot;
+    }
 }
 
 /// Restore world from snapshot
@@ -1328,6 +2341,119 @@ pub fn diffWorldSnapshots(a: *const WorldSnapshot, b: *const WorldSnapshot) Worl
 // World Hash for Determinism
 // ============================================================================
 
+fn inspectDeterminismFloat(value: anytype, report: *FloatDeterminismReport) void {
+    report.inspected_float_count += 1;
+    const v = value;
+    if (!std.math.isFinite(v)) {
+        report.non_finite_count += 1;
+    } else {
+        if (v == 0 and std.math.signbit(v)) {
+            report.negative_zero_count += 1;
+        }
+        if (v != 0 and !std.math.isNormal(v)) {
+            report.subnormal_count += 1;
+        }
+    }
+}
+
+fn inspectDeterminismFloatsRecursive(comptime T: type, value: *const T, report: *FloatDeterminismReport) void {
+    switch (@typeInfo(T)) {
+        .float => inspectDeterminismFloat(value.*, report),
+        .array => |arr| {
+            var i: usize = 0;
+            while (i < arr.len) : (i += 1) {
+                inspectDeterminismFloatsRecursive(arr.child, &value.*[i], report);
+            }
+        },
+        .@"struct" => |s| {
+            inline for (s.fields) |field| {
+                inspectDeterminismFloatsRecursive(field.type, &@field(value.*, field.name), report);
+            }
+        },
+        else => {},
+    }
+}
+
+pub fn verifyWorldSnapshotFloatDeterminism(snapshot: *const WorldSnapshot) FloatDeterminismReport {
+    var report: FloatDeterminismReport = .{};
+    inspectDeterminismFloatsRecursive(WorldSnapshot, snapshot, &report);
+    if (report.non_finite_count > 0) {
+        report.flags |= DETERMINISM_FLAG_FLOAT_NON_FINITE;
+    }
+    if (report.negative_zero_count > 0) {
+        report.flags |= DETERMINISM_FLAG_FLOAT_NEGATIVE_ZERO;
+    }
+    if (report.subnormal_count > 0) {
+        report.flags |= DETERMINISM_FLAG_FLOAT_SUBNORMAL;
+    }
+    return report;
+}
+
+fn inspectSimdDeterminismFloat(
+    value: anytype,
+    lane_sums: *[4]f32,
+    float_index: *u32,
+    report: *SimdDeterminismReport,
+) void {
+    const v = value;
+    if (!std.math.isFinite(v)) return;
+    report.inspected_float_count += 1;
+    report.scalar_sum += v;
+    const lane_idx: usize = @intCast(float_index.* & 3);
+    lane_sums[lane_idx] += v;
+    float_index.* += 1;
+}
+
+fn inspectSimdDeterminismFloatsRecursive(
+    comptime T: type,
+    value: *const T,
+    lane_sums: *[4]f32,
+    float_index: *u32,
+    report: *SimdDeterminismReport,
+) void {
+    switch (@typeInfo(T)) {
+        .float => inspectSimdDeterminismFloat(value.*, lane_sums, float_index, report),
+        .array => |arr| {
+            var i: usize = 0;
+            while (i < arr.len) : (i += 1) {
+                inspectSimdDeterminismFloatsRecursive(arr.child, &value.*[i], lane_sums, float_index, report);
+            }
+        },
+        .@"struct" => |s| {
+            inline for (s.fields) |field| {
+                inspectSimdDeterminismFloatsRecursive(field.type, &@field(value.*, field.name), lane_sums, float_index, report);
+            }
+        },
+        else => {},
+    }
+}
+
+pub fn verifyWorldSnapshotSimdDeterminism(snapshot: *const WorldSnapshot) SimdDeterminismReport {
+    var report: SimdDeterminismReport = .{};
+    var lane_sums: [4]f32 = [_]f32{0.0} ** 4;
+    var float_index: u32 = 0;
+    inspectSimdDeterminismFloatsRecursive(WorldSnapshot, snapshot, &lane_sums, &float_index, &report);
+
+    // SIMD-like pairwise lane reduction to detect order-sensitive accumulation drift.
+    report.simd_sum = (lane_sums[0] + lane_sums[2]) + (lane_sums[1] + lane_sums[3]);
+    report.absolute_delta = @abs(report.scalar_sum - report.simd_sum);
+    report.allowed_delta = @max(
+        @as(f32, 0.0001),
+        @as(f32, @floatFromInt(report.inspected_float_count)) * 0.000001,
+    );
+    report.mismatch = report.absolute_delta > report.allowed_delta;
+    if (report.mismatch) {
+        report.flags |= DETERMINISM_FLAG_SIMD_REDUCTION_MISMATCH;
+    }
+    return report;
+}
+
+pub fn computeWorldDeterminismFlags(snapshot: *const WorldSnapshot) u32 {
+    const float_report = verifyWorldSnapshotFloatDeterminism(snapshot);
+    const simd_report = verifyWorldSnapshotSimdDeterminism(snapshot);
+    return float_report.flags | simd_report.flags;
+}
+
 /// Compute hash of world state for determinism verification
 pub fn computeWorldHash(snapshot: *const WorldSnapshot) u64 {
     var hash: u64 = 0xDEADBEEFCAFEBABE;
@@ -1607,6 +2733,8 @@ pub fn computeWorldHash(snapshot: *const WorldSnapshot) u64 {
 pub fn verifyWorldDeterminism(snap_a: *const WorldSnapshot, snap_b: *const WorldSnapshot) bool {
     if (snap_a.tick != snap_b.tick) return false;
     if (snap_a.instance_count != snap_b.instance_count) return false;
+    if (computeWorldDeterminismFlags(snap_a) != 0) return false;
+    if (computeWorldDeterminismFlags(snap_b) != 0) return false;
 
     // Compare instance states
     var i: u8 = 0;
@@ -1845,14 +2973,66 @@ pub fn getDeterminismProof() DeterminismProof {
 pub fn getWorldSnapshotBufferUsage() struct { count: u8, capacity: usize, percent: f32 } {
     return .{
         .count = g_rewind_system.world_snapshot_count,
-        .capacity = 120,
-        .percent = @as(f32, @floatFromInt(g_rewind_system.world_snapshot_count)) / 120.0 * 100,
+        .capacity = MAX_WORLD_SNAPSHOTS,
+        .percent = @as(f32, @floatFromInt(g_rewind_system.world_snapshot_count)) / @as(f32, @floatFromInt(MAX_WORLD_SNAPSHOTS)) * 100,
+    };
+}
+
+pub fn getCompressedWorldSnapshotBufferUsage() struct {
+    count: u8,
+    capacity: usize,
+    percent: f32,
+    avg_compressed_bytes: f32,
+    avg_original_bytes: f32,
+} {
+    var total_compressed: u64 = 0;
+    var total_original: u64 = 0;
+    var i: u8 = 0;
+    while (i < g_rewind_system.world_snapshot_count) : (i += 1) {
+        const idx = (@as(usize, g_rewind_system.world_snapshot_index) + MAX_WORLD_SNAPSHOTS - @as(usize, g_rewind_system.world_snapshot_count) + @as(usize, i)) % MAX_WORLD_SNAPSHOTS;
+        const compressed = g_rewind_system.compressed_world_snapshots[idx];
+        total_compressed += compressed.compressed_size;
+        total_original += compressed.original_size;
+    }
+
+    const count_f = if (g_rewind_system.world_snapshot_count == 0)
+        1.0
+    else
+        @as(f32, @floatFromInt(g_rewind_system.world_snapshot_count));
+    return .{
+        .count = g_rewind_system.world_snapshot_count,
+        .capacity = MAX_WORLD_SNAPSHOTS,
+        .percent = @as(f32, @floatFromInt(g_rewind_system.world_snapshot_count)) / @as(f32, @floatFromInt(MAX_WORLD_SNAPSHOTS)) * 100,
+        .avg_compressed_bytes = @as(f32, @floatFromInt(total_compressed)) / count_f,
+        .avg_original_bytes = @as(f32, @floatFromInt(total_original)) / count_f,
     };
 }
 
 /// Get system for external access
 pub fn getSystem() *RewindSystem {
     return &g_rewind_system;
+}
+
+fn appendPlaybackTestSnapshot(tick: u32) void {
+    while (g_rewind_system.world_snapshot_count >= g_rewind_system.world_snapshot_budget and g_rewind_system.world_snapshot_count > 0) {
+        const evicted_branch_id = evictOldestWorldSnapshot() orelse break;
+        recomputeWorldSnapshotBranchHeadTick(evicted_branch_id);
+    }
+
+    const idx = g_rewind_system.world_snapshot_index;
+    var snapshot = std.mem.zeroes(WorldSnapshot);
+    snapshot.tick = tick;
+    snapshot.world_hash = @as(u64, tick) | (@as(u64, g_rewind_system.active_world_snapshot_branch_id) << 32);
+    g_rewind_system.world_snapshot_branch_ids[idx] = g_rewind_system.active_world_snapshot_branch_id;
+    g_rewind_system.world_snapshots[idx] = snapshot;
+    g_rewind_system.compressed_world_snapshots[idx] = compressWorldSnapshot(&snapshot);
+    if (findWorldSnapshotBranchSlot(g_rewind_system.active_world_snapshot_branch_id)) |branch_slot| {
+        g_rewind_system.world_snapshot_branches[branch_slot].head_tick = tick;
+    }
+    g_rewind_system.world_snapshot_index = @intCast((@as(usize, idx) + 1) % MAX_WORLD_SNAPSHOTS);
+    if (g_rewind_system.world_snapshot_count < MAX_WORLD_SNAPSHOTS) {
+        g_rewind_system.world_snapshot_count += 1;
+    }
 }
 
 test "World snapshot capture and lookup" {
@@ -1892,6 +3072,276 @@ test "World snapshot capture and lookup" {
     try std.testing.expect(snapshot.?.instances[0].pos_x == 10);
     try std.testing.expect(snapshot.?.instances[0].vel_z == 6);
     try std.testing.expect(snapshot.?.world_hash != 0);
+}
+
+test "World snapshot compression round-trips stored snapshot bytes" {
+    init();
+
+    var s1024 = scene1024.Scene1024.init(std.testing.allocator);
+    defer s1024.deinit();
+    _ = try s1024.getPage(0);
+
+    var entities: [1]entity16.Entity16 = undefined;
+    entities[0] = entity16.Prototypes.hammer();
+
+    s1024.instance_count = 1;
+    s1024.instances[0] = .{
+        .entity_id = 0,
+        .pos_x = 12,
+        .pos_y = 34,
+        .pos_z = 56,
+        .rot_yaw = 7,
+        .rot_pitch = 8,
+        .rot_roll = 9,
+        .state = .moving,
+        .sleep_tick = 3,
+        .vel_x = 11,
+        .vel_y = -4,
+        .vel_z = 2,
+        .ang_x = 1,
+        .ang_y = -1,
+        .ang_z = 2,
+        ._reserved = .{0} ** 2,
+    };
+
+    recordWorldSnapshot(77, &s1024, entities[0..]);
+    const raw = getWorldSnapshotAtTick(77).?;
+    const compressed = getCompressedWorldSnapshotAtTick(77).?;
+    try std.testing.expect(compressed.compressed_size > 0);
+    try std.testing.expect(compressed.compressed_size <= MAX_COMPRESSED_WORLD_SNAPSHOT_BYTES);
+    try std.testing.expectEqual(@as(u32, @intCast(@sizeOf(WorldSnapshot))), compressed.original_size);
+
+    const round_trip = try decompressWorldSnapshot(compressed);
+    try std.testing.expectEqual(raw.tick, round_trip.tick);
+    try std.testing.expectEqual(raw.global_tick, round_trip.global_tick);
+    try std.testing.expectEqual(raw.instance_count, round_trip.instance_count);
+    try std.testing.expectEqual(raw.world_hash, round_trip.world_hash);
+    try std.testing.expectEqual(raw.instances[0].pos_x, round_trip.instances[0].pos_x);
+    try std.testing.expectEqual(raw.instances[0].pos_y, round_trip.instances[0].pos_y);
+    try std.testing.expectEqual(raw.instances[0].pos_z, round_trip.instances[0].pos_z);
+    try std.testing.expectEqual(raw.instances[0].vel_x, round_trip.instances[0].vel_x);
+    try std.testing.expectEqual(raw.instances[0].vel_y, round_trip.instances[0].vel_y);
+    try std.testing.expectEqual(raw.instances[0].vel_z, round_trip.instances[0].vel_z);
+}
+
+test "Compressed world snapshot buffer usage reports averages" {
+    init();
+
+    var s1024 = scene1024.Scene1024.init(std.testing.allocator);
+    defer s1024.deinit();
+    _ = try s1024.getPage(0);
+
+    var entities: [1]entity16.Entity16 = undefined;
+    entities[0] = entity16.Prototypes.apple();
+
+    s1024.instance_count = 1;
+    s1024.instances[0] = .{
+        .entity_id = 0,
+        .pos_x = 1,
+        .pos_y = 2,
+        .pos_z = 3,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+
+    recordWorldSnapshot(1, &s1024, entities[0..]);
+    const usage = getCompressedWorldSnapshotBufferUsage();
+    try std.testing.expectEqual(@as(u8, 1), usage.count);
+    try std.testing.expectEqual(@as(usize, MAX_WORLD_SNAPSHOTS), usage.capacity);
+    try std.testing.expect(usage.percent > 0.0);
+    try std.testing.expect(usage.avg_original_bytes >= 1.0);
+    try std.testing.expect(usage.avg_compressed_bytes >= 1.0);
+}
+
+test "World snapshot budget control trims and enforces insertion limit" {
+    init();
+    appendPlaybackTestSnapshot(10);
+    appendPlaybackTestSnapshot(20);
+    appendPlaybackTestSnapshot(30);
+    appendPlaybackTestSnapshot(40);
+    appendPlaybackTestSnapshot(50);
+
+    try std.testing.expect(setWorldSnapshotBudget(3));
+    var budget_info = getWorldSnapshotBudgetInfo();
+    try std.testing.expectEqual(@as(u8, 3), budget_info.budget);
+    try std.testing.expectEqual(@as(u8, 3), budget_info.count);
+    try std.testing.expectEqual(@as(u8, @intCast(MAX_WORLD_SNAPSHOTS)), budget_info.capacity);
+    try std.testing.expectEqual(@as(u32, 2), budget_info.evicted_count);
+
+    try std.testing.expect(getWorldSnapshotAtTickInBranch(10, 0) == null);
+    try std.testing.expect(getWorldSnapshotAtTickInBranch(20, 0) == null);
+    try std.testing.expect(getWorldSnapshotAtTickInBranch(30, 0) != null);
+    try std.testing.expect(getWorldSnapshotAtTickInBranch(40, 0) != null);
+    try std.testing.expect(getWorldSnapshotAtTickInBranch(50, 0) != null);
+
+    appendPlaybackTestSnapshot(60);
+    budget_info = getWorldSnapshotBudgetInfo();
+    try std.testing.expectEqual(@as(u8, 3), budget_info.count);
+    try std.testing.expectEqual(@as(u32, 3), budget_info.evicted_count);
+    try std.testing.expect(getWorldSnapshotAtTickInBranch(30, 0) == null);
+    try std.testing.expect(getWorldSnapshotAtTickInBranch(40, 0) != null);
+    try std.testing.expect(getWorldSnapshotAtTickInBranch(50, 0) != null);
+    try std.testing.expect(getWorldSnapshotAtTickInBranch(60, 0) != null);
+}
+
+test "World snapshot GC removes duplicate and orphan entries" {
+    init();
+    appendPlaybackTestSnapshot(10);
+    appendPlaybackTestSnapshot(10);
+    appendPlaybackTestSnapshot(20);
+
+    var report = collectWorldSnapshotGarbage();
+    try std.testing.expectEqual(@as(u16, 3), report.scanned_count);
+    try std.testing.expectEqual(@as(u16, 1), report.removed_count);
+    try std.testing.expectEqual(@as(u16, 0), report.removed_orphan_count);
+    try std.testing.expectEqual(@as(u16, 1), report.removed_duplicate_count);
+    try std.testing.expectEqual(@as(u8, 2), g_rewind_system.world_snapshot_count);
+
+    const oldest_idx = (@as(usize, g_rewind_system.world_snapshot_index) + MAX_WORLD_SNAPSHOTS - @as(usize, g_rewind_system.world_snapshot_count)) % MAX_WORLD_SNAPSHOTS;
+    g_rewind_system.world_snapshot_branch_ids[oldest_idx] = INVALID_WORLD_SNAPSHOT_BRANCH_ID;
+
+    report = collectWorldSnapshotGarbage();
+    try std.testing.expectEqual(@as(u16, 2), report.scanned_count);
+    try std.testing.expectEqual(@as(u16, 1), report.removed_count);
+    try std.testing.expectEqual(@as(u16, 1), report.removed_orphan_count);
+    try std.testing.expectEqual(@as(u16, 0), report.removed_duplicate_count);
+    try std.testing.expectEqual(@as(u8, 1), g_rewind_system.world_snapshot_count);
+    try std.testing.expect(getWorldSnapshotAtTickInBranch(20, 0) != null);
+
+    const root_branch = getWorldSnapshotBranchInfo(0) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u32, 20), root_branch.head_tick);
+}
+
+test "World snapshot persistence round-trips branch and budget state" {
+    init();
+    appendPlaybackTestSnapshot(10);
+    appendPlaybackTestSnapshot(20);
+
+    const branch_id = createWorldSnapshotBranch(20) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(switchWorldSnapshotBranch(branch_id));
+    appendPlaybackTestSnapshot(30);
+    const branch_tick30_hash = getWorldSnapshotAtTickInBranch(30, branch_id).?.world_hash;
+
+    try std.testing.expect(setWorldSnapshotBudget(5));
+    const save_path = ".zig-cache/rewind_snapshot_persist_test.bin";
+    std.fs.cwd().makePath(".zig-cache") catch {};
+    defer std.fs.cwd().deleteFile(save_path) catch {};
+
+    try saveWorldSnapshotsToFile(save_path);
+
+    init();
+    try loadWorldSnapshotsFromFile(save_path);
+
+    try std.testing.expectEqual(branch_id, getActiveWorldSnapshotBranchId());
+    const budget_info = getWorldSnapshotBudgetInfo();
+    try std.testing.expectEqual(@as(u8, 5), budget_info.budget);
+    try std.testing.expectEqual(@as(u8, 3), budget_info.count);
+    try std.testing.expect(getWorldSnapshotAtTickInBranch(20, 0) != null);
+    try std.testing.expectEqual(branch_tick30_hash, getWorldSnapshotAtTickInBranch(30, branch_id).?.world_hash);
+    const restored_branch = getWorldSnapshotBranchInfo(branch_id) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u32, 30), restored_branch.head_tick);
+}
+
+test "World snapshot network packet export and import round-trips snapshot" {
+    init();
+    appendPlaybackTestSnapshot(10);
+    appendPlaybackTestSnapshot(20);
+
+    const branch_id = createWorldSnapshotBranch(20) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(switchWorldSnapshotBranch(branch_id));
+    appendPlaybackTestSnapshot(30);
+    const expected_hash = getWorldSnapshotAtTickInBranch(30, branch_id).?.world_hash;
+
+    var packet: [@sizeOf(WorldSnapshotNetworkPacketHeader) + MAX_COMPRESSED_WORLD_SNAPSHOT_BYTES]u8 = undefined;
+    const written = exportWorldSnapshotToNetworkPacket(30, branch_id, packet[0..]) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(written > @sizeOf(WorldSnapshotNetworkPacketHeader));
+
+    init();
+    try std.testing.expect(importWorldSnapshotFromNetworkPacket(packet[0..written]));
+    try std.testing.expectEqual(expected_hash, getWorldSnapshotAtTickInBranch(30, branch_id).?.world_hash);
+    const restored_branch = getWorldSnapshotBranchInfo(branch_id) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u32, 30), restored_branch.head_tick);
+}
+
+test "World snapshot network packet encrypted round-trips and rejects wrong key" {
+    init();
+    appendPlaybackTestSnapshot(10);
+    appendPlaybackTestSnapshot(20);
+
+    const branch_id = createWorldSnapshotBranch(20) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(switchWorldSnapshotBranch(branch_id));
+    appendPlaybackTestSnapshot(30);
+    const expected_hash = getWorldSnapshotAtTickInBranch(30, branch_id).?.world_hash;
+
+    const key: u64 = 0xCAFEBABE11223344;
+    const nonce: u64 = 0x0102030405060708;
+    var packet: [@sizeOf(WorldSnapshotNetworkPacketHeader) + MAX_COMPRESSED_WORLD_SNAPSHOT_BYTES]u8 = undefined;
+    const written = exportWorldSnapshotToNetworkPacketEncrypted(30, branch_id, packet[0..], key, nonce) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(written > @sizeOf(WorldSnapshotNetworkPacketHeader));
+
+    init();
+    try std.testing.expect(!importWorldSnapshotFromNetworkPacketEncrypted(packet[0..written], key ^ 1, nonce));
+    try std.testing.expectEqual(@as(u8, 0), g_rewind_system.world_snapshot_count);
+
+    try std.testing.expect(importWorldSnapshotFromNetworkPacketEncrypted(packet[0..written], key, nonce));
+    try std.testing.expectEqual(expected_hash, getWorldSnapshotAtTickInBranch(30, branch_id).?.world_hash);
+}
+
+test "World snapshot float determinism verification reports clean snapshots" {
+    var snapshot = std.mem.zeroes(WorldSnapshot);
+    const report = verifyWorldSnapshotFloatDeterminism(&snapshot);
+    try std.testing.expect(report.inspected_float_count > 0);
+    try std.testing.expectEqual(@as(u32, 0), report.non_finite_count);
+    try std.testing.expectEqual(@as(u32, 0), report.negative_zero_count);
+    try std.testing.expectEqual(@as(u32, 0), report.subnormal_count);
+    try std.testing.expectEqual(@as(u32, 0), report.flags);
+}
+
+test "World snapshot float determinism verification flags unstable values" {
+    var snapshot = std.mem.zeroes(WorldSnapshot);
+    snapshot.terrain_weather.rain_intensity = std.math.inf(f32);
+    snapshot.terrain_weather.fog_density = @as(f32, @bitCast(@as(u32, 0x80000000)));
+    snapshot.terrain_weather.wind_speed = @as(f32, @bitCast(@as(u32, 1)));
+
+    const report = verifyWorldSnapshotFloatDeterminism(&snapshot);
+    try std.testing.expectEqual(@as(u32, 1), report.non_finite_count);
+    try std.testing.expectEqual(@as(u32, 1), report.negative_zero_count);
+    try std.testing.expectEqual(@as(u32, 1), report.subnormal_count);
+    try std.testing.expect((report.flags & DETERMINISM_FLAG_FLOAT_NON_FINITE) != 0);
+    try std.testing.expect((report.flags & DETERMINISM_FLAG_FLOAT_NEGATIVE_ZERO) != 0);
+    try std.testing.expect((report.flags & DETERMINISM_FLAG_FLOAT_SUBNORMAL) != 0);
+}
+
+test "World snapshot SIMD determinism verification reports stable reductions" {
+    var snapshot = std.mem.zeroes(WorldSnapshot);
+    const report = verifyWorldSnapshotSimdDeterminism(&snapshot);
+    try std.testing.expect(report.inspected_float_count > 0);
+    try std.testing.expect(!report.mismatch);
+    try std.testing.expectEqual(@as(u32, 0), report.flags);
+}
+
+test "World snapshot SIMD determinism verification flags reduction mismatch" {
+    var snapshot = std.mem.zeroes(WorldSnapshot);
+    snapshot.terrain_weather.rain_intensity = 100000000.0;
+    snapshot.terrain_weather.fog_density = 1.0;
+    snapshot.terrain_weather.wind_speed = -100000000.0;
+    snapshot.terrain_weather.wind_direction = 1.0;
+
+    const report = verifyWorldSnapshotSimdDeterminism(&snapshot);
+    try std.testing.expect(report.mismatch);
+    try std.testing.expect(report.absolute_delta > report.allowed_delta);
+    try std.testing.expect((report.flags & DETERMINISM_FLAG_SIMD_REDUCTION_MISMATCH) != 0);
+    try std.testing.expect((computeWorldDeterminismFlags(&snapshot) & DETERMINISM_FLAG_SIMD_REDUCTION_MISMATCH) != 0);
 }
 
 test "World snapshot restore rebuilds instance state" {
@@ -2454,4 +3904,164 @@ test "World snapshot diff reports instance and hash changes" {
     try std.testing.expect(diff.tick_to == 22);
     try std.testing.expect(diff.hash_changed);
     try std.testing.expect(diff.instances_moved > 0);
+}
+
+test "World snapshot playback iterates forward and stops at end" {
+    init();
+    appendPlaybackTestSnapshot(10);
+    appendPlaybackTestSnapshot(20);
+    appendPlaybackTestSnapshot(30);
+
+    try std.testing.expect(startWorldSnapshotPlayback(10, 30, false, false));
+
+    const first = nextWorldSnapshotPlaybackFrame() orelse return error.TestUnexpectedResult;
+    const second = nextWorldSnapshotPlaybackFrame() orelse return error.TestUnexpectedResult;
+    const third = nextWorldSnapshotPlaybackFrame() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u32, 10), first.tick);
+    try std.testing.expectEqual(@as(u32, 20), second.tick);
+    try std.testing.expectEqual(@as(u32, 30), third.tick);
+
+    try std.testing.expect(nextWorldSnapshotPlaybackFrame() == null);
+    try std.testing.expect(!getWorldSnapshotPlaybackState().active);
+}
+
+test "World snapshot playback reverse mode loops within range" {
+    init();
+    appendPlaybackTestSnapshot(10);
+    appendPlaybackTestSnapshot(20);
+    appendPlaybackTestSnapshot(30);
+
+    try std.testing.expect(startWorldSnapshotPlayback(30, 10, true, true));
+
+    const first = nextWorldSnapshotPlaybackFrame() orelse return error.TestUnexpectedResult;
+    const second = nextWorldSnapshotPlaybackFrame() orelse return error.TestUnexpectedResult;
+    const third = nextWorldSnapshotPlaybackFrame() orelse return error.TestUnexpectedResult;
+    const fourth = nextWorldSnapshotPlaybackFrame() orelse return error.TestUnexpectedResult;
+    const fifth = nextWorldSnapshotPlaybackFrame() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u32, 30), first.tick);
+    try std.testing.expectEqual(@as(u32, 20), second.tick);
+    try std.testing.expectEqual(@as(u32, 10), third.tick);
+    try std.testing.expectEqual(@as(u32, 30), fourth.tick);
+    try std.testing.expectEqual(@as(u32, 20), fifth.tick);
+
+    stopWorldSnapshotPlayback();
+    try std.testing.expect(!getWorldSnapshotPlaybackState().active);
+    try std.testing.expect(nextWorldSnapshotPlaybackFrame() == null);
+}
+
+test "World snapshot playback start fails when no snapshot in range" {
+    init();
+    appendPlaybackTestSnapshot(5);
+    appendPlaybackTestSnapshot(8);
+
+    try std.testing.expect(!startWorldSnapshotPlayback(20, 40, false, false));
+    try std.testing.expect(!getWorldSnapshotPlaybackState().active);
+    try std.testing.expect(nextWorldSnapshotPlaybackFrame() == null);
+}
+
+test "World snapshot branch management supports create switch and delete" {
+    init();
+    appendPlaybackTestSnapshot(10);
+    appendPlaybackTestSnapshot(20);
+
+    try std.testing.expectEqual(@as(u8, 0), getActiveWorldSnapshotBranchId());
+
+    const branch_id = createWorldSnapshotBranch(20) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(branch_id != 0);
+    const created = getWorldSnapshotBranchInfo(branch_id) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u8, 0), created.parent_id);
+    try std.testing.expectEqual(@as(u32, 20), created.fork_tick);
+
+    try std.testing.expect(switchWorldSnapshotBranch(branch_id));
+    try std.testing.expectEqual(branch_id, getActiveWorldSnapshotBranchId());
+    appendPlaybackTestSnapshot(30);
+
+    const branch_snapshot = getWorldSnapshotAtTickInBranch(30, branch_id);
+    const root_snapshot = getWorldSnapshotAtTickInBranch(30, 0);
+    try std.testing.expect(branch_snapshot != null);
+    try std.testing.expect(root_snapshot == null);
+
+    try std.testing.expect(!deleteWorldSnapshotBranch(branch_id));
+    try std.testing.expect(switchWorldSnapshotBranch(0));
+    try std.testing.expect(!deleteWorldSnapshotBranch(0));
+    try std.testing.expect(deleteWorldSnapshotBranch(branch_id));
+    try std.testing.expect(getWorldSnapshotBranchInfo(branch_id) == null);
+}
+
+test "World snapshot playback follows active branch selection" {
+    init();
+    appendPlaybackTestSnapshot(10);
+    appendPlaybackTestSnapshot(20);
+
+    const branch_id = createWorldSnapshotBranch(20) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(switchWorldSnapshotBranch(branch_id));
+    appendPlaybackTestSnapshot(30);
+    const branch_only_hash = getWorldSnapshotAtTickInBranch(30, branch_id).?.world_hash;
+
+    try std.testing.expect(switchWorldSnapshotBranch(0));
+    appendPlaybackTestSnapshot(30);
+    const root_only_hash = getWorldSnapshotAtTickInBranch(30, 0).?.world_hash;
+
+    try std.testing.expect(switchWorldSnapshotBranch(branch_id));
+    try std.testing.expect(startWorldSnapshotPlayback(30, 30, false, false));
+    const branch_frame = nextWorldSnapshotPlaybackFrame() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(branch_only_hash, branch_frame.world_hash);
+
+    try std.testing.expect(switchWorldSnapshotBranch(0));
+    try std.testing.expect(startWorldSnapshotPlayback(30, 30, false, false));
+    const root_frame = nextWorldSnapshotPlaybackFrame() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(root_only_hash, root_frame.world_hash);
+}
+
+test "World snapshot merge keep_target keeps target conflicts" {
+    init();
+    appendPlaybackTestSnapshot(10);
+    appendPlaybackTestSnapshot(20);
+    const root_tick20_hash = getWorldSnapshotAtTickInBranch(20, 0).?.world_hash;
+
+    const branch_id = createWorldSnapshotBranch(20) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(switchWorldSnapshotBranch(branch_id));
+    appendPlaybackTestSnapshot(20);
+    appendPlaybackTestSnapshot(30);
+    const branch_tick20_hash = getWorldSnapshotAtTickInBranch(20, branch_id).?.world_hash;
+
+    try std.testing.expect(switchWorldSnapshotBranch(0));
+    const report = mergeWorldSnapshotBranches(0, branch_id, .keep_target) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u16, 1), report.moved_count);
+    try std.testing.expectEqual(@as(u16, 1), report.conflict_count);
+    try std.testing.expectEqual(@as(u16, 0), report.resolved_by_source);
+    try std.testing.expectEqual(@as(u16, 1), report.resolved_by_target);
+
+    try std.testing.expectEqual(root_tick20_hash, getWorldSnapshotAtTickInBranch(20, 0).?.world_hash);
+    try std.testing.expectEqual(branch_tick20_hash, getWorldSnapshotAtTickInBranch(20, branch_id).?.world_hash);
+    try std.testing.expect(getWorldSnapshotAtTickInBranch(30, 0) != null);
+}
+
+test "World snapshot merge keep_source and keep_latest prefer source snapshot" {
+    init();
+    appendPlaybackTestSnapshot(10);
+    appendPlaybackTestSnapshot(20);
+
+    const branch_id = createWorldSnapshotBranch(20) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(switchWorldSnapshotBranch(branch_id));
+    appendPlaybackTestSnapshot(20);
+    const source_hash = getWorldSnapshotAtTickInBranch(20, branch_id).?.world_hash;
+
+    try std.testing.expect(switchWorldSnapshotBranch(0));
+    const keep_source_report = mergeWorldSnapshotBranches(0, branch_id, .keep_source) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u16, 1), keep_source_report.moved_count);
+    try std.testing.expectEqual(@as(u16, 1), keep_source_report.conflict_count);
+    try std.testing.expectEqual(@as(u16, 1), keep_source_report.resolved_by_source);
+    try std.testing.expectEqual(source_hash, getWorldSnapshotAtTickInBranch(20, 0).?.world_hash);
+
+    try std.testing.expect(switchWorldSnapshotBranch(branch_id));
+    appendPlaybackTestSnapshot(20);
+    const latest_source_hash = @as(u64, 20) | (@as(u64, branch_id) << 32);
+
+    try std.testing.expect(switchWorldSnapshotBranch(0));
+    const keep_latest_report = mergeWorldSnapshotBranches(0, branch_id, .keep_latest) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u16, 1), keep_latest_report.moved_count);
+    try std.testing.expect(keep_latest_report.conflict_count >= 1);
+    try std.testing.expect(keep_latest_report.resolved_by_source >= 1);
+    try std.testing.expectEqual(latest_source_hash, getWorldSnapshotAtTickInBranch(20, 0).?.world_hash);
 }
