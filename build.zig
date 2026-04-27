@@ -94,6 +94,12 @@ pub fn build(b: *std.Build) void {
                 .optimize = optimize,
             }),
         });
+        // Enforce per-test-binary timeout (120s max per test execution).
+        t.setExecCmd(&[_]?[]const u8{
+            "timeout",
+            "120s",
+            null,
+        });
         const rt = b.addRunArtifact(t);
         test_step.dependOn(&rt.step);
     }
