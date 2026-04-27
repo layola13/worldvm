@@ -3844,3 +3844,171 @@
    * **描述:** 滑雪失误，从45度布满尖锐岩石的雪山上滚落下来。
    * **正确表现:** 人体像一个不受控制的破布娃娃沿途翻滚，每一次身体胶囊体撞击岩石，物理引擎都会根据接触速度计算冲量（Impulse）。头部受高冲量直接致命，四肢受高冲量骨折变形，直到平地才停下。
    * **错误表现:** 在山上滚了十分钟，站起来拍拍土毫发无伤，或者滚了一圈就莫名其妙卡在平滑的斜坡上不动了。
+
+### 九十一、 化学宇宙与反应 (Chemistry Universe & Reactions) (901-910)
+901. **化学宇宙初始化与嗅味觉事件注入 (Chemical Universe Init & Chemosensory Injection)**
+   * **描述:** 初始化化学宇宙，注入一条嗅觉事件（花香分子特征）。
+   * **正确表现:** 化学宇宙正确初始化，事件被分类为 orthonasal 路径，生成 affet_delta、physio_delta 和 behavior_bias 建议输出。
+   * **错误表现:** 事件被错误分类为 ingestion 路径，或输出为空。
+902. **嗅觉与味觉路径区分 (Orthonasal vs Retronasal vs Ingestion)**
+   * **描述:** 分别注入同等浓度的芳香分子（嗅觉）、口腔味觉分子和摄入事件。
+   * **正确表现:** 三种路径走不同的 Classify 分支，生成不同强度的 physio_delta（口腔摄入产生更强的代谢负担）。
+   * **错误表现:** 三种路径输出完全相同，无路径区分。
+903. **反应链可复现性 (Reaction Chain Determinism)**
+   * **描述:** 在同一种子、同输入条件下重复触发同一化学反应链两次。
+   * **正确表现:** 两次的反应链命中记录、强度变化和输出建议完全一致。
+   * **错误表现:** 同样的输入产生不同的中间产物或输出。
+904. **剂量依赖效应 (Dose-Dependent Response)**
+   * **描述:** 注入低剂量和高剂量的同一有毒分子事件。
+   * **正确表现:** 低剂量触发轻微 behavior_bias（回避），高剂量触发强烈 physio_delta（代谢负担警告）和强制回避行为。
+   * **错误表现:** 剂量大小不影响输出强度。
+905. **物理接触触发化学反应 (Physical Contact Triggers Chemical Reaction)**
+   * **描述:** 物理引擎报告实体咬合/接触事件，携带 chemical_signature，触发化学宇宙。
+   * **正确表现:** 化学宇宙接收到联合事件包，正确计算接触时长和剂量，更新 physio_delta。
+   * **错误表现:** 化学宇宙未响应物理接触事件，或剂量计算错误。
+906. **记忆锚点气味召回 (Scent Memory Anchor Recall)**
+   * **描述:** 注入特定气味分子（如童年老家门口的草木香），触发记忆锚点关联。
+   * **正确表现:** 化学宇宙生成情绪建议并激活对应的 MemoryPage 锚点，行为输出体现出情绪波动。
+   * **错误表现:** 气味与记忆完全割裂，气味无法唤起任何情绪或历史上下文。
+907. **激素反馈对人宇宙的调节 (Hormone Feedback to Human Universe)**
+   * **描述:** 连续摄入高糖食物，化学宇宙产生胰岛素调节建议。
+   * **正确表现:** 人宇宙接收到 physio_delta 中的血糖趋势建议，行为门控倾向于拒绝更多甜食。
+   * **错误表现:** 激素反馈被忽略，人继续产生相同的进食行为偏好。
+908. **分子扩散局部分布 (Molecular Diffusion Field)**
+   * **描述:** 在 ChemicalFieldPage 内注入挥发性分子，观察扩散场的空间分布变化。
+   * **正确表现:** 分子从高浓度区域向低浓度区域扩散，符合 Fick 定律的离散近似，相邻页面有正确的浓度梯度。
+   * **错误表现:** 分子不扩散，或者瞬间均匀分布，无梯度可言。
+909. **跨宇宙消息摘要一致性 (Cross-Universe Message Summary Consistency)**
+   * **描述:** 化学宇宙输出后，检查其传人宇宙的消息是否为摘要形式，而非大结构拷贝。
+   * **正确表现:** 跨宇宙消息大小控制在 8~48KB 预算内，包含 affect_delta/physio_delta/behavior_bias 三件套，无内部页数据泄露。
+   * **错误表现:** 消息体过大（如携带完整 ChemicalFieldPage 拷贝），或泄露了分子级内部细节。
+910. **极端 pH 环境与蛋白质变性 (Extreme pH & Protein Denaturation)**
+   * **描述:** 人体摄入极酸性（pH=1）或极碱性（pH=14）物质，触发化学宇宙极端响应。
+   * **正确表现:** 化学宇宙检测到极端 pH，触发蛋白质变性规则，产生强烈的 physio_delta（组织损伤警告）和紧急回避行为建议。
+   * **错误表现:** 极端 pH 物质被当作普通食物处理，无任何异常反馈。
+
+### 九十二、 声音宇宙与听觉模拟 (Sound Universe & Auditory Simulation) (911-920)
+911. **声音宇宙初始化与声源事件注入 (Sound Universe Init & Sound Event Injection)**
+   * **描述:** 初始化声音宇宙，注入一声近距离爆炸声（高强度、短持续、宽频谱）。
+   * **正确表现:** 声音宇宙正确分类事件为噪声类，更新 AuditoryState 的刺激阈值，产生强烈的 affect_delta（惊吓/恐惧）和 physio_delta（心率上升）。
+   * **错误表现:** 爆炸声被归类为音乐类，或输出为零。
+912. **语言声与音乐声的规则分支区分 (Speech vs Music Rule Branching)**
+   * **描述:** 注入一段人语音频事件和一段器乐音频事件（同等强度和时长）。
+   * **正确表现:** 语言声触发 speech 分支，生成社交/情绪相关影响建议；音乐声触发 music 分支，生成节律同步和行为引导建议。
+   * **错误表现:** 两种声音走完全相同的处理路径，输出无差别。
+913. **重复刺激适应衰减 (Repeated Stimulus Adaptation Decay)**
+   * **描述:** 连续注入同一中等强度的环境白噪声事件 10 次，每次间隔相同。
+   * **正确表现:** 第一次触发最高刺激阈值下降，随后每次 affect_delta 强度递减，到第 10 次几乎为零（听觉习惯化）。
+   * **错误表现:** 每次刺激都产生相同的强烈情绪响应，无适应机制。
+914. **听觉疲劳与恢复曲线 (Auditory Fatigue & Recovery Curve)**
+   * **描述:** 长时间（连续多 tick）暴露在高强度机械噪声下，之后停止注入噪声。
+   * **正确表现:** 噪声期间 AuditoryState.fatigue 持续上升，停止后按指数衰减恢复正常阈值，影响力从 100% 逐步恢复到基线。
+   * **错误表现:** 疲劳值不累积，或者停止噪声后立刻清零。
+915. **声源方向感与空间定位 (Sound Source Directionality & Spatial Localization)**
+   * **描述:** 注入多个来自不同方向的声源事件（如左前方 45 度的人声、右后方 120 度的鸟鸣）。
+   * **正确表现:** 声音宇宙根据方向属性更新注意力偏向，行为建议体现出对前方声源的优先关注。
+   * **错误表现:** 所有方向的声音产生完全相同的输出，忽略方向属性。
+916. **影子沙盒声音预演 (Shadow Sandbox Sound Rehearsal)**
+   * **描述:** 人宇宙接收到高风险声音事件前，调用影子沙盒预演"如果听了这段声音会发生什么"。
+   * **正确表现:** 影子沙盒在封闭环境中重放声音片段，输出适应曲线预测（是否会习惯化、是否会触发恐惧），预演结果仅影响门控，不改变实际行为。
+   * **错误表现:** 预演结果直接落地为真实行为，或预演消耗远超影子沙盒预算。
+917. **声音记忆锚点与情绪联动 (Sound Memory Anchor & Emotional Linkage)**
+   * **描述:** 注入一段与强烈情绪事件关联的声音（如婚礼进行曲），后续再次注入同样的声音。
+   * **正确表现:** 第二次听到婚礼进行曲时，SoundMemoryAnchor 触发对应情绪记忆，AffectPage 的情绪寄存器快速激活，产出强烈的情绪波动建议。
+   * **错误表现:** 声音只是孤立的声音事件，无法唤起任何情绪记忆。
+918. **声压级与生理响应的非线性关系 (Sound Pressure Level & Non-linear Physio Response)**
+   * **描述:** 分别注入 40dB、70dB、100dB 的同频率纯音事件。
+   * **正确表现:** 40dB 几乎无 physio_delta；70dB 产生可测的心率轻微上升；100dB 触发强烈的自主神经响应（心率激增、皮肤电导变化）。
+   * **错误表现:** 所有声压级产生相同的线性响应，无阈值效应。
+919. **声音宇宙内存预算守卫 (Sound Universe Memory Budget Guard)**
+   * **描述:** 在极限条件下连续快速注入大量声源事件，观察声音宇宙内存占用。
+   * **正确表现:** 声音宇宙内存始终保持在 16KB~64KB 预算内，超出时自动对历史事件做摘要压缩或丢弃低价值事件。
+   * **错误表现:** 内存无限增长，或者为了压缩丢弃了关键事件导致输出退化。
+920. **安静环境与基线状态恢复 (Quiet Environment & Baseline Recovery)**
+   * **描述:** 角色进入一个声学上是零事件的安静房间，观察人宇宙的基线恢复。
+   * **正确表现:** 在无新声音事件注入时，听觉负荷和刺激阈值逐步恢复到出厂基线，情绪状态趋于平稳，人宇宙行为输出减少防御性偏向。
+   * **错误表现:** 即使在绝对安静环境下，系统依然产生异常的情绪波动或听觉负荷累积。
+
+### 九十三、 Personal Universe 与具身人类 (Personal Universe & Embodied Human) (921-930)
+921. **人宇宙初始化与外部事件注入 (Personal Universe Init & External Event Injection)**
+   * **描述:** 初始化人宇宙，挂载到物理实体，注入一条视觉威胁事件（猛兽逼近）。
+   * **正确表现:** 人宇宙激活最小子页（BodyState + Affect），生成 affect_delta（恐惧）、behavior_bias（逃跑倾向）、physio_delta（肾上腺素上升）。
+   * **错误表现:** 事件注入后无任何输出，或内部页状态被外部直接修改。
+922. **情绪寄存器门控对动作白名单的影响 (Affect Gate Modulates Action Whitelist)**
+   * **描述:** 人宇宙处于恐惧情绪状态时，注入一个攻击动作请求。
+   * **正确表现:** 攻击动作请求被情绪门控拦截（恐惧状态下攻击白名单受限），行为输出倾向于防御或逃跑而非进攻。
+   * **错误表现:** 情绪状态不影响动作白名单，攻击请求在恐惧状态下依然正常执行。
+923. **高强度事件的影子沙盒多分支预演 (High-Intensity Shadow Rehearsal)**
+   * **描述:** 角色面对"跳崖逃生"决策，触发高强度事件阈值，调用影子沙盒做短窗预演。
+   * **正确表现:** 影子沙盒在 3 个分支（跳/等/绕）中预演，输出各分支的行为偏差预测，回读结果只影响门控，不直接落地为物理行为。
+   * **错误表现:** 预演结果直接执行了物理动作，或预演没有产生任何行为建议。
+924. **声音宇宙与化学宇宙的输入端口联动 (Audio & Chemical Universe Input Port Integration)**
+   * **描述:** 声音宇宙输出一段愤怒吼叫事件，化学宇宙输出一股血腥味，同时传入人宇宙。
+   * **正确表现:** 人宇宙正确合并两路输入，生成综合 affect_delta（愤怒 + 厌恶 + 紧张），行为偏向战斗或逃跑，physio_delta 包含心率和皮质醇水平上升。
+   * **错误表现:** 两路输入互相覆盖，或者只响应其中一路。
+925. **记忆锚点检索与上下文重建 (Memory Anchor Retrieval & Context Reconstruction)**
+   * **描述:** 注入一个触发历史记忆锚点的事件（如特定气味激活童年记忆）。
+   * **正确表现:** 人宇宙的 MemoryPage 索引被激活，输出包含记忆事件的上下文摘要，AffectPage 产生对应的情绪波动，行为体现出记忆唤起的倾向性。
+   * **错误表现:** 记忆锚点无法被触发，或触发了错误的记忆上下文。
+926. **人宇宙内存预算与心跳机制 (Personal Universe Memory Budget & Heartbeat)**
+   * **描述:** 监测人宇宙在空闲期和事件触发期的内存占用。
+   * **正确表现:** 空闲期内存占用极低（心跳模式），事件触发时短窗升频但总内存不超过 64KB~256KB 预算，所有跨宇宙消息只传摘要。
+   * **错误表现:** 空闲期内存占用过高，或者事件触发时超出预算导致状态截断。
+927. **具身联动边界的物理能量约束 (Embodied Physics Energy Constraint)**
+   * **描述:** 角色在体力耗尽状态下收到一个奔跑行为请求。
+   * **正确表现:** 人宇宙输出能量不足的 physio_delta，行为请求被能量门控限流，角色只能以低速移动而非全速奔跑。
+   * **错误表现:** 体力耗尽不影响行为执行，角色以正常参数执行奔跑。
+928. **输出摘要的可解释性与不泄露性 (Output Summary Explainability & Non-Leakage)**
+   * **描述:** 检查人宇宙对外输出的摘要内容。
+   * **正确表现:** 摘要包含 affect_delta、behavior_bias、physio_delta 的可解释标签和数值范围，不泄露 HumanRootPage、AffectPage 等内部数据结构的原始内容。
+   * **错误表现:** 摘要直接暴露了内部页地址或原始寄存器值，造成信息泄露。
+929. **高强度事件后的恢复曲线可测性 (Post-High-Intensity Recovery Measurability)**
+   * **描述:** 角色经历一次高强度情绪事件（如亲人离世）后，在无新刺激的情况下观察恢复曲线。
+   * **正确表现:** 情绪指标（affect_delta 强度）按非线性的悲伤恢复曲线衰减（初期平缓，中期快速，后期渐进），可通过多 tick 采样量化。
+   * **错误表现:** 情绪事件后立刻归零，或永远保持在峰值不衰减。
+930. **回放一致性验证 (Replay Determinism Verification)**
+   * **描述:** 用同一随机种子重现一段包含多宇宙输入（视觉+声音+化学）的复杂场景两次。
+   * **正确表现:** 两次回放中，人宇宙的所有输出（affect_delta、behavior_bias、physio_delta）在每个 tick 完全一致，输出摘要匹配。
+   * **错误表现:** 同种子同输入下，两次回放产生不同的情绪或行为输出。
+
+### 九十四、 时间因果逻辑层 (Temporal Causality Logic Layer) (931-940)
+931. **存在性规则：实体未出生却参与事件 (Existence Rule: Unborn Entity Participates)**
+   * **描述:** 输入事件"儿子在父母结婚前参加了婚礼"，实体 timeline 显示儿子 born_at > marriage.start。
+   * **正确表现:** Temporal Check 返回 FAIL，reason_code = T_EXISTENCE_VIOLATION，break_time = marriage.start，repair_hint 指出儿子在婚礼时尚未出生。
+   * **错误表现:** 判定为 PASS，或给出错误的 reason_code。
+932. **顺序规则：先毕业后入学 (Order Rule: Graduate Before Enrollment)**
+   * **描述:** 输入事件 B = 入学（start=t1），事件 A = 毕业（start=t2），t2 > t1。
+   * **正确表现:** BEFORE(A,B) 规则检测到 A.end > B.start，返回 FAIL，reason_code = T_ORDER_CONFLICT，repair_hint 建议调换顺序。
+   * **错误表现:** 系统接受该事件序列为合法，不报错。
+933. **因果规则：结果早于原因 (Causal Rule: Effect Before Cause)**
+   * **描述:** 事件 A = 玻璃碎裂（start=t1），事件 B = 有人扔石头（start=t2），t1 < t2。
+   * **正确表现:** CAUSES(A,B) 规则检测到 B.start > A.start，因果方向矛盾，返回 FAIL，reason_code = T_CAUSAL_CONFLICT。
+   * **错误表现:** 系统接受逆因果序列为合法。
+934. **角色生效窗口：角色未生效时执行动作 (Role Active Window: Action Without Active Role)**
+   * **描述:** 实体"皇帝" active_from=10, active_to=20，在 t=5 时执行"发布诏书"动作。
+   * **正确表现:** 角色规则检测到 t=5 < active_from，皇帝角色未生效，动作被拒绝，返回 FAIL，reason_code = T_ROLE_INACTIVE。
+   * **错误表现:** 未生效的角色依然可以执行对应动作。
+935. **区间合法性：start > end 检测 (Interval Legality: start > end Detection)**
+   * **描述:** 注入一个事件 start=100, end=50（不合法的区间）。
+   * **正确表现:** 区间合法性规则直接拦截，返回 FAIL，reason_code = T_INTERVAL_ILLEGAL，break_time = 100，repair_hint 建议修正为 end >= start。
+   * **错误表现:** 系统接受了逆区间事件，不报错。
+936. **Parser-IR-时间检查三明治集成 (Parser-IR-Temporal Check Sandwich Integration)**
+   * **描述:** 一条 IR 指令流经 Parser -> Temporal Check -> 物理执行，在时序检查点注入一个非法序列。
+   * **正确表现:** Temporal Check 拦截并返回 FAIL，指令流不进入物理/化学/人宇宙执行层，修复提示被返回给上游。
+   * **错误表现:** 非法序列通过了 Temporal Check，进入了执行层并产生了跨宇宙错误。
+937. **Reason Code 与 Break Time 的确定性 (Reason Code & Break Time Determinism)**
+   * **描述:** 用同一组输入事件重复运行 Temporal Check 100 次。
+   * **正确表现:** 每次返回的 reason_code、break_time 完全一致，不受运行次数影响。
+   * **错误表现:** 同样的输入在不同时序返回不同的 reason_code 或 break_time。
+938. **冲突处理：多条规则同时违背 (Conflict Handling: Multiple Rule Violations)**
+   * **描述:** 输入一个同时违背存在性规则和因果规则的事件序列。
+   * **正确表现:** 系统返回第一个匹配的失败原因（优先级：存在性 > 因果 > 顺序），同时列出所有违背的规则，供修复提示参考。
+   * **错误表现:** 系统只返回一个模糊错误，不指出具体违背了哪条规则。
+939. **时间因果层与影子沙盒的协同 (Temporal Layer & Shadow Sandbox Cooperation)**
+   * **描述:** 高风险动作在影子沙盒中预演时，先经过 Temporal Check 过滤无效分支。
+   * **正确表现:** 影子沙盒只接收通过 Temporal Check 的事件分支，预演资源不被无效序列浪费。
+   * **错误表现:** 影子沙盒预演了 Temporal Check 本应拦截的无效序列。
+940. **跨宇宙时间一致性守门 (Cross-Universe Temporal Consistency Gatekeeping)**
+   * **描述:** 物理宇宙报告"物体 A 在 t=5 撞上物体 B"，化学宇宙报告"物体 B 在 t=3 被腐蚀消失"，两条跨宇宙事件时间矛盾。
+   * **正确表现:** Temporal Check 捕获到同一实体（B）的时间线冲突，返回 FAIL，reason_code = T_CROSS_UNIVERSE_CONFLICT，要求物理宇宙和化学宇宙在冲突时间点对齐。
+   * **错误表现:** 两个宇宙各自持有矛盾的时间线而不报错，跨宇宙执行产生不一致状态。
