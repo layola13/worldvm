@@ -126,6 +126,8 @@ pub fn calculateFollowingDistance(self: *const TrafficVehicle, speed: f32) f32 {
     return base_distance * (1.0 + speed_factor * 0.5);
 }
 
+/// Find the closest vehicle ahead that poses a collision risk.
+/// Uses unified prediction-based TTC to filter (Item 290).
 pub fn checkVehicleAhead(self: *const TrafficVehicle, _: f32) ?*const TrafficVehicle {
     var closest_dist: f32 = 99999;
     var closest: ?*const TrafficVehicle = null;
@@ -141,23 +143,36 @@ pub fn checkVehicleAhead(self: *const TrafficVehicle, _: f32) ?*const TrafficVeh
         const dist = @sqrt(dx * dx + dz * dz);
 
         if (dist < closest_dist and dist < 200) {
-            closest_dist = dist;
-            closest = vehicle;
+            // Filter by prediction-based TTC (Item 290)
+            const ttc = computeVehicleConflict(self, vehicle, 5.0);
+            if (ttc.valid and ttc.time > 0) {
+                closest_dist = dist;
+                closest = vehicle;
+            } else if (dist < self.following_distance) {
+                closest_dist = dist;
+                closest = vehicle;
+            }
         }
     }
 
     return closest;
 }
 
+/// Check if vehicle must stop for a red or unsafe yellow light.
+/// Uses unified prediction layer for signal state prediction (Item 289).
 pub fn checkRedLight(self: *const TrafficVehicle, _: f32) bool {
     for (g_traffic_system.lights[0..g_traffic_system.light_count]) |light| {
         const dx = light.pos_x - self.pos_x;
         const dz = light.pos_z - self.pos_z;
         const dist = @sqrt(dx * dx + dz * dz);
+        if (dist > 100) continue;
 
-        if (dist < 100 and light.state == .red) {
-            return true;
-        }
+        // Use unified prediction to check signal state and safe-pass window
+        const signal = getTrafficLightState(&light);
+        const signal_decision = estimateSafePassForVehicle(self, &light, 4.5);
+        if (signal.state_now == .red) return true;
+        // Yellow with no safe passage: treat as red (Item 292)
+        if (signal.state_now == .yellow and dist < 40 and !signal_decision.can_pass) return true;
     }
     return false;
 }
@@ -256,14 +271,80 @@ pub fn buildTrafficVehicleAvoidanceRecommendation(self: *const TrafficVehicle, o
     return prediction.buildAvoidanceRecommendation(conflict, horizon, 0.0, brake_threshold_ratio, 0.0, 0.0, 1.0);
 }
 
-fn shouldBrakeForVehicleConflict(self: *const TrafficVehicle, other: *const TrafficVehicle) bool {
-    const dz = other.pos_z - self.pos_z;
-    const required_distance = calculateFollowingDistance(self, self.target_vel);
-    const ttc = computeVehicleConflict(self, other, 5.0);
-    const recommendation = buildTrafficVehicleAvoidanceRecommendation(self, other, 5.0, 0.25);
+/// Predict intersection conflict between two vehicles approaching the same intersection (Item 293).
+/// Projects both vehicles forward and checks if their arrival windows overlap in the intersection zone.
+/// Uses unified prediction layer for consistency.
+pub fn predictIntersectionConflict(
+    self: *const TrafficVehicle,
+    other: *const TrafficVehicle,
+    intersection_x: f32,
+    intersection_z: f32,
+    horizon: f32,
+) prediction.ConflictWindow {
+    const self_dx = intersection_x - self.pos_x;
+    const self_dz = intersection_z - self.pos_z;
+    const self_dist = @sqrt(self_dx * self_dx + self_dz * self_dz);
+    const self_speed = @max(0.001, @sqrt(self.vel_x * self.vel_x + self.vel_z * self.vel_z));
 
-    if (dz < required_distance) return true;
-    if (ttc.valid and ttc.time < self.reaction_time + 0.5) return true;
+    const other_dx = intersection_x - other.pos_x;
+    const other_dz = intersection_z - other.pos_z;
+    const other_dist = @sqrt(other_dx * other_dx + other_dz * other_dz);
+    const other_speed = @max(0.001, @sqrt(other.vel_x * other.vel_x + other.vel_z * other.vel_z));
+
+    const self_eta = self_dist / self_speed;
+    const other_eta = other_dist / other_speed;
+
+    // Vehicle occupies intersection for ~4.5m / avg_speed seconds
+    const occupation_window: f32 = 4.5 / @max(self_speed, 5.0);
+
+    var conflict = prediction.ConflictWindow{};
+    if (@abs(self_eta - other_eta) < occupation_window * 2.0 and self_eta < horizon and other_eta < horizon) {
+        conflict.valid = true;
+        conflict.start_time = @max(0, @min(self_eta, other_eta) - occupation_window);
+        conflict.end_time = @max(self_eta, other_eta) + occupation_window;
+        conflict.min_distance = @abs(self_eta - other_eta) * @min(self_speed, other_speed);
+    }
+    return conflict;
+}
+
+/// Predict safe car-following behavior using unified prediction layer (Item 294).
+/// Returns recommended following distance and whether braking is needed based on TTC.
+/// For same-lane following: uses dz (forward distance) for spacing checks.
+/// For crossing/head-on: uses TTC as primary indicator.
+pub fn predictCarFollowing(
+    self: *const TrafficVehicle,
+    ahead: *const TrafficVehicle,
+    horizon: f32,
+) struct {
+    recommended_distance: f32,
+    should_brake: bool,
+    ttc: prediction.TTCResult,
+} {
+    const ttc = computeVehicleConflict(self, ahead, horizon);
+    // For same-lane following, use dz as forward distance
+    const dz = ahead.pos_z - self.pos_z;
+    const ego_speed = @max(0.001, @sqrt(self.vel_x * self.vel_x + self.vel_z * self.vel_z));
+    const reaction_dist = self.reaction_time * ego_speed;
+    const two_second_rule = 2.0 * ego_speed;
+    const recommended = reaction_dist + two_second_rule + 4.5;
+    // Primary check: TTC-based (unified prediction layer)
+    // Fallback: distance-based for same-lane scenarios
+    const should_brake = (ttc.valid and ttc.time < self.reaction_time + 1.0) or
+        dz < recommended;
+    return .{
+        .recommended_distance = recommended,
+        .should_brake = should_brake,
+        .ttc = ttc,
+    };
+}
+
+fn shouldBrakeForVehicleConflict(self: *const TrafficVehicle, other: *const TrafficVehicle) bool {
+    // Use unified car-following prediction (Item 294)
+    const following = predictCarFollowing(self, other, 5.0);
+    if (following.should_brake) return true;
+
+    // Also check occupancy-based avoidance (unified prediction layer)
+    const recommendation = buildTrafficVehicleAvoidanceRecommendation(self, other, 5.0, 0.25);
     if (recommendation.should_brake) return true;
     return false;
 }
@@ -278,7 +359,7 @@ pub fn calculateLaneChange(target_lane: i8, current_lane: i8, dt: f32) f32 {
 pub fn updateAI(dt: f32) void {
     g_traffic_system.global_time += dt;
 
-    for (0..MAX_TRAFFIC_LIGHTS) |i| {
+    for (0..g_traffic_system.light_count) |i| {
         var light = &g_traffic_system.lights[i];
         light.timer += dt;
 
@@ -296,7 +377,7 @@ pub fn updateAI(dt: f32) void {
         }
     }
 
-    for (0..MAX_AI_VEHICLES) |i| {
+    for (0..g_traffic_system.vehicle_count) |i| {
         var vehicle = &g_traffic_system.vehicles[i];
         if (!vehicle.active) continue;
 

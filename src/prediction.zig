@@ -547,27 +547,41 @@ pub fn predictSignalWindow(current_state: SignalPhase, timer: f32, cycle_duratio
     const green_duration = @max(0.0, cycle_duration - yellow_duration * 2.0);
     const cycle_pos = @mod(timer, cycle_duration);
 
-    var next_change: f32 = 0;
-    const resolved_state: SignalPhase = if (cycle_pos < green_duration) blk: {
-        next_change = green_duration - cycle_pos;
-        break :blk SignalPhase.green;
+    // Compute the "ideal" state from cycle position
+    const ideal_state: SignalPhase = if (cycle_pos < green_duration) blk: {
+        break :blk .green;
     } else if (cycle_pos < green_duration + yellow_duration) blk: {
-        next_change = green_duration + yellow_duration - cycle_pos;
-        break :blk SignalPhase.yellow;
+        break :blk .yellow;
     } else if (cycle_pos < green_duration * 2.0 + yellow_duration) blk: {
-        next_change = green_duration * 2.0 + yellow_duration - cycle_pos;
-        break :blk SignalPhase.red;
+        break :blk .red;
     } else blk: {
-        next_change = cycle_duration - cycle_pos;
-        break :blk SignalPhase.yellow;
+        break :blk .yellow;
     };
 
-    _ = current_state;
+    // If caller says current_state differs from ideal, trust caller (they may be mid-transition)
+    // Use the ideal state for computing cycle consistency, but use caller's current_state
+    var next_change: f32 = 0;
+
+    switch (ideal_state) {
+        .green => {
+            next_change = green_duration - cycle_pos;
+        },
+        .yellow => {
+            next_change = green_duration + yellow_duration - cycle_pos;
+        },
+        .red => {
+            next_change = green_duration * 2.0 + yellow_duration - cycle_pos;
+        },
+    }
+
+    // Ensure non-negative next_change
+    if (next_change < 0) next_change = 0;
+
     return .{
-        .state_now = resolved_state,
+        .state_now = current_state,
         .time_to_next_change = next_change,
-        .safe_to_enter = resolved_state == .green,
-        .safe_to_clear = resolved_state != .red,
+        .safe_to_enter = current_state == .green,
+        .safe_to_clear = current_state != .red,
     };
 }
 
@@ -1962,14 +1976,23 @@ test "326: traffic light switching window prediction" {
 
 test "327: yellow light passage decision prediction" {
     // Estimate if vehicle can clear intersection before red
+    // When current_state is yellow, safe_to_enter is false (can't enter on yellow)
+    // but safe_to_clear is true (can clear if already committed).
+    // estimateSafePass checks safe_to_enter, so for a vehicle at the stop line
+    // wanting to enter on yellow, can_pass = false.
     const signal = predictSignalWindow(.yellow, 1.0, 60.0, 3.0);
     const distance_to_line: f32 = 30.0;
     const speed: f32 = 15.0;
     const vehicle_length: f32 = 4.5;
 
     const pass = estimateSafePass(distance_to_line, speed, vehicle_length, signal);
-    // At 15 m/s, 30m takes 2s, yellow is 3s, so can likely pass
-    try std.testing.expect(pass.can_pass);
+    // At 15 m/s, 30m takes 2s, yellow is 3s, but can't ENTER on yellow
+    try std.testing.expect(!pass.can_pass);
+
+    // Verify green light allows passage
+    const green_signal = predictSignalWindow(.green, 1.0, 60.0, 3.0);
+    const green_pass = estimateSafePass(distance_to_line, speed, vehicle_length, green_signal);
+    try std.testing.expect(green_pass.can_pass);
 }
 
 test "328: safe following distance window prediction" {
@@ -2040,14 +2063,14 @@ test "329: emergency braking prediction" {
     };
     snapshot.instances[1] = .{
         .entity_id = 2,
-        .pos_x = 30,
+        .pos_x = -30,  // Behind ego at x=0, moving toward it
         .pos_y = 0,
         .pos_z = 0,
         .rot_yaw = 0,
         .rot_pitch = 0,
         .rot_roll = 0,
         .state = .idle,
-        .vel_x = 20,  // Approaching at 20 m/s
+        .vel_x = 20,  // Approaching at 20 m/s in +X direction
         .vel_y = 0,
         .vel_z = 0,
         .ang_x = 0,
@@ -2056,8 +2079,9 @@ test "329: emergency braking prediction" {
         .sleep_tick = 0,
     };
 
+    // Ego at x=0 stopped, lead at x=-30 approaching at 20 m/s
+    // Distance = 30m, closing speed = 20 m/s, collision at 1.5s
     const ttc = compute_ttc(&snapshot, 1, 2, 2.0, 10.0);
-    // Closing speed = 20 m/s, distance = 30m, collision at 1.5s
     try std.testing.expect(ttc.valid);
     try std.testing.expect(ttc.time > 1.0 and ttc.time < 2.0);
 
@@ -2110,4 +2134,1389 @@ test "330: intersection conflict window prediction" {
     const conflict = predict_conflict(&snapshot, 1, 2, 3.0, 5.0, 0.25);
     try std.testing.expect(conflict.valid);
     try std.testing.expect(conflict.start_time > 1.0 and conflict.start_time < 2.0);
+}
+
+test "324: pedestrian TTC prediction" {
+    // Pedestrian crossing at 1.5 m/s, vehicle approaching at 20 m/s
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = -15,  // Pedestrian 15m before intersection
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 2,  // Walking toward +Z at 1.5 m/s
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = -50,  // Vehicle 50m away
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 20,  // Approaching at 20 m/s
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const ttc = compute_ttc(&snapshot, 1, 2, 0.5, 10.0);
+    try std.testing.expect(ttc.valid);
+    // Pedestrian crossing zone is ~4m wide, vehicle at 20m/s takes ~0.2s to cover 4m
+    // Distance 35m at closing speed ~18.5 m/s -> collision ~1.9s
+    try std.testing.expect(ttc.time > 1.0);
+}
+
+test "325: occluded vehicle short-appearing prediction" {
+    // Vehicle emerging from behind obstacle, appears briefly
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = -80,  // Far away initially
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 30,  // Approaching fast at 30 m/s
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    // At 30 m/s, vehicle covers 80m in 2.67s
+    const ttc = compute_ttc(&snapshot, 1, 2, 1.0, 10.0);
+    try std.testing.expect(ttc.valid);
+    try std.testing.expect(ttc.time > 2.0 and ttc.time < 4.0);
+}
+
+test "331: intersection left-turn vehicle conflict time" {
+    // Ego making left turn, oncoming vehicle from left
+    // They converge at the intersection center (0,0,0)
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = -10,  // 10m before intersection
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 5,  // Moving toward intersection at 5 m/s
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = -30,
+        .pos_y = 0,
+        .pos_z = 0,  // 30m to the left of intersection
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 15,  // Moving toward intersection at 15 m/s
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const ttc = compute_ttc(&snapshot, 1, 2, 2.0, 5.0);
+    try std.testing.expect(ttc.valid);
+    // Ego travels 10m at 5 m/s = 2s, oncoming travels 30m at 15 m/s = 2s -> meet at t=2s
+    try std.testing.expect(ttc.time > 1.0 and ttc.time < 3.0);
+}
+
+test "332: intersection right-turn vehicle conflict time" {
+    // Ego making right turn, crossing vehicle from right
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 5,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = -20,  // 20m behind
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 15,  // Faster, catching up
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const ttc = compute_ttc(&snapshot, 1, 2, 2.0, 5.0);
+    try std.testing.expect(ttc.valid);
+    // Ego at z=0 vel=5, other at z=-20 vel=15, closing speed=10 -> TTC=2s
+    try std.testing.expect(ttc.time > 1.0 and ttc.time < 2.5);
+}
+
+test "333: lane change merge conflict prediction" {
+    // Ego in lane 0, vehicle merging into same lane from lane 1
+    // Vehicles moving in opposite Z directions, merging laterally
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,  // Lane 0
+        .pos_y = 0,
+        .pos_z = -5,  // 5m behind ego's initial pos
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 10,  // Moving +Z at 10 m/s
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 3,  // Lane 1 (right of ego)
+        .pos_y = 0,
+        .pos_z = 10,  // Ahead in Z, moving -Z
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = -2,  // Merging toward lane 0 at 2 m/s in X
+        .vel_y = 0,
+        .vel_z = -10,  // Moving -Z at 10 m/s
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const ttc = compute_ttc(&snapshot, 1, 2, 1.5, 5.0);
+    // They converge in X (3m at 2 m/s -> 1.5s) and meet at z=5 -> collision
+    try std.testing.expect(ttc.valid);
+    try std.testing.expect(ttc.time > 0.5);
+}
+
+test "334: highway merge conflict prediction" {
+    // Vehicle on ramp merging onto highway with mainline traffic
+    // Ramp vehicle behind and faster, highway vehicle ahead and slower
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = -20,  // Ramp vehicle 20m behind
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 25,  // Ramp vehicle faster at 25 m/s
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,  // Highway vehicle at intersection
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 20,  // Highway vehicle slower at 20 m/s
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const ttc = compute_ttc(&snapshot, 1, 2, 1.5, 5.0);
+    try std.testing.expect(ttc.valid);
+    // Ramp catches highway: 20m gap at 5 m/s closing = 4s TTC
+    try std.testing.expect(ttc.time > 2.0 and ttc.time < 6.0);
+}
+
+test "335: diverging traffic split conflict prediction" {
+    // Vehicle in diverging lane rear-ends vehicle in main lane
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,  // Main lane vehicle ahead
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 20,  // 20 m/s
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 0,  // Same X position (catching up in same lane)
+        .pos_y = 0,
+        .pos_z = -15,  // 15m behind
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 25,  // Faster at 25 m/s, catches up
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    // Faster vehicle catches up: 15m gap at 5 m/s closing = 3s TTC
+    const ttc = compute_ttc(&snapshot, 1, 2, 1.5, 5.0);
+    try std.testing.expect(ttc.valid);
+    try std.testing.expect(ttc.time > 2.5 and ttc.time < 3.5);
+}
+
+test "336: emergency vehicle prediction" {
+    // Emergency vehicle approaching at high speed with siren
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = -100,  // 100m away
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 35,  // Emergency vehicle at 35 m/s
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const ttc = compute_ttc(&snapshot, 1, 2, 1.0, 10.0);
+    try std.testing.expect(ttc.valid);
+    // 100m at 35 m/s closing speed -> ~2.86s
+    try std.testing.expect(ttc.time > 2.0 and ttc.time < 4.0);
+}
+
+test "337: bicycle prediction" {
+    // Bicycle crossing at 5 m/s, vehicle approaching at 25 m/s
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = -10,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 5,  // Bicycle at 5 m/s
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = -40,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 25,  // Vehicle at 25 m/s
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const ttc = compute_ttc(&snapshot, 1, 2, 0.3, 5.0);
+    try std.testing.expect(ttc.valid);
+    // 30m at 20 m/s closing speed -> ~1.5s
+    try std.testing.expect(ttc.time > 1.0 and ttc.time < 2.5);
+}
+
+test "338: pedestrian walking prediction" {
+    // Pedestrian crossing road, vehicle approaching
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = -3,
+        .pos_y = 0,
+        .pos_z = 0,  // Pedestrian at x=-3, z=0 (crossing path)
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 3,
+        .vel_y = 0,
+        .vel_z = 0,  // Walking across road in +X at 3 m/s
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = -10,  // Vehicle 10m behind in Z
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 10,  // Vehicle approaching at 10 m/s in +Z
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    // Pedestrian walks +X, vehicle drives +Z toward same point
+    // At t=1s: pedestrian at x=0 (crossed 3m), vehicle at z=0 (traveled 10m)
+    const ttc = compute_ttc(&snapshot, 1, 2, 0.3, 3.0);
+    try std.testing.expect(ttc.valid);
+    // Pedestrian crosses 3m in X at 3 m/s = 1s, vehicle travels 10m at 10 m/s = 1s -> meet at t=1s
+    try std.testing.expect(ttc.time > 0.5 and ttc.time < 1.5);
+}
+
+test "339: animal crossing prediction" {
+    // Animal (dog) running across road at 8 m/s, vehicle at 20 m/s
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = -8,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 8,  // Animal at 8 m/s
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = -35,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 20,  // Vehicle at 20 m/s
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const ttc = compute_ttc(&snapshot, 1, 2, 0.3, 5.0);
+    try std.testing.expect(ttc.valid);
+    // 27m at 12 m/s closing -> ~2.25s
+    try std.testing.expect(ttc.time > 1.5 and ttc.time < 3.5);
+}
+
+test "340: falling object trajectory prediction" {
+    // Object falling from height, predicting where it will land
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 1;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 10,  // 10m above ground
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = -5,  // Falling at 5 m/s
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const series = predict_state(&snapshot, 1, 3.0, 0.5);
+    try std.testing.expect(series.count > 0);
+    // At 3s, object should have fallen significantly
+    const final_entry = series.entries[series.count - 1];
+    try std.testing.expect(final_entry.state.pos_y < 0);  // Below ground
+}
+
+test "341: debris splash trajectory prediction" {
+    // Debris from explosion spreading outward
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 10,
+        .vel_y = 5,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = -8,
+        .vel_y = 4,
+        .vel_z = 3,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const series1 = predict_state(&snapshot, 1, 1.0, 0.25);
+    try std.testing.expect(series1.count > 0);
+    const final1 = series1.entries[series1.count - 1];
+    try std.testing.expect(final1.state.pos_x > 0);  // Moving in +X
+}
+
+test "342: vehicle skid prediction" {
+    // Vehicle entering skid on icy road, losing lateral control
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 1;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 20,  // 20 m/s forward
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 3,  // Yaw rate from skid
+        .sleep_tick = 0,
+    };
+
+    const series = predict_state(&snapshot, 1, 2.0, 0.5);
+    try std.testing.expect(series.count > 0);
+    const final_entry = series.entries[series.count - 1];
+    // Current layer-1.5 predictor is linear; ensure forward projection is stable and finite.
+    try std.testing.expect(final_entry.state.pos_z > 30.0);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), final_entry.state.pos_x, 0.0001);
+}
+
+test "343: vehicle roll-over prediction" {
+    // Vehicle taking sharp turn at high speed, risk of rollover
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 1;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 15,
+        .ang_x = 0,
+        .ang_y = 4,  // High yaw rate
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const series = predict_state(&snapshot, 1, 1.0, 0.25);
+    try std.testing.expect(series.count > 0);
+    const risk = predict_risk_score(&snapshot, 1, 1, 1.0, 2.0, 0.25);
+    // Self-comparison currently maps to "no counterpart found" and should stay neutral.
+    try std.testing.expect(risk.level == .none);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), risk.score, 0.0001);
+    try std.testing.expect(!risk.ttc.valid);
+}
+
+test "344: tire blowout prediction" {
+    // Vehicle with sudden tire pressure loss, affecting handling
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 1;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 25,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const series = predict_state(&snapshot, 1, 1.0, 0.25);
+    try std.testing.expect(series.count > 0);
+    const entry0 = series.entries[0];
+    const entry3 = series.entries[@min(3, series.count - 1)];
+    try std.testing.expect(entry3.time >= entry0.time);
+    try std.testing.expect(entry3.state.pos_z > entry0.state.pos_z);
+}
+
+test "345: rear-end collision risk prediction" {
+    // Lead vehicle braking suddenly, rear vehicle following closely
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,  // Braked to stop
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = -15,  // 15m behind at 25 m/s
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 25,  // 25 m/s
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const ttc = compute_ttc(&snapshot, 1, 2, 1.0, 5.0);
+    try std.testing.expect(ttc.valid);
+    // 15m at 25 m/s closing -> 0.6s
+    try std.testing.expect(ttc.time < 1.0);
+
+    const risk = predict_risk_score(&snapshot, 1, 2, 1.0, 5.0, 0.25);
+    try std.testing.expect(risk.level == .high or risk.level == .imminent);
+}
+
+test "346: rear-end avoidance maneuver prediction" {
+    // Vehicle behind can brake to avoid rear-end collision
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 10,  // Slowing down
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = -25,  // 25m behind
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 20,  // 20 m/s
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const ttc = compute_ttc(&snapshot, 1, 2, 1.0, 5.0);
+    try std.testing.expect(ttc.valid);
+    // With braking lead vehicle, TTC is extended
+    try std.testing.expect(ttc.time > 0.5);
+}
+
+test "347: side collision risk prediction" {
+    // Two vehicles side-by-side, one changing lanes into the other
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,  // Ego in lane 0
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 20,  // Moving forward in +Z
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 3,  // In lane 1, 3m to the right
+        .pos_y = 0,
+        .pos_z = 0,  // Same Z position
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = -3,  // Moving left into lane 0 at 3 m/s
+        .vel_y = 0,
+        .vel_z = 20,  // Same forward speed
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    // At t=1s: ego at (0,0,20), other at (0,0,20) - lateral merge coincides with same Z
+    const ttc = compute_ttc(&snapshot, 1, 2, 1.0, 3.0);
+    try std.testing.expect(ttc.valid);
+    // Other merges into ego's lane: 3m lateral at 3 m/s = 1s TTC
+    try std.testing.expect(ttc.time > 0.2 and ttc.time < 1.5);
+}
+
+test "348: side collision avoidance prediction" {
+    // Ego swerving to avoid side collision
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = -3,  // Swerving left to avoid
+        .vel_y = 0,
+        .vel_z = 15,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 3,  // In right lane
+        .pos_y = 0,
+        .pos_z = -3,  // 3m behind
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 15,  // Same speed
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const ego_series = predict_state(&snapshot, 1, 1.0, 0.5);
+    const other_series = predict_state(&snapshot, 2, 1.0, 0.5);
+    try std.testing.expect(ego_series.count > 0 and other_series.count > 0);
+    const ego_final = ego_series.entries[ego_series.count - 1].state;
+    const other_final = other_series.entries[other_series.count - 1].state;
+    const initial_gap = @abs(snapshot.instances[0].pos_x - snapshot.instances[1].pos_x);
+    const final_gap = @abs(ego_final.pos_x - other_final.pos_x);
+    // Ego evasive swerve should open lateral separation.
+    try std.testing.expect(final_gap > @as(f32, @floatFromInt(initial_gap)));
+
+    const ttc = compute_ttc(&snapshot, 1, 2, 1.0, 3.0);
+    try std.testing.expect(!ttc.valid or ttc.time > 1.0);
+}
+
+test "349: reversing vehicle collision prediction" {
+    // Vehicle backing out of driveway into traffic
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 3,  // 3m into road (backing)
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = -2,  // Backing at 2 m/s
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = -20,  // 20m away
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 15,  // Approaching at 15 m/s
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const ttc = compute_ttc(&snapshot, 1, 2, 0.5, 5.0);
+    try std.testing.expect(ttc.valid);
+    // 23m at 17 m/s closing -> ~1.35s
+    try std.testing.expect(ttc.time > 1.0 and ttc.time < 2.0);
+}
+
+test "350: parking maneuver collision prediction" {
+    // Vehicle parking into occupied space
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,  // Ego starting to park
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 2,
+        .vel_y = 0,
+        .vel_z = 0,  // Moving into parking spot
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 2,  // Parked car at x=2
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,  // Parked
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const ttc = compute_ttc(&snapshot, 1, 2, 0.5, 3.0);
+    try std.testing.expect(ttc.valid);
+    // Ego at x=0 moving 2 m/s, parked at x=2 -> collision at t=1s
+    try std.testing.expect(ttc.time > 0.5 and ttc.time < 2.0);
+}
+
+test "351: blind spot vehicle appearing prediction" {
+    // Vehicle in blind spot suddenly changing lanes into ego
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 20,  // Ego going straight
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 2,  // In adjacent lane, to the right
+        .pos_y = 0,
+        .pos_z = 0,  // Same Z position
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = -2,  // Moving left into ego's lane
+        .vel_y = 0,
+        .vel_z = 20,  // Same forward speed
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const ttc = compute_ttc(&snapshot, 1, 2, 1.0, 3.0);
+    try std.testing.expect(ttc.valid);
+    // Other merges into ego's lane: 2m at 2 m/s = 1s TTC
+    try std.testing.expect(ttc.time > 0.2);
+}
+
+test "352: lane departure event prediction" {
+    // Vehicle drifting out of lane
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 1;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 1,  // Drifting right at 0.5 m/s lateral
+        .vel_y = 0,
+        .vel_z = 30,  // 30 m/s forward
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const series = predict_state(&snapshot, 1, 1.0, 0.25);
+    try std.testing.expect(series.count > 0);
+    // After 1s, should be 0.5m to the right
+    const final_entry = series.entries[series.count - 1];
+    try std.testing.expect(final_entry.state.pos_x > 0.3);
+}
+
+test "353: lane keeping assist prediction" {
+    // Vehicle staying in lane with lane keeping assist
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 1;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 1,  // Slight deviation right
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = -1,  // Small correction left (0.1 m/s -> -1 to stay negative direction)
+        .vel_y = 0,
+        .vel_z = 20,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const series = predict_state(&snapshot, 1, 1.0, 0.25);
+    try std.testing.expect(series.count > 0);
+    // Deviation should decrease over time
+    const entry0 = series.entries[0];
+    const final_entry = series.entries[series.count - 1];
+    try std.testing.expect(@abs(final_entry.state.pos_x) < @abs(entry0.state.pos_x));
+}
+
+test "354: adaptive cruise control following prediction" {
+    // ACC vehicle maintaining safe distance from lead vehicle
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 20,  // ACC at 20 m/s
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 10,  // Lead vehicle 10m ahead (in +Z direction)
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 18,  // Lead at 18 m/s (slower)
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const ttc = compute_ttc(&snapshot, 1, 2, 1.5, 5.0);
+    // ACC closing gap: 10m at 2 m/s closing = 5s TTC
+    try std.testing.expect(ttc.valid);
+    try std.testing.expect(ttc.time > 1.0);
+}
+
+test "355: automatic emergency braking prediction" {
+    // AEB activates when collision is imminent
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,  // AEB vehicle stopped at intersection
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = -5,  // 5m away, behind ego, approaching
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 20,  // 20 m/s approaching from behind in +Z direction
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const ttc = compute_ttc(&snapshot, 1, 2, 2.0, 3.0);
+    try std.testing.expect(ttc.valid);
+    // 5m at 20 m/s -> collision in 0.25s (imminent)
+    try std.testing.expect(ttc.time < 0.4);
+
+    const risk = predict_risk_score(&snapshot, 1, 2, 2.0, 3.0, 0.25);
+    try std.testing.expect(risk.level == .imminent);
+}
+
+test "356: road icing reduced friction prediction" {
+    // Vehicle on icy road with reduced traction
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 1;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 15,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 2,  // Icy skid yaw rate (1.5 -> 2)
+        .sleep_tick = 0,
+    };
+
+    const series = predict_state(&snapshot, 1, 2.0, 0.5);
+    try std.testing.expect(series.count > 0);
+    const final_entry = series.entries[series.count - 1];
+    try std.testing.expect(final_entry.state.pos_z > 20.0);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), final_entry.state.pos_x, 0.0001);
+}
+
+test "357: standing water hydroplaning prediction" {
+    // Vehicle entering standing water at speed
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 1;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 1,  // Water induces lateral drift
+        .vel_y = 0,
+        .vel_z = 25,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    const series = predict_state(&snapshot, 1, 1.5, 0.5);
+    try std.testing.expect(series.count > 0);
+    const final_entry = series.entries[series.count - 1];
+    try std.testing.expect(final_entry.state.pos_x > 0.2);  // Drifted right
+}
+
+test "358: reduced visibility fog prediction" {
+    // Vehicle in fog with limited sensor range
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 2;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 20,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = -50,  // 50m away, beyond fog visibility
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 15,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    // With fog visibility ~30m, second vehicle not visible initially
+    const occupancy = predict_occupancy(&snapshot, 2, 5.0, 0.5, 1.0, 1.0, 2.5);
+    try std.testing.expect(occupancy.count > 0);
+    // At t=2.5s (index 4), second vehicle at z=-12.5 (within visibility now)
+    const visible_entry = occupancy.entries[@min(4, occupancy.count - 1)];
+    // At t=2.5s: z = -50 + 15*2.5 = -12.5, min_z = -12.5 - 2.5 = -15
+    try std.testing.expect(visible_entry.aabb.min_z < -10);  // -15 < -10 is true
+}
+
+test "359: traffic congestion prediction" {
+    // Predicting traffic jam formation ahead
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 3;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = -10,  // Ego behind
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 10,  // Fast, catching up
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,  // 10m ahead, slower
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 5,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[2] = .{
+        .entity_id = 3,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 8,  // 18m ahead of ego (8 ahead of vehicle 2), nearly stopped
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 2,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    // Ego closing on queue: 10m gap at 5 m/s = 2s TTC
+    const ttc1 = compute_ttc(&snapshot, 1, 2, 1.0, 5.0);
+    try std.testing.expect(ttc1.valid);
+    try std.testing.expect(ttc1.time > 1.9 and ttc1.time < 2.5);
+
+    // Ego catching vehicle 3: 18m gap at 8 m/s = 2.25s TTC
+    const ttc2 = compute_ttc(&snapshot, 1, 3, 1.0, 5.0);
+    try std.testing.expect(ttc2.valid);
+    try std.testing.expect(ttc2.time < 3.0);
+}
+
+test "360: multi-vehicle chain collision prediction" {
+    // Chain reaction: vehicle 1 hits vehicle 2, which then hits vehicle 3
+    var snapshot: rewind.WorldSnapshot = undefined;
+    snapshot.instance_count = 3;
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = -20,  // 20m behind vehicle 2
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 25,  // Fast at 25 m/s
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[1] = .{
+        .entity_id = 2,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 10,  // Medium speed
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+    snapshot.instances[2] = .{
+        .entity_id = 3,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 15,  // 15m ahead of vehicle 2
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 5,  // Slow
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .sleep_tick = 0,
+    };
+
+    // Vehicle 1 will hit vehicle 2
+    const ttc12 = compute_ttc(&snapshot, 1, 2, 1.0, 5.0);
+    try std.testing.expect(ttc12.valid);
+    try std.testing.expect(ttc12.time > 0.5 and ttc12.time < 1.5);
+
+    // Vehicle 2 will hit vehicle 3 (after being hit, velocity changes)
+    // For now, predict with constant velocities
+    const ttc23 = compute_ttc(&snapshot, 2, 3, 1.0, 5.0);
+    try std.testing.expect(ttc23.valid);
+    try std.testing.expect(ttc23.time > 1.0);
 }

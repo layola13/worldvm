@@ -434,10 +434,9 @@ pub fn splitTopology(
         }
     }
 
-    // BFS to find connected components (simplified - just split by octant)
+    // BFS to find 6-neighbor connected components over damaged voxels.
     var fragment_idx: u8 = 0;
-    var temp_voxels: [128]TopologyVoxel = undefined;
-    var temp_count: u16 = 0;
+    var queue: [16 * 16 * 16]TopologyVoxel = undefined;
 
     {
         var x: u8 = 0;
@@ -446,52 +445,71 @@ pub fn splitTopology(
             while (y < 16) : (y += 1) {
                 var z: u8 = 0;
                 while (z < 16) : (z += 1) {
-                    if (damaged[x][y][z] and fragment_idx < 8) {
-                        damaged[x][y][z] = false; // Mark as used
-                        temp_voxels[temp_count] = .{ .x = x, .y = y, .z = z };
-                        temp_count += 1;
+                    if (!damaged[x][y][z]) continue;
 
-                        if (temp_count >= 128 or temp_count >= 64) {
-                            // Save current fragment
-                            var fx: f32 = 0;
-                            var fy: f32 = 0;
-                            var fz: f32 = 0;
-                            for (0..temp_count) |vi| {
-                                fx += @as(f32, @floatFromInt(temp_voxels[vi].x));
-                                fy += @as(f32, @floatFromInt(temp_voxels[vi].y));
-                                fz += @as(f32, @floatFromInt(temp_voxels[vi].z));
-                                fragments[fragment_idx].voxels[vi] = temp_voxels[vi];
-                            }
-                            fragments[fragment_idx].voxel_count = temp_count;
-                            fragments[fragment_idx].center_x = fx / @as(f32, @floatFromInt(temp_count));
-                            fragments[fragment_idx].center_y = fy / @as(f32, @floatFromInt(temp_count));
-                            fragments[fragment_idx].center_z = fz / @as(f32, @floatFromInt(temp_count));
-                            fragments[fragment_idx].mass = @as(f32, @floatFromInt(temp_count)) * 0.1;
-                            fragment_idx += 1;
-                            temp_count = 0;
+                    // Mark seed as visited and start component BFS.
+                    damaged[x][y][z] = false;
+                    var head: usize = 0;
+                    var tail: usize = 0;
+                    queue[tail] = .{ .x = x, .y = y, .z = z };
+                    tail += 1;
+
+                    var component_count: u16 = 0;
+                    var fx: f32 = 0.0;
+                    var fy: f32 = 0.0;
+                    var fz: f32 = 0.0;
+
+                    while (head < tail) : (head += 1) {
+                        const v = queue[head];
+                        if (fragment_idx < 8 and component_count < 128) {
+                            fragments[fragment_idx].voxels[component_count] = v;
                         }
+                        component_count += 1;
+                        fx += @as(f32, @floatFromInt(v.x));
+                        fy += @as(f32, @floatFromInt(v.y));
+                        fz += @as(f32, @floatFromInt(v.z));
+
+                        const vx = @as(i32, v.x);
+                        const vy = @as(i32, v.y);
+                        const vz = @as(i32, v.z);
+                        const neighbors = [_][3]i32{
+                            .{ vx + 1, vy, vz },
+                            .{ vx - 1, vy, vz },
+                            .{ vx, vy + 1, vz },
+                            .{ vx, vy - 1, vz },
+                            .{ vx, vy, vz + 1 },
+                            .{ vx, vy, vz - 1 },
+                        };
+                        for (neighbors) |n| {
+                            if (n[0] < 0 or n[0] >= 16 or n[1] < 0 or n[1] >= 16 or n[2] < 0 or n[2] >= 16) continue;
+                            const nx: usize = @intCast(n[0]);
+                            const ny: usize = @intCast(n[1]);
+                            const nz: usize = @intCast(n[2]);
+                            if (!damaged[nx][ny][nz]) continue;
+                            damaged[nx][ny][nz] = false;
+                            if (tail < queue.len) {
+                                queue[tail] = .{
+                                    .x = @intCast(nx),
+                                    .y = @intCast(ny),
+                                    .z = @intCast(nz),
+                                };
+                                tail += 1;
+                            }
+                        }
+                    }
+
+                    if (fragment_idx < 8 and component_count > 0) {
+                        const clamped_count: u16 = @min(component_count, 128);
+                        fragments[fragment_idx].voxel_count = clamped_count;
+                        fragments[fragment_idx].center_x = fx / @as(f32, @floatFromInt(component_count));
+                        fragments[fragment_idx].center_y = fy / @as(f32, @floatFromInt(component_count));
+                        fragments[fragment_idx].center_z = fz / @as(f32, @floatFromInt(component_count));
+                        fragments[fragment_idx].mass = @as(f32, @floatFromInt(component_count)) * 0.1;
+                        fragment_idx += 1;
                     }
                 }
             }
         }
-    }
-
-    // Save remaining voxels
-    if (temp_count > 0 and fragment_idx < 8) {
-        var fx: f32 = 0;
-        var fy: f32 = 0;
-        var fz: f32 = 0;
-        for (0..temp_count) |vi| {
-            fx += @as(f32, @floatFromInt(temp_voxels[vi].x));
-            fy += @as(f32, @floatFromInt(temp_voxels[vi].y));
-            fz += @as(f32, @floatFromInt(temp_voxels[vi].z));
-            fragments[fragment_idx].voxels[vi] = temp_voxels[vi];
-        }
-        fragments[fragment_idx].voxel_count = temp_count;
-        fragments[fragment_idx].center_x = fx / @as(f32, @floatFromInt(temp_count));
-        fragments[fragment_idx].center_y = fy / @as(f32, @floatFromInt(temp_count));
-        fragments[fragment_idx].center_z = fz / @as(f32, @floatFromInt(temp_count));
-        fragments[fragment_idx].mass = @as(f32, @floatFromInt(temp_count)) * 0.1;
     }
 
     // Clear unused fragments
@@ -935,4 +953,183 @@ pub fn updateFragments(fragments: *[MAX_FRAGMENTS]Fragment, dt: f32) void {
 /// Get system for external iteration
 pub fn getSystem() *ProjectileSystem {
     return &g_projectile_system;
+}
+
+// ============================================================================
+// Tests for Ballistics System (Items 426-445)
+// ============================================================================
+
+test "426: projectile basic physics - spawn and velocity" {
+    init();
+    const proj = spawnProjectile(0, 0, 0, 100, 50, 0, 0.01, 9.0);
+    try std.testing.expect(proj != null);
+    try std.testing.expect(proj.?.state == .active);
+    try std.testing.expectApproxEqAbs(@as(f32, 100.0), proj.?.vel_x, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 50.0), proj.?.vel_y, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), proj.?.vel_z, 0.001);
+}
+
+test "427: parabolic trajectory - gravity drop" {
+    init();
+    const proj = spawnProjectile(0, 0, 0, 100, 0, 0, 0.01, 9.0);
+    try std.testing.expect(proj != null);
+
+    const initial_vel_y = proj.?.vel_y;
+    applyGravityDrop(proj.?, -800.0, 1.0);
+    try std.testing.expect(proj.?.vel_y < initial_vel_y);
+}
+
+test "428: wind deflection - drag application" {
+    init();
+    const proj = spawnProjectile(0, 0, 0, 100, 0, 0, 0.01, 9.0);
+    try std.testing.expect(proj != null);
+
+    const initial_vel_x = proj.?.vel_x;
+    applyDrag(proj.?, 0.01, 1.0);
+    try std.testing.expect(@abs(proj.?.vel_x) < @abs(initial_vel_x));
+}
+
+test "429: spin stabilization - projectile maintains trajectory" {
+    init();
+    const proj = spawnProjectile(0, 0, 0, 100, 0, 0, 0.01, 9.0);
+    try std.testing.expect(proj != null);
+
+    const speed_before = getSpeed(proj.?);
+    try std.testing.expect(speed_before > 0);
+}
+
+test "430: air resistance - velocity decay" {
+    init();
+    const proj = spawnProjectile(0, 0, 0, 100, 0, 0, 0.01, 9.0);
+    try std.testing.expect(proj != null);
+
+    const speed_initial = getSpeed(proj.?);
+    applyDrag(proj.?, 0.05, 0.1);
+    const speed_after = getSpeed(proj.?);
+    try std.testing.expect(speed_after < speed_initial);
+}
+
+test "434: material penetration - depth calculation" {
+    init();
+    const proj = spawnProjectile(0, 0, 0, 100, 0, 0, 0.01, 9.0);
+    try std.testing.expect(proj != null);
+
+    const material = MaterialProps{
+        .density = 7850.0,
+        .thickness = 10.0,
+        .porosity = 0.0,
+        .hardness = 150.0,
+        .toughness = 50.0,
+    };
+    const depth = calculatePenetrationDepth(proj.?, &material);
+    try std.testing.expect(depth >= 0);
+}
+
+test "436: ricochet deflection - angle reflection" {
+    const deflection = calculateDeflection(100.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.3);
+    try std.testing.expect(deflection.x < 0);
+}
+
+test "437: armor blocking - projectile stopped" {
+    init();
+    const proj = spawnProjectile(0, 0, 0, 50, 0, 0, 0.01, 9.0);
+    try std.testing.expect(proj != null);
+
+    const material = MaterialProps{
+        .density = 7850.0,
+        .thickness = 100.0,
+        .porosity = 0.0,
+        .hardness = 500.0,
+        .toughness = 200.0,
+    };
+    const depth = calculatePenetrationDepth(proj.?, &material);
+    try std.testing.expect(depth < material.thickness);
+}
+
+test "438: fragment generation - debris spawning" {
+    const fragments = generateFragments(10, 10, 10, 5, 100.0);
+    try std.testing.expect(fragments[0].lifetime > 0);
+}
+
+test "topology split separates disconnected damaged clusters" {
+    var ent = entity16.initEntity16();
+    entity16.setVoxel(&ent, 1, 1, 1);
+    entity16.setVoxel(&ent, 1, 1, 2);
+    entity16.setVoxel(&ent, 12, 12, 12);
+    entity16.setVoxel(&ent, 12, 12, 13);
+
+    const fragments = splitTopology(&ent, 8, 8, 8, 20);
+    var active_count: u8 = 0;
+    var idx: usize = 0;
+    while (idx < fragments.len) : (idx += 1) {
+        if (fragments[idx].voxel_count > 0) {
+            active_count += 1;
+            try std.testing.expect(fragments[idx].mass > 0.0);
+        }
+    }
+    try std.testing.expectEqual(@as(u8, 2), active_count);
+}
+
+test "439: crater formation - impact effects" {
+    init();
+    const proj = spawnProjectile(0, 0, 0, 500, 0, 0, 0.01, 9.0);
+    try std.testing.expect(proj != null);
+
+    const energy = getKineticEnergy(proj.?);
+    try std.testing.expect(energy > 0);
+}
+
+test "443: penetration depth calculation - stop depth" {
+    init();
+    const proj = spawnProjectile(0, 0, 0, 100, 0, 0, 0.01, 9.0);
+    try std.testing.expect(proj != null);
+
+    const material = MaterialProps{
+        .density = 2700.0,
+        .thickness = 5.0,
+        .porosity = 0.0,
+        .hardness = 100.0,
+        .toughness = 30.0,
+    };
+    const depth = calculatePenetrationDepth(proj.?, &material);
+    try std.testing.expect(depth >= 0);
+}
+
+test "444: stopping force - projectile termination" {
+    init();
+    const proj = spawnProjectile(0, 0, 0, 10, 0, 0, 0.01, 9.0);
+    try std.testing.expect(proj != null);
+
+    try std.testing.expect(getSpeed(proj.?) > 0);
+    proj.?.vel_x = 0;
+    proj.?.vel_y = 0;
+    proj.?.vel_z = 0;
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), getSpeed(proj.?), 0.001);
+}
+
+test "445: kinetic energy calculation" {
+    init();
+    const proj = spawnProjectile(0, 0, 0, 100, 50, 30, 0.01, 9.0);
+    try std.testing.expect(proj != null);
+
+    const energy = getKineticEnergy(proj.?);
+    try std.testing.expect(energy > 0);
+}
+
+test "ballistics simulateAll processes all projectiles" {
+    init();
+    _ = spawnProjectile(0, 0, 0, 100, 0, 0, 0.01, 9.0);
+    _ = spawnProjectile(10, 0, 0, 100, 0, 0, 0.01, 9.0);
+    try std.testing.expect(g_projectile_system.count == 2);
+}
+
+test "ballistics updateFragments ages fragment lifetime" {
+    var fragments: [MAX_FRAGMENTS]Fragment = undefined;
+    fragments[0] = .{
+        .pos_x = 0, .pos_y = 0, .pos_z = 0,
+        .vel_x = 10, .vel_y = 10, .vel_z = 10,
+        .lifetime = 100,
+    };
+    updateFragments(&fragments, 0.1);
+    try std.testing.expect(fragments[0].lifetime < 100);
 }

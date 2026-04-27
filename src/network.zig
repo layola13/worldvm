@@ -104,9 +104,16 @@ pub fn createReplica(entity_id: u16) ?*ReplicaState {
     const replica = &g_network_system.replicas[idx];
     replica.* = .{
         .entity_id = entity_id,
-        .pos_x = 0, .pos_y = 0, .pos_z = 0,
-        .vel_x = 0, .vel_y = 0, .vel_z = 0,
-        .yaw = 0, .tick = 0, .timestamp = 0, .checksum = 0,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .yaw = 0,
+        .tick = 0,
+        .timestamp = 0,
+        .checksum = 0,
     };
     return replica;
 }
@@ -148,8 +155,9 @@ pub fn storeInput(input: InputState) void {
 
 /// Get input for specific tick
 pub fn getInput(tick: u32) ?*const InputState {
-    for (g_network_system.inputs[0..g_network_system.input_count]) |input| {
-        if (input.tick == tick) return &input;
+    for (0..g_network_system.input_count) |i| {
+        const input = &g_network_system.inputs[i];
+        if (input.tick == tick) return input;
     }
     return null;
 }
@@ -254,11 +262,9 @@ pub fn reconcile(
         local.pos_y != remote.pos_y or
         local.pos_z != remote.pos_z)
     {
-        const pos_error = @sqrt(
-            (local.pos_x - remote.pos_x) * (local.pos_x - remote.pos_x) +
+        const pos_error = @sqrt((local.pos_x - remote.pos_x) * (local.pos_x - remote.pos_x) +
             (local.pos_y - remote.pos_y) * (local.pos_y - remote.pos_y) +
-            (local.pos_z - remote.pos_z) * (local.pos_z - remote.pos_z)
-        );
+            (local.pos_z - remote.pos_z) * (local.pos_z - remote.pos_z));
 
         if (pos_error > 10.0) {
             return .POSITION_DIVERGED;
@@ -292,12 +298,9 @@ pub fn rollback(replica: *ReplicaState, target_tick: u32) void {
 
 /// Check if rollback is needed
 pub fn shouldRollback(replica: *const ReplicaState, remote: *const ReplicaState) bool {
-    if (replica.tick < remote.tick) return true;
-
-    const tick_diff = remote.tick - replica.tick;
-    if (tick_diff > g_network_system.config.max_rollback_ticks) return true;
-
-    return false;
+    if (replica.tick <= remote.tick) return false;
+    const tick_diff = replica.tick - remote.tick;
+    return tick_diff <= g_network_system.config.max_rollback_ticks;
 }
 
 /// Get system for external iteration
@@ -407,7 +410,6 @@ pub fn rollbackWithPrediction(
 
 /// Predict the result of a hypothetical rollback without modifying state.
 pub fn predictRollbackResult(
-    replica: *const ReplicaState,
     target_remote: *const ReplicaState,
     input_history: []const InputState,
     dt: f32,
@@ -430,4 +432,136 @@ pub fn validateDeterminism(initial: *const Snapshot, final: *const Snapshot) boo
     }
 
     return true;
+}
+
+test "network getInput returns stable backing pointer" {
+    init(.{});
+    storeInput(.{
+        .tick = 42,
+        .forward = true,
+        .backward = false,
+        .left = false,
+        .right = false,
+        .jump = false,
+        .crouch = false,
+        .fire = false,
+        .aim_x = 0,
+        .aim_y = 0,
+    });
+
+    const got = getInput(42);
+    try std.testing.expect(got != null);
+    const expected_ptr = &getSystem().inputs[0];
+    try std.testing.expectEqual(@intFromPtr(expected_ptr), @intFromPtr(got.?));
+}
+
+test "network shouldRollback only for bounded local-ahead rollback window" {
+    init(.{ .max_rollback_ticks = 5 });
+
+    var local = ReplicaState{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .yaw = 0,
+        .tick = 10,
+        .timestamp = 0,
+        .checksum = 0,
+    };
+    var remote = local;
+
+    remote.tick = 8;
+    try std.testing.expect(shouldRollback(&local, &remote));
+
+    remote.tick = 4;
+    try std.testing.expect(!shouldRollback(&local, &remote));
+
+    remote.tick = 12;
+    try std.testing.expect(!shouldRollback(&local, &remote));
+}
+
+test "network rollbackWithPrediction replays only inputs newer than remote tick" {
+    init(.{});
+
+    var local = ReplicaState{
+        .entity_id = 7,
+        .pos_x = 100,
+        .pos_y = 10,
+        .pos_z = -50,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .yaw = 0,
+        .tick = 99,
+        .timestamp = 0,
+        .checksum = 0,
+    };
+    var remote = ReplicaState{
+        .entity_id = 7,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .yaw = 0,
+        .tick = 5,
+        .timestamp = 0,
+        .checksum = 0,
+    };
+    remote.checksum = calculateCRC(&remote);
+
+    const history = [_]InputState{
+        .{ .tick = 4, .forward = true, .backward = false, .left = false, .right = false, .jump = false, .crouch = false, .fire = false, .aim_x = 0, .aim_y = 0 },
+        .{ .tick = 6, .forward = true, .backward = false, .left = false, .right = false, .jump = false, .crouch = false, .fire = false, .aim_x = 0, .aim_y = 0 },
+        .{ .tick = 7, .forward = false, .backward = false, .left = false, .right = true, .jump = false, .crouch = false, .fire = false, .aim_x = 0, .aim_y = 0 },
+    };
+
+    rollbackWithPrediction(&local, &remote, history[0..], 0.1);
+    try std.testing.expectEqual(@as(u32, 7), local.tick);
+    try std.testing.expect(local.pos_z > 30.0);
+    try std.testing.expect(local.pos_x > 15.0);
+}
+
+test "network applyRemoteState smooths minor delta and rollbacks diverged state" {
+    init(.{ .crc_check_enabled = false });
+
+    var local_ok = ReplicaState{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .yaw = 0,
+        .tick = 10,
+        .timestamp = 0,
+        .checksum = 0,
+    };
+    var remote_ok = local_ok;
+    remote_ok.pos_x = 10.0; // <= divergence threshold, should smooth
+
+    const empty_history = [_]InputState{};
+    const ok_result = applyRemoteState(&local_ok, &remote_ok, empty_history[0..], 0.016);
+    try std.testing.expect(ok_result == .OK);
+    try std.testing.expectApproxEqAbs(@as(f32, 3.0), local_ok.pos_x, 0.0001);
+
+    var local_diverged = local_ok;
+    local_diverged.tick = 8;
+    local_diverged.pos_x = 0;
+    var remote_diverged = local_diverged;
+    remote_diverged.pos_x = 50.0;
+
+    const replay_history = [_]InputState{
+        .{ .tick = 9, .forward = true, .backward = false, .left = false, .right = false, .jump = false, .crouch = false, .fire = false, .aim_x = 0, .aim_y = 0 },
+    };
+    const diverged_result = applyRemoteState(&local_diverged, &remote_diverged, replay_history[0..], 0.1);
+    try std.testing.expect(diverged_result == .POSITION_DIVERGED);
+    try std.testing.expectEqual(@as(u32, 9), local_diverged.tick);
+    try std.testing.expectApproxEqAbs(@as(f32, 50.0), local_diverged.pos_x, 0.0001);
+    try std.testing.expect(local_diverged.pos_z > 15.0);
 }
