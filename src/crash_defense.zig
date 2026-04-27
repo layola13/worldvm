@@ -141,6 +141,115 @@ pub const SolverDivergencePlan = struct {
     reason_code: u32,
 };
 
+pub const IterationTimeoutPlan = struct {
+    valid: bool,
+    timed_out: bool,
+    aborted: bool,
+    emergency_stop_required: bool,
+    elapsed_ms: f32,
+    budget_ms: f32,
+    overtime_ms: f32,
+    iteration_count: u32,
+    max_iterations: u32,
+    utilization: f32,
+    reason_code: u32,
+};
+
+pub const NoProgressPlan = struct {
+    valid: bool,
+    no_progress: bool,
+    stalled: bool,
+    emergency_stop_required: bool,
+    previous_progress: f32,
+    current_progress: f32,
+    progress_delta: f32,
+    min_progress: f32,
+    stagnant_iterations: u32,
+    max_stagnant_iterations: u32,
+    reason_code: u32,
+};
+
+pub const EmergencyStopPlan = struct {
+    valid: bool,
+    trigger_stop: bool,
+    freeze_state: bool,
+    snapshot_recommended: bool,
+    manual_trigger: bool,
+    critical_fault: bool,
+    repeated_fault_count: u32,
+    repeated_fault_threshold: u32,
+    cooldown_ticks: u32,
+    has_snapshot: bool,
+    reason_code: u32,
+};
+
+pub const RollbackPlan = struct {
+    valid: bool,
+    rollback_required: bool,
+    can_rollback: bool,
+    emergency_stop_required: bool,
+    has_snapshot: bool,
+    has_valid_snapshot: bool,
+    rollback_attempts: u32,
+    max_rollback_attempts: u32,
+    repeated_fault_count: u32,
+    repeated_fault_threshold: u32,
+    cooldown_ticks: u32,
+    reason_code: u32,
+};
+
+pub const ErrorLogEntry = struct {
+    tick: u32,
+    code: u32,
+    severity: u8,
+    value0: f32,
+    value1: f32,
+};
+
+pub const ERROR_LOG_CAPACITY: u32 = 32;
+
+pub const DiagnosticSnapshot = struct {
+    tick: u32,
+    instance_count: u32,
+    emergency_stopped: bool,
+    emergency_reason_code: u32,
+    emergency_stop_count: u32,
+    error_log_count: u32,
+    snapshot_count: u32,
+    stuck: bool,
+    max_speed: f32,
+    avg_speed: f32,
+    out_of_bounds_count: u32,
+    velocity_exceeded_count: u32,
+    invalid_velocity_count: u32,
+    health_score: f32,
+};
+
+pub const DIAGNOSTIC_HISTORY_CAPACITY: u32 = 32;
+
+pub const DefenseStatsReport = struct {
+    valid: bool,
+    has_diagnostics: bool,
+    report_tick: u32,
+    emergency_stopped: bool,
+    emergency_reason_code: u32,
+    emergency_stop_count: u32,
+    total_error_logs: u32,
+    retained_error_logs: u32,
+    severe_error_count: u32,
+    total_diagnostics: u32,
+    retained_diagnostics: u32,
+    avg_health_score: f32,
+    min_health_score: f32,
+    max_health_score: f32,
+    stuck_ratio: f32,
+    peak_max_speed: f32,
+    avg_speed: f32,
+    total_out_of_bounds: u32,
+    total_velocity_exceeded: u32,
+    total_invalid_velocity: u32,
+};
+
 pub const Snapshot = struct {
     tick: u32,
     instance_count: u8,
@@ -153,6 +262,12 @@ pub const DefenseSystem = struct {
     config: SanityCheckConfig,
     last_progress_tick: u32,
     emergency_stopped: bool,
+    emergency_reason_code: u32,
+    emergency_stop_count: u32,
+    error_log_count: u32,
+    error_logs: [ERROR_LOG_CAPACITY]ErrorLogEntry,
+    diagnostic_count: u32,
+    diagnostics: [DIAGNOSTIC_HISTORY_CAPACITY]DiagnosticSnapshot,
     snapshot_count: u8,
     snapshots: [4]Snapshot,
 };
@@ -163,6 +278,10 @@ pub fn init(config: SanityCheckConfig) void {
     g_defense_system.config = config;
     g_defense_system.last_progress_tick = 0;
     g_defense_system.emergency_stopped = false;
+    g_defense_system.emergency_reason_code = 0;
+    g_defense_system.emergency_stop_count = 0;
+    g_defense_system.error_log_count = 0;
+    g_defense_system.diagnostic_count = 0;
     g_defense_system.snapshot_count = 0;
 }
 
@@ -311,6 +430,71 @@ fn invalidSolverDivergencePlan() SolverDivergencePlan {
         .growth_ratio = 0.0,
         .allowed_growth_ratio = 0.0,
         .excess_error = 0.0,
+        .reason_code = 0,
+    };
+}
+
+fn invalidIterationTimeoutPlan() IterationTimeoutPlan {
+    return .{
+        .valid = false,
+        .timed_out = false,
+        .aborted = false,
+        .emergency_stop_required = false,
+        .elapsed_ms = 0.0,
+        .budget_ms = 0.0,
+        .overtime_ms = 0.0,
+        .iteration_count = 0,
+        .max_iterations = 0,
+        .utilization = 0.0,
+        .reason_code = 0,
+    };
+}
+
+fn invalidNoProgressPlan() NoProgressPlan {
+    return .{
+        .valid = false,
+        .no_progress = false,
+        .stalled = false,
+        .emergency_stop_required = false,
+        .previous_progress = 0.0,
+        .current_progress = 0.0,
+        .progress_delta = 0.0,
+        .min_progress = 0.0,
+        .stagnant_iterations = 0,
+        .max_stagnant_iterations = 0,
+        .reason_code = 0,
+    };
+}
+
+fn invalidEmergencyStopPlan() EmergencyStopPlan {
+    return .{
+        .valid = false,
+        .trigger_stop = false,
+        .freeze_state = false,
+        .snapshot_recommended = false,
+        .manual_trigger = false,
+        .critical_fault = false,
+        .repeated_fault_count = 0,
+        .repeated_fault_threshold = 0,
+        .cooldown_ticks = 0,
+        .has_snapshot = false,
+        .reason_code = 0,
+    };
+}
+
+fn invalidRollbackPlan() RollbackPlan {
+    return .{
+        .valid = false,
+        .rollback_required = false,
+        .can_rollback = false,
+        .emergency_stop_required = false,
+        .has_snapshot = false,
+        .has_valid_snapshot = false,
+        .rollback_attempts = 0,
+        .max_rollback_attempts = 0,
+        .repeated_fault_count = 0,
+        .repeated_fault_threshold = 0,
+        .cooldown_ticks = 0,
         .reason_code = 0,
     };
 }
@@ -665,6 +849,155 @@ pub fn computeSolverDivergencePlan(
     };
 }
 
+/// Detect solver iteration timeout from elapsed runtime versus budget.
+pub fn computeIterationTimeoutPlan(
+    elapsed_ms: f32,
+    budget_ms: f32,
+    iteration_count: u32,
+    max_iterations: u32,
+    hard_timeout_scale: f32,
+    emergency_on_timeout: bool,
+) IterationTimeoutPlan {
+    if (!std.math.isFinite(elapsed_ms) or !std.math.isFinite(budget_ms) or !std.math.isFinite(hard_timeout_scale) or
+        elapsed_ms < 0.0 or budget_ms <= 0.0 or max_iterations == 0 or hard_timeout_scale < 1.0)
+    {
+        return invalidIterationTimeoutPlan();
+    }
+
+    const timed_out = elapsed_ms > budget_ms;
+    const aborted = timed_out;
+    const overtime_ms = if (timed_out) elapsed_ms - budget_ms else 0.0;
+    const utilization = elapsed_ms / budget_ms;
+    const severe_timeout = elapsed_ms > budget_ms * hard_timeout_scale;
+    const iteration_exhausted = iteration_count >= max_iterations;
+    const emergency_stop_required = timed_out and (emergency_on_timeout or severe_timeout);
+
+    return .{
+        .valid = true,
+        .timed_out = timed_out,
+        .aborted = aborted,
+        .emergency_stop_required = emergency_stop_required,
+        .elapsed_ms = elapsed_ms,
+        .budget_ms = budget_ms,
+        .overtime_ms = overtime_ms,
+        .iteration_count = iteration_count,
+        .max_iterations = max_iterations,
+        .utilization = utilization,
+        .reason_code = if (emergency_stop_required) 3 else if (iteration_exhausted and timed_out) 2 else if (timed_out) 1 else 0,
+    };
+}
+
+/// Detect repeated lack of progress over a short watchdog window.
+pub fn computeNoProgressPlan(
+    previous_progress: f32,
+    current_progress: f32,
+    min_progress: f32,
+    stagnant_iterations: u32,
+    max_stagnant_iterations: u32,
+    hard_stagnant_scale: f32,
+    emergency_on_no_progress: bool,
+) NoProgressPlan {
+    if (!std.math.isFinite(previous_progress) or !std.math.isFinite(current_progress) or
+        !std.math.isFinite(min_progress) or !std.math.isFinite(hard_stagnant_scale) or
+        previous_progress < 0.0 or current_progress < 0.0 or min_progress < 0.0 or
+        max_stagnant_iterations == 0 or hard_stagnant_scale < 1.0)
+    {
+        return invalidNoProgressPlan();
+    }
+
+    const progress_delta = if (current_progress > previous_progress) current_progress - previous_progress else 0.0;
+    const no_progress = progress_delta <= min_progress;
+    const next_stagnant = if (no_progress) stagnant_iterations +| 1 else 0;
+    const stalled = next_stagnant >= max_stagnant_iterations;
+    const emergency_threshold = @max(
+        max_stagnant_iterations,
+        @as(u32, @intFromFloat(@ceil(@as(f32, @floatFromInt(max_stagnant_iterations)) * hard_stagnant_scale))),
+    );
+    const emergency_stop_required = stalled and (emergency_on_no_progress or next_stagnant >= emergency_threshold);
+
+    return .{
+        .valid = true,
+        .no_progress = no_progress,
+        .stalled = stalled,
+        .emergency_stop_required = emergency_stop_required,
+        .previous_progress = previous_progress,
+        .current_progress = current_progress,
+        .progress_delta = progress_delta,
+        .min_progress = min_progress,
+        .stagnant_iterations = next_stagnant,
+        .max_stagnant_iterations = max_stagnant_iterations,
+        .reason_code = if (emergency_stop_required) 3 else if (stalled) 2 else if (no_progress) 1 else 0,
+    };
+}
+
+/// Decide whether the defense system should hard-stop simulation state.
+pub fn computeEmergencyStopPlan(
+    manual_trigger: bool,
+    critical_fault: bool,
+    repeated_fault_count: u32,
+    repeated_fault_threshold: u32,
+    has_snapshot: bool,
+    cooldown_ticks: u32,
+) EmergencyStopPlan {
+    if (repeated_fault_threshold == 0) return invalidEmergencyStopPlan();
+
+    const repeated_faults = repeated_fault_count >= repeated_fault_threshold;
+    const trigger_stop = manual_trigger or critical_fault or repeated_faults;
+    const snapshot_recommended = trigger_stop and critical_fault and has_snapshot;
+
+    return .{
+        .valid = true,
+        .trigger_stop = trigger_stop,
+        .freeze_state = trigger_stop,
+        .snapshot_recommended = snapshot_recommended,
+        .manual_trigger = manual_trigger,
+        .critical_fault = critical_fault,
+        .repeated_fault_count = repeated_fault_count,
+        .repeated_fault_threshold = repeated_fault_threshold,
+        .cooldown_ticks = cooldown_ticks,
+        .has_snapshot = has_snapshot,
+        .reason_code = if (critical_fault and has_snapshot) 3 else if (critical_fault) 2 else if (repeated_faults) 1 else if (manual_trigger) 4 else 0,
+    };
+}
+
+/// Decide whether state rollback should be executed using available snapshots.
+pub fn computeRollbackPlan(
+    fault_detected: bool,
+    emergency_stopped: bool,
+    has_snapshot: bool,
+    has_valid_snapshot: bool,
+    rollback_attempts: u32,
+    max_rollback_attempts: u32,
+    repeated_fault_count: u32,
+    repeated_fault_threshold: u32,
+    cooldown_ticks: u32,
+    force_rollback: bool,
+) RollbackPlan {
+    if (max_rollback_attempts == 0 or repeated_fault_threshold == 0) return invalidRollbackPlan();
+
+    const repeated_faults = repeated_fault_count >= repeated_fault_threshold;
+    const rollback_required = force_rollback or (fault_detected and emergency_stopped) or repeated_faults;
+    const attempts_exhausted = rollback_attempts >= max_rollback_attempts;
+    const can_rollback = rollback_required and has_snapshot and has_valid_snapshot and !attempts_exhausted;
+    const emergency_stop_required = rollback_required and !can_rollback;
+    const reason_code: u32 = if (!rollback_required) 0 else if (can_rollback and force_rollback) 5 else if (can_rollback) 1 else if (!has_snapshot) 2 else if (!has_valid_snapshot) 3 else if (attempts_exhausted) 4 else 0;
+
+    return .{
+        .valid = true,
+        .rollback_required = rollback_required,
+        .can_rollback = can_rollback,
+        .emergency_stop_required = emergency_stop_required,
+        .has_snapshot = has_snapshot,
+        .has_valid_snapshot = has_valid_snapshot,
+        .rollback_attempts = rollback_attempts,
+        .max_rollback_attempts = max_rollback_attempts,
+        .repeated_fault_count = repeated_fault_count,
+        .repeated_fault_threshold = repeated_fault_threshold,
+        .cooldown_ticks = cooldown_ticks,
+        .reason_code = reason_code,
+    };
+}
+
 /// Validate physics state of single instance
 pub fn validateInstance(inst: *const scene32.Instance) SanityCheckResult {
     var result: SanityCheckResult = .{
@@ -816,28 +1149,251 @@ pub fn checkEnergyConservation(
 }
 
 /// Emergency stop all physics
-pub fn emergencyStop(s1024: *scene1024.Scene1024) void {
-    for (0..s1024.instance_count) |i| {
-        const inst = &s1024.instances[i];
-        inst.vel_x = 0;
-        inst.vel_y = 0;
-        inst.vel_z = 0;
-        inst.ang_x = 0;
-        inst.ang_y = 0;
-        inst.ang_z = 0;
-        inst.state = .resting;
+pub fn emergencyStopWithReason(s1024: ?*scene1024.Scene1024, reason_code: u32) void {
+    if (s1024) |scene| {
+        for (0..scene.instance_count) |i| {
+            const inst = &scene.instances[i];
+            inst.vel_x = 0;
+            inst.vel_y = 0;
+            inst.vel_z = 0;
+            inst.ang_x = 0;
+            inst.ang_y = 0;
+            inst.ang_z = 0;
+            inst.state = .resting;
+        }
     }
     g_defense_system.emergency_stopped = true;
+    g_defense_system.emergency_reason_code = reason_code;
+    g_defense_system.emergency_stop_count +|= 1;
+}
+
+pub fn emergencyStop(s1024: ?*scene1024.Scene1024) void {
+    emergencyStopWithReason(s1024, 0);
+}
+
+pub fn applyEmergencyStopPlan(s1024: ?*scene1024.Scene1024, plan: EmergencyStopPlan) bool {
+    if (!plan.valid or !plan.trigger_stop) return false;
+    emergencyStopWithReason(s1024, plan.reason_code);
+    return true;
 }
 
 /// Reset emergency stop flag
 pub fn resetEmergencyStop() void {
     g_defense_system.emergency_stopped = false;
+    g_defense_system.emergency_reason_code = 0;
 }
 
 /// Check if emergency stopped
 pub fn isEmergencyStopped() bool {
     return g_defense_system.emergency_stopped;
+}
+
+pub fn getEmergencyReasonCode() u32 {
+    return g_defense_system.emergency_reason_code;
+}
+
+pub fn getEmergencyStopCount() u32 {
+    return g_defense_system.emergency_stop_count;
+}
+
+pub fn recordErrorLog(tick: u32, code: u32, severity: u8, value0: f32, value1: f32) void {
+    const idx: usize = @intCast(g_defense_system.error_log_count % ERROR_LOG_CAPACITY);
+    g_defense_system.error_logs[idx] = .{
+        .tick = tick,
+        .code = code,
+        .severity = severity,
+        .value0 = value0,
+        .value1 = value1,
+    };
+    g_defense_system.error_log_count +|= 1;
+}
+
+pub fn clearErrorLogs() void {
+    g_defense_system.error_log_count = 0;
+}
+
+pub fn getErrorLogCount() u32 {
+    return @min(g_defense_system.error_log_count, ERROR_LOG_CAPACITY);
+}
+
+pub fn getErrorLogAt(index: u32) ?ErrorLogEntry {
+    const count = getErrorLogCount();
+    if (index >= count) return null;
+
+    const start_abs = if (g_defense_system.error_log_count > ERROR_LOG_CAPACITY)
+        g_defense_system.error_log_count - ERROR_LOG_CAPACITY
+    else
+        0;
+    const absolute = start_abs + index;
+    const slot: usize = @intCast(absolute % ERROR_LOG_CAPACITY);
+    return g_defense_system.error_logs[slot];
+}
+
+pub fn collectDiagnostics(s1024: ?*const scene1024.Scene1024, current_tick: u32) DiagnosticSnapshot {
+    var instance_count: u32 = 0;
+    var max_speed: f32 = 0.0;
+    var total_speed: f32 = 0.0;
+    var out_of_bounds_count: u32 = 0;
+    var velocity_exceeded_count: u32 = 0;
+    var invalid_velocity_count: u32 = 0;
+
+    if (s1024) |scene| {
+        instance_count = scene.instance_count;
+        for (scene.instances[0..scene.instance_count]) |inst| {
+            const vx = @as(f32, @floatFromInt(inst.vel_x));
+            const vy = @as(f32, @floatFromInt(inst.vel_y));
+            const vz = @as(f32, @floatFromInt(inst.vel_z));
+
+            if (!isValidFloat(vx) or !isValidFloat(vy) or !isValidFloat(vz)) {
+                invalid_velocity_count +|= 1;
+                continue;
+            }
+
+            const speed = magnitude3(vx, vy, vz);
+            max_speed = @max(max_speed, speed);
+            total_speed += speed;
+            if (speed > g_defense_system.config.velocity_cap) velocity_exceeded_count +|= 1;
+
+            if (inst.pos_x < g_defense_system.config.position_min or
+                inst.pos_x > g_defense_system.config.position_max or
+                inst.pos_y < g_defense_system.config.position_min or
+                inst.pos_y > g_defense_system.config.position_max or
+                inst.pos_z < g_defense_system.config.position_min or
+                inst.pos_z > g_defense_system.config.position_max)
+            {
+                out_of_bounds_count +|= 1;
+            }
+        }
+    }
+
+    const avg_speed = if (instance_count == 0) 0.0 else total_speed / @as(f32, @floatFromInt(instance_count));
+    const stuck = isStuck(current_tick);
+    var health_score: f32 = 1.0;
+    if (g_defense_system.emergency_stopped) health_score -= 0.4;
+    if (stuck) health_score -= 0.2;
+    if (g_defense_system.emergency_reason_code != 0) health_score -= 0.05;
+    if (instance_count != 0) {
+        const inv_count = @as(f32, @floatFromInt(instance_count));
+        health_score -= 0.2 * (@as(f32, @floatFromInt(out_of_bounds_count)) / inv_count);
+        health_score -= 0.1 * (@as(f32, @floatFromInt(velocity_exceeded_count)) / inv_count);
+        health_score -= 0.1 * (@as(f32, @floatFromInt(invalid_velocity_count)) / inv_count);
+    }
+    health_score = @max(0.0, @min(1.0, health_score));
+
+    return .{
+        .tick = current_tick,
+        .instance_count = instance_count,
+        .emergency_stopped = g_defense_system.emergency_stopped,
+        .emergency_reason_code = g_defense_system.emergency_reason_code,
+        .emergency_stop_count = g_defense_system.emergency_stop_count,
+        .error_log_count = getErrorLogCount(),
+        .snapshot_count = @min(g_defense_system.snapshot_count, @as(u8, 4)),
+        .stuck = stuck,
+        .max_speed = max_speed,
+        .avg_speed = avg_speed,
+        .out_of_bounds_count = out_of_bounds_count,
+        .velocity_exceeded_count = velocity_exceeded_count,
+        .invalid_velocity_count = invalid_velocity_count,
+        .health_score = health_score,
+    };
+}
+
+pub fn recordDiagnostic(snapshot: DiagnosticSnapshot) void {
+    const idx: usize = @intCast(g_defense_system.diagnostic_count % DIAGNOSTIC_HISTORY_CAPACITY);
+    g_defense_system.diagnostics[idx] = snapshot;
+    g_defense_system.diagnostic_count +|= 1;
+}
+
+pub fn collectAndRecordDiagnostics(s1024: ?*const scene1024.Scene1024, current_tick: u32) DiagnosticSnapshot {
+    const snapshot = collectDiagnostics(s1024, current_tick);
+    recordDiagnostic(snapshot);
+    return snapshot;
+}
+
+pub fn clearDiagnostics() void {
+    g_defense_system.diagnostic_count = 0;
+}
+
+pub fn getDiagnosticCount() u32 {
+    return @min(g_defense_system.diagnostic_count, DIAGNOSTIC_HISTORY_CAPACITY);
+}
+
+pub fn getDiagnosticAt(index: u32) ?DiagnosticSnapshot {
+    const count = getDiagnosticCount();
+    if (index >= count) return null;
+
+    const start_abs = if (g_defense_system.diagnostic_count > DIAGNOSTIC_HISTORY_CAPACITY)
+        g_defense_system.diagnostic_count - DIAGNOSTIC_HISTORY_CAPACITY
+    else
+        0;
+    const absolute = start_abs + index;
+    const slot: usize = @intCast(absolute % DIAGNOSTIC_HISTORY_CAPACITY);
+    return g_defense_system.diagnostics[slot];
+}
+
+pub fn computeDefenseStatsReport() DefenseStatsReport {
+    const retained_errors = getErrorLogCount();
+    var severe_error_count: u32 = 0;
+    var ei: u32 = 0;
+    while (ei < retained_errors) : (ei += 1) {
+        const entry = getErrorLogAt(ei) orelse continue;
+        if (entry.severity >= 2) severe_error_count +|= 1;
+    }
+
+    const retained_diagnostics = getDiagnosticCount();
+    var report_tick: u32 = 0;
+    var sum_health: f32 = 0.0;
+    var min_health: f32 = 1.0;
+    var max_health: f32 = 0.0;
+    var stuck_count: u32 = 0;
+    var peak_max_speed: f32 = 0.0;
+    var sum_avg_speed: f32 = 0.0;
+    var total_out_of_bounds: u32 = 0;
+    var total_velocity_exceeded: u32 = 0;
+    var total_invalid_velocity: u32 = 0;
+
+    var di: u32 = 0;
+    while (di < retained_diagnostics) : (di += 1) {
+        const snapshot = getDiagnosticAt(di) orelse continue;
+        report_tick = snapshot.tick;
+        sum_health += snapshot.health_score;
+        min_health = @min(min_health, snapshot.health_score);
+        max_health = @max(max_health, snapshot.health_score);
+        if (snapshot.stuck) stuck_count +|= 1;
+        peak_max_speed = @max(peak_max_speed, snapshot.max_speed);
+        sum_avg_speed += snapshot.avg_speed;
+        total_out_of_bounds +|= snapshot.out_of_bounds_count;
+        total_velocity_exceeded +|= snapshot.velocity_exceeded_count;
+        total_invalid_velocity +|= snapshot.invalid_velocity_count;
+    }
+
+    const has_diagnostics = retained_diagnostics != 0;
+    const avg_health = if (has_diagnostics) sum_health / @as(f32, @floatFromInt(retained_diagnostics)) else 0.0;
+    const stuck_ratio = if (has_diagnostics) @as(f32, @floatFromInt(stuck_count)) / @as(f32, @floatFromInt(retained_diagnostics)) else 0.0;
+    const avg_speed = if (has_diagnostics) sum_avg_speed / @as(f32, @floatFromInt(retained_diagnostics)) else 0.0;
+
+    return .{
+        .valid = true,
+        .has_diagnostics = has_diagnostics,
+        .report_tick = report_tick,
+        .emergency_stopped = g_defense_system.emergency_stopped,
+        .emergency_reason_code = g_defense_system.emergency_reason_code,
+        .emergency_stop_count = g_defense_system.emergency_stop_count,
+        .total_error_logs = g_defense_system.error_log_count,
+        .retained_error_logs = retained_errors,
+        .severe_error_count = severe_error_count,
+        .total_diagnostics = g_defense_system.diagnostic_count,
+        .retained_diagnostics = retained_diagnostics,
+        .avg_health_score = avg_health,
+        .min_health_score = if (has_diagnostics) min_health else 0.0,
+        .max_health_score = if (has_diagnostics) max_health else 0.0,
+        .stuck_ratio = stuck_ratio,
+        .peak_max_speed = peak_max_speed,
+        .avg_speed = avg_speed,
+        .total_out_of_bounds = total_out_of_bounds,
+        .total_velocity_exceeded = total_velocity_exceeded,
+        .total_invalid_velocity = total_invalid_velocity,
+    };
 }
 
 /// Save snapshot for recovery
@@ -871,6 +1427,11 @@ pub fn restoreSnapshot(s1024: *scene1024.Scene1024) bool {
     }
 
     return true;
+}
+
+pub fn applyRollbackPlan(s1024: *scene1024.Scene1024, plan: RollbackPlan) bool {
+    if (!plan.valid or !plan.rollback_required or !plan.can_rollback) return false;
+    return restoreSnapshot(s1024);
 }
 
 /// Find first valid state by checking snapshots
@@ -1132,4 +1693,254 @@ test "computeSolverDivergencePlan escalates severe divergence" {
     try std.testing.expectApproxEqAbs(@as(f32, 6.0), plan.growth_ratio, 0.0001);
     try std.testing.expectApproxEqAbs(@as(f32, 2.0), plan.excess_error, 0.0001);
     try std.testing.expectEqual(@as(u32, 3), plan.reason_code);
+}
+
+test "computeIterationTimeoutPlan detects soft timeout" {
+    const plan = computeIterationTimeoutPlan(12.0, 10.0, 6, 8, 2.0, false);
+    try std.testing.expect(plan.valid);
+    try std.testing.expect(plan.timed_out);
+    try std.testing.expect(plan.aborted);
+    try std.testing.expect(!plan.emergency_stop_required);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), plan.overtime_ms, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.2), plan.utilization, 0.0001);
+    try std.testing.expectEqual(@as(u32, 1), plan.reason_code);
+}
+
+test "computeIterationTimeoutPlan escalates severe timeout" {
+    const plan = computeIterationTimeoutPlan(30.0, 10.0, 8, 8, 2.0, false);
+    try std.testing.expect(plan.valid);
+    try std.testing.expect(plan.timed_out);
+    try std.testing.expect(plan.aborted);
+    try std.testing.expect(plan.emergency_stop_required);
+    try std.testing.expectApproxEqAbs(@as(f32, 20.0), plan.overtime_ms, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 3.0), plan.utilization, 0.0001);
+    try std.testing.expectEqual(@as(u32, 3), plan.reason_code);
+}
+
+test "computeNoProgressPlan accumulates stagnant iterations" {
+    const plan = computeNoProgressPlan(5.0, 5.00001, 0.001, 1, 3, 2.0, false);
+    try std.testing.expect(plan.valid);
+    try std.testing.expect(plan.no_progress);
+    try std.testing.expect(!plan.stalled);
+    try std.testing.expect(!plan.emergency_stop_required);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.00001), plan.progress_delta, 0.0001);
+    try std.testing.expectEqual(@as(u32, 2), plan.stagnant_iterations);
+    try std.testing.expectEqual(@as(u32, 1), plan.reason_code);
+}
+
+test "computeNoProgressPlan escalates repeated stall" {
+    const plan = computeNoProgressPlan(5.0, 5.0, 0.001, 2, 3, 1.0, false);
+    try std.testing.expect(plan.valid);
+    try std.testing.expect(plan.no_progress);
+    try std.testing.expect(plan.stalled);
+    try std.testing.expect(plan.emergency_stop_required);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), plan.progress_delta, 0.0001);
+    try std.testing.expectEqual(@as(u32, 3), plan.stagnant_iterations);
+    try std.testing.expectEqual(@as(u32, 3), plan.reason_code);
+}
+
+test "computeEmergencyStopPlan requests stop for critical fault" {
+    const plan = computeEmergencyStopPlan(false, true, 1, 3, true, 30);
+    try std.testing.expect(plan.valid);
+    try std.testing.expect(plan.trigger_stop);
+    try std.testing.expect(plan.freeze_state);
+    try std.testing.expect(plan.snapshot_recommended);
+    try std.testing.expect(!plan.manual_trigger);
+    try std.testing.expect(plan.critical_fault);
+    try std.testing.expectEqual(@as(u32, 3), plan.reason_code);
+}
+
+test "computeEmergencyStopPlan requests stop for repeated faults" {
+    const plan = computeEmergencyStopPlan(false, false, 3, 3, false, 15);
+    try std.testing.expect(plan.valid);
+    try std.testing.expect(plan.trigger_stop);
+    try std.testing.expect(plan.freeze_state);
+    try std.testing.expect(!plan.snapshot_recommended);
+    try std.testing.expectEqual(@as(u32, 1), plan.reason_code);
+}
+
+test "computeRollbackPlan enables rollback when valid snapshot exists" {
+    const plan = computeRollbackPlan(true, true, true, true, 0, 3, 1, 3, 30, false);
+    try std.testing.expect(plan.valid);
+    try std.testing.expect(plan.rollback_required);
+    try std.testing.expect(plan.can_rollback);
+    try std.testing.expect(!plan.emergency_stop_required);
+    try std.testing.expectEqual(@as(u32, 1), plan.reason_code);
+}
+
+test "computeRollbackPlan escalates when rollback is exhausted" {
+    const plan = computeRollbackPlan(true, true, true, true, 3, 3, 3, 3, 30, false);
+    try std.testing.expect(plan.valid);
+    try std.testing.expect(plan.rollback_required);
+    try std.testing.expect(!plan.can_rollback);
+    try std.testing.expect(plan.emergency_stop_required);
+    try std.testing.expectEqual(@as(u32, 4), plan.reason_code);
+}
+
+test "error log records and retrieves in order" {
+    init(.{});
+    clearErrorLogs();
+
+    recordErrorLog(10, 1001, 1, 1.5, -2.0);
+    recordErrorLog(11, 1002, 2, 3.25, 4.5);
+
+    try std.testing.expectEqual(@as(u32, 2), getErrorLogCount());
+    const first = getErrorLogAt(0) orelse return error.TestUnexpectedResult;
+    const second = getErrorLogAt(1) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u32, 10), first.tick);
+    try std.testing.expectEqual(@as(u32, 1001), first.code);
+    try std.testing.expectEqual(@as(u8, 1), first.severity);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.5), first.value0, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, -2.0), first.value1, 0.0001);
+    try std.testing.expectEqual(@as(u32, 11), second.tick);
+    try std.testing.expectEqual(@as(u32, 1002), second.code);
+}
+
+test "error log ring buffer keeps newest entries" {
+    init(.{});
+    clearErrorLogs();
+
+    var i: u32 = 0;
+    while (i < ERROR_LOG_CAPACITY + 2) : (i += 1) {
+        recordErrorLog(i, 2000 + i, @intCast(i % 4), @floatFromInt(i), @floatFromInt(100 + i));
+    }
+
+    try std.testing.expectEqual(ERROR_LOG_CAPACITY, getErrorLogCount());
+    const oldest = getErrorLogAt(0) orelse return error.TestUnexpectedResult;
+    const newest = getErrorLogAt(ERROR_LOG_CAPACITY - 1) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u32, 2), oldest.tick);
+    try std.testing.expectEqual(@as(u32, 2002), oldest.code);
+    try std.testing.expectEqual(ERROR_LOG_CAPACITY + 1, newest.tick);
+    try std.testing.expectEqual(@as(u32, 2000) + (ERROR_LOG_CAPACITY + 1), newest.code);
+}
+
+test "collectDiagnostics captures scene health metrics" {
+    var s1024 = scene1024.Scene1024.init(std.testing.allocator);
+    defer s1024.deinit();
+
+    init(.{
+        .velocity_cap = 10.0,
+        .position_min = -5,
+        .position_max = 5,
+        .max_ticks_without_progress = 10,
+    });
+    updateProgress(0);
+    emergencyStopWithReason(null, 9);
+
+    var inst0 = std.mem.zeroes(scene32.Instance);
+    inst0.entity_id = 1;
+    inst0.state = .moving;
+    inst0.vel_x = 3;
+    inst0.vel_y = 4;
+    inst0.pos_x = 0;
+    inst0.pos_y = 0;
+    inst0.pos_z = 0;
+
+    var inst1 = std.mem.zeroes(scene32.Instance);
+    inst1.entity_id = 2;
+    inst1.state = .moving;
+    inst1.vel_x = 30;
+    inst1.pos_x = 100;
+    inst1.pos_y = 0;
+    inst1.pos_z = 0;
+
+    s1024.instance_count = 2;
+    s1024.instances[0] = inst0;
+    s1024.instances[1] = inst1;
+
+    const snapshot = collectDiagnostics(&s1024, 20);
+    try std.testing.expectEqual(@as(u32, 20), snapshot.tick);
+    try std.testing.expectEqual(@as(u32, 2), snapshot.instance_count);
+    try std.testing.expect(snapshot.emergency_stopped);
+    try std.testing.expect(snapshot.stuck);
+    try std.testing.expectEqual(@as(u32, 9), snapshot.emergency_reason_code);
+    try std.testing.expectEqual(@as(u32, 1), snapshot.emergency_stop_count);
+    try std.testing.expectEqual(@as(u32, 1), snapshot.out_of_bounds_count);
+    try std.testing.expectEqual(@as(u32, 1), snapshot.velocity_exceeded_count);
+    try std.testing.expectApproxEqAbs(@as(f32, 30.0), snapshot.max_speed, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 17.5), snapshot.avg_speed, 0.0001);
+    try std.testing.expect(snapshot.health_score < 1.0 and snapshot.health_score >= 0.0);
+}
+
+test "diagnostic history keeps newest snapshots" {
+    init(.{});
+    clearDiagnostics();
+
+    var i: u32 = 0;
+    while (i < DIAGNOSTIC_HISTORY_CAPACITY + 2) : (i += 1) {
+        _ = collectAndRecordDiagnostics(null, i);
+    }
+
+    try std.testing.expectEqual(DIAGNOSTIC_HISTORY_CAPACITY, getDiagnosticCount());
+    const oldest = getDiagnosticAt(0) orelse return error.TestUnexpectedResult;
+    const newest = getDiagnosticAt(DIAGNOSTIC_HISTORY_CAPACITY - 1) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u32, 2), oldest.tick);
+    try std.testing.expectEqual(DIAGNOSTIC_HISTORY_CAPACITY + 1, newest.tick);
+}
+
+test "computeDefenseStatsReport aggregates defense history" {
+    init(.{});
+    clearErrorLogs();
+    clearDiagnostics();
+    resetEmergencyStop();
+
+    emergencyStopWithReason(null, 7);
+    recordErrorLog(1, 100, 1, 0.0, 0.0);
+    recordErrorLog(2, 101, 2, 0.0, 0.0);
+    recordErrorLog(3, 102, 3, 0.0, 0.0);
+
+    recordDiagnostic(.{
+        .tick = 10,
+        .instance_count = 4,
+        .emergency_stopped = true,
+        .emergency_reason_code = 7,
+        .emergency_stop_count = 1,
+        .error_log_count = 3,
+        .snapshot_count = 2,
+        .stuck = false,
+        .max_speed = 3.0,
+        .avg_speed = 2.0,
+        .out_of_bounds_count = 1,
+        .velocity_exceeded_count = 2,
+        .invalid_velocity_count = 0,
+        .health_score = 0.8,
+    });
+    recordDiagnostic(.{
+        .tick = 11,
+        .instance_count = 4,
+        .emergency_stopped = true,
+        .emergency_reason_code = 7,
+        .emergency_stop_count = 1,
+        .error_log_count = 3,
+        .snapshot_count = 2,
+        .stuck = true,
+        .max_speed = 5.0,
+        .avg_speed = 4.0,
+        .out_of_bounds_count = 3,
+        .velocity_exceeded_count = 1,
+        .invalid_velocity_count = 2,
+        .health_score = 0.4,
+    });
+
+    const report = computeDefenseStatsReport();
+    try std.testing.expect(report.valid);
+    try std.testing.expect(report.has_diagnostics);
+    try std.testing.expect(report.emergency_stopped);
+    try std.testing.expectEqual(@as(u32, 11), report.report_tick);
+    try std.testing.expectEqual(@as(u32, 7), report.emergency_reason_code);
+    try std.testing.expectEqual(@as(u32, 1), report.emergency_stop_count);
+    try std.testing.expectEqual(@as(u32, 3), report.total_error_logs);
+    try std.testing.expectEqual(@as(u32, 3), report.retained_error_logs);
+    try std.testing.expectEqual(@as(u32, 2), report.severe_error_count);
+    try std.testing.expectEqual(@as(u32, 2), report.total_diagnostics);
+    try std.testing.expectEqual(@as(u32, 2), report.retained_diagnostics);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.6), report.avg_health_score, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.4), report.min_health_score, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.8), report.max_health_score, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.5), report.stuck_ratio, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 5.0), report.peak_max_speed, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 3.0), report.avg_speed, 0.0001);
+    try std.testing.expectEqual(@as(u32, 4), report.total_out_of_bounds);
+    try std.testing.expectEqual(@as(u32, 3), report.total_velocity_exceeded);
+    try std.testing.expectEqual(@as(u32, 2), report.total_invalid_velocity);
 }

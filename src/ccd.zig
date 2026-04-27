@@ -183,6 +183,21 @@ pub const CCDIslandParallelPlan = struct {
     reason_code: u32,
 };
 
+/// Determinism validation for CCD parallel scheduling across worker counts.
+pub const CCDThreadDeterminismValidation = struct {
+    valid: bool,
+    deterministic: bool,
+    checked_worker_configs: u32,
+    scheduled_islands: u32,
+    candidate_limit_per_island: u32,
+    iteration_limit: u32,
+    estimated_pair_work: u32,
+    min_batch_count: u32,
+    max_batch_count: u32,
+    schedule_signature: u64,
+    reason_code: u32,
+};
+
 /// Sleep/wake decision plan for CCD-sensitive bodies.
 pub const CCDSleepInteractionPlan = struct {
     valid: bool,
@@ -278,6 +293,22 @@ fn invalidCCDStabilityValidation() CCDStabilityValidation {
 
 fn invalidCCDIslandParallelPlan() CCDIslandParallelPlan {
     return .{ .valid = false, .parallel_enabled = false, .serial_fallback = true, .scheduled_islands = 0, .worker_count = 0, .batch_count = 0, .candidate_limit_per_island = 0, .iteration_limit = 0, .estimated_pair_work = 0, .islands_per_worker = 0.0, .reason_code = 0 };
+}
+
+fn invalidCCDThreadDeterminismValidation() CCDThreadDeterminismValidation {
+    return .{
+        .valid = false,
+        .deterministic = false,
+        .checked_worker_configs = 0,
+        .scheduled_islands = 0,
+        .candidate_limit_per_island = 0,
+        .iteration_limit = 0,
+        .estimated_pair_work = 0,
+        .min_batch_count = 0,
+        .max_batch_count = 0,
+        .schedule_signature = 0,
+        .reason_code = 0,
+    };
 }
 
 fn invalidCCDSleepInteractionPlan() CCDSleepInteractionPlan {
@@ -1485,6 +1516,103 @@ pub fn computeCCDIslandParallelPlan(
     };
 }
 
+/// Verify that aggregate CCD island work stays deterministic across worker counts.
+pub fn validateCCDThreadDeterminism(
+    island_count: u32,
+    ccd_island_count: u32,
+    candidate_count_per_island: u32,
+    max_candidates_per_island: u32,
+    requested_iterations: u32,
+    hard_iteration_limit: u32,
+    max_workers_to_check: u32,
+    max_parallel_islands: u32,
+    cross_island_pair_count: u32,
+) CCDThreadDeterminismValidation {
+    if (max_workers_to_check == 0) {
+        var invalid = invalidCCDThreadDeterminismValidation();
+        invalid.reason_code = 1;
+        return invalid;
+    }
+
+    var baseline: ?CCDIslandParallelPlan = null;
+    var signature: u64 = 0xA0761D6478BD642F;
+    var min_batch_count: u32 = std.math.maxInt(u32);
+    var max_batch_count: u32 = 0;
+    var worker_count: u32 = 1;
+
+    while (worker_count <= max_workers_to_check) : (worker_count += 1) {
+        const plan = computeCCDIslandParallelPlan(
+            island_count,
+            ccd_island_count,
+            candidate_count_per_island,
+            max_candidates_per_island,
+            requested_iterations,
+            hard_iteration_limit,
+            worker_count,
+            max_parallel_islands,
+            cross_island_pair_count,
+        );
+        if (!plan.valid) {
+            var invalid = invalidCCDThreadDeterminismValidation();
+            invalid.checked_worker_configs = worker_count - 1;
+            invalid.reason_code = 2;
+            return invalid;
+        }
+
+        min_batch_count = @min(min_batch_count, plan.batch_count);
+        max_batch_count = @max(max_batch_count, plan.batch_count);
+        signature = (signature ^ @as(u64, worker_count)) *% 0x9E3779B97F4A7C15;
+        signature = (signature ^ @as(u64, plan.batch_count)) *% 0xD1342543DE82EF95;
+
+        if (baseline == null) {
+            baseline = plan;
+            continue;
+        }
+
+        const base = baseline.?;
+        const aggregate_work_changed =
+            plan.scheduled_islands != base.scheduled_islands or
+            plan.candidate_limit_per_island != base.candidate_limit_per_island or
+            plan.iteration_limit != base.iteration_limit or
+            plan.estimated_pair_work != base.estimated_pair_work;
+        if (aggregate_work_changed) {
+            return .{
+                .valid = true,
+                .deterministic = false,
+                .checked_worker_configs = worker_count,
+                .scheduled_islands = base.scheduled_islands,
+                .candidate_limit_per_island = base.candidate_limit_per_island,
+                .iteration_limit = base.iteration_limit,
+                .estimated_pair_work = base.estimated_pair_work,
+                .min_batch_count = min_batch_count,
+                .max_batch_count = max_batch_count,
+                .schedule_signature = signature,
+                .reason_code = 3,
+            };
+        }
+    }
+
+    const base = baseline orelse {
+        var invalid = invalidCCDThreadDeterminismValidation();
+        invalid.reason_code = 4;
+        return invalid;
+    };
+
+    return .{
+        .valid = true,
+        .deterministic = true,
+        .checked_worker_configs = max_workers_to_check,
+        .scheduled_islands = base.scheduled_islands,
+        .candidate_limit_per_island = base.candidate_limit_per_island,
+        .iteration_limit = base.iteration_limit,
+        .estimated_pair_work = base.estimated_pair_work,
+        .min_batch_count = if (min_batch_count == std.math.maxInt(u32)) 0 else min_batch_count,
+        .max_batch_count = max_batch_count,
+        .schedule_signature = signature,
+        .reason_code = 0,
+    };
+}
+
 /// Decide how CCD activity should interact with a body's sleep state.
 pub fn computeCCDSleepInteraction(
     is_sleeping: bool,
@@ -2418,6 +2546,28 @@ test "computeCCDIslandParallelPlan falls back on cross-island pairs" {
     try std.testing.expect(!plan.parallel_enabled);
     try std.testing.expect(plan.serial_fallback);
     try std.testing.expectEqual(@as(u32, 2), plan.reason_code);
+}
+
+test "validateCCDThreadDeterminism confirms stable aggregate work across workers" {
+    const validation = validateCCDThreadDeterminism(8, 6, 40, 32, 128, 64, 6, 6, 0);
+    try std.testing.expect(validation.valid);
+    try std.testing.expect(validation.deterministic);
+    try std.testing.expectEqual(@as(u32, 6), validation.checked_worker_configs);
+    try std.testing.expectEqual(@as(u32, 6), validation.scheduled_islands);
+    try std.testing.expectEqual(@as(u32, 32), validation.candidate_limit_per_island);
+    try std.testing.expectEqual(@as(u32, 64), validation.iteration_limit);
+    try std.testing.expectEqual(@as(u32, 12288), validation.estimated_pair_work);
+    try std.testing.expectEqual(@as(u32, 1), validation.min_batch_count);
+    try std.testing.expectEqual(@as(u32, 6), validation.max_batch_count);
+    try std.testing.expect(validation.schedule_signature != 0);
+    try std.testing.expectEqual(@as(u32, 0), validation.reason_code);
+}
+
+test "validateCCDThreadDeterminism rejects empty worker sweep" {
+    const validation = validateCCDThreadDeterminism(8, 6, 40, 32, 128, 64, 0, 6, 0);
+    try std.testing.expect(!validation.valid);
+    try std.testing.expect(!validation.deterministic);
+    try std.testing.expectEqual(@as(u32, 1), validation.reason_code);
 }
 
 test "computeCCDSleepInteraction wakes sleeping body for blocking CCD" {

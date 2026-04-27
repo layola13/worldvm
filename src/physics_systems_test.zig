@@ -641,7 +641,7 @@ test "Crash defense emergency stop" {
     };
     crash_defense.init(config);
 
-    crash_defense.emergencyStop(undefined);
+    crash_defense.emergencyStop(null);
     try testing.expect(crash_defense.isEmergencyStopped() == true);
 
     crash_defense.resetEmergencyStop();
@@ -751,12 +751,19 @@ test "Tire init and create" {
 test "Tire slip ratio" {
     tire.init();
     const config = tire.TireConfig{
-        .radius = 0.3, .width = 0.2, .mass = 10,
-        .lateral_stiffness = 100, .longitudinal_stiffness = 100,
-        .camber_thrust_coefficient = 0.5, .peak_slip_ratio = 0.15,
-        .peak_slip_angle = 0.15, .friction_coefficient = 1.0,
-        .rolling_resistance_coefficient = 0.01, .heat_transfer_coefficient = 0.1,
-        .optimal_temperature = 90, .max_temperature = 200,
+        .radius = 0.3,
+        .width = 0.2,
+        .mass = 10,
+        .lateral_stiffness = 100,
+        .longitudinal_stiffness = 100,
+        .camber_thrust_coefficient = 0.5,
+        .peak_slip_ratio = 0.15,
+        .peak_slip_angle = 0.15,
+        .friction_coefficient = 1.0,
+        .rolling_resistance_coefficient = 0.01,
+        .heat_transfer_coefficient = 0.1,
+        .optimal_temperature = 90,
+        .max_temperature = 200,
     };
     const t = tire.createTire(0, 0, 0, config);
     t.?.angular_velocity = 12;
@@ -776,12 +783,19 @@ test "Tire friction circle" {
 test "Tire hydroplaning check" {
     tire.init();
     const config = tire.TireConfig{
-        .radius = 0.3, .width = 0.2, .mass = 10,
-        .lateral_stiffness = 100, .longitudinal_stiffness = 100,
-        .camber_thrust_coefficient = 0.5, .peak_slip_ratio = 0.15,
-        .peak_slip_angle = 0.15, .friction_coefficient = 1.0,
-        .rolling_resistance_coefficient = 0.01, .heat_transfer_coefficient = 0.1,
-        .optimal_temperature = 90, .max_temperature = 200,
+        .radius = 0.3,
+        .width = 0.2,
+        .mass = 10,
+        .lateral_stiffness = 100,
+        .longitudinal_stiffness = 100,
+        .camber_thrust_coefficient = 0.5,
+        .peak_slip_ratio = 0.15,
+        .peak_slip_angle = 0.15,
+        .friction_coefficient = 1.0,
+        .rolling_resistance_coefficient = 0.01,
+        .heat_transfer_coefficient = 0.1,
+        .optimal_temperature = 90,
+        .max_temperature = 200,
     };
     const t = tire.createTire(0, 0, 0, config);
     const hydroplaning = tire.checkHydroplaning(t.?, 5.0, 50.0);
@@ -812,9 +826,13 @@ test "Suspension init and create" {
 test "Suspension spring force" {
     suspension.init();
     const config = suspension.SuspensionConfig{
-        .spring_rate = 50000, .damping_ratio = 0.7,
-        .bump_damping = 3000, .rebound_damping = 4000,
-        .preloaded = 500, .max_length = 0.4, .min_length = 0.2,
+        .spring_rate = 50000,
+        .damping_ratio = 0.7,
+        .bump_damping = 3000,
+        .rebound_damping = 4000,
+        .preloaded = 500,
+        .max_length = 0.4,
+        .min_length = 0.2,
         .anti_roll_rate = 10000,
     };
     const s = suspension.createSuspension(config);
@@ -1081,12 +1099,22 @@ test "Rewind init" {
 test "Rewind record state" {
     rewind.init();
     const state = rewind.RewindState{
-        .tick = 0, .pos_x = 0, .pos_y = 0, .pos_z = 0,
-        .vel_x = 0, .vel_y = 0, .vel_z = 0,
-        .yaw = 0, .pitch = 0, .roll = 0,
-        .input_forwards = false, .input_backwards = false,
-        .input_left = false, .input_right = false,
-        .input_jump = false, .input_brake = false,
+        .tick = 0,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .yaw = 0,
+        .pitch = 0,
+        .roll = 0,
+        .input_forwards = false,
+        .input_backwards = false,
+        .input_left = false,
+        .input_right = false,
+        .input_jump = false,
+        .input_brake = false,
     };
     rewind.recordState(state);
     const usage = rewind.getRewindBufferUsage();
@@ -1096,12 +1124,22 @@ test "Rewind record state" {
 test "Rewind state hash" {
     rewind.init();
     const state = rewind.RewindState{
-        .tick = 100, .pos_x = 10, .pos_y = 5, .pos_z = 20,
-        .vel_x = 1, .vel_y = 0, .vel_z = 2,
-        .yaw = 0, .pitch = 0, .roll = 0,
-        .input_forwards = true, .input_backwards = false,
-        .input_left = false, .input_right = false,
-        .input_jump = false, .input_brake = false,
+        .tick = 100,
+        .pos_x = 10,
+        .pos_y = 5,
+        .pos_z = 20,
+        .vel_x = 1,
+        .vel_y = 0,
+        .vel_z = 2,
+        .yaw = 0,
+        .pitch = 0,
+        .roll = 0,
+        .input_forwards = true,
+        .input_backwards = false,
+        .input_left = false,
+        .input_right = false,
+        .input_jump = false,
+        .input_brake = false,
     };
     const hash = rewind.calculateStateHash(&state);
     try testing.expect(hash != 0);
@@ -1109,11 +1147,19 @@ test "Rewind state hash" {
 
 test "Prediction TTC head-on" {
     const result = prediction.computeTTC(.{
-        .pos_x = 0, .pos_y = 0, .pos_z = 0,
-        .vel_x = 12, .vel_y = 0, .vel_z = 0,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .vel_x = 12,
+        .vel_y = 0,
+        .vel_z = 0,
     }, .{
-        .pos_x = 60, .pos_y = 0, .pos_z = 0,
-        .vel_x = -8, .vel_y = 0, .vel_z = 0,
+        .pos_x = 60,
+        .pos_y = 0,
+        .pos_z = 0,
+        .vel_x = -8,
+        .vel_y = 0,
+        .vel_z = 0,
     }, 1.0, 10.0);
     try testing.expect(result.valid);
     try testing.expect(result.time > 2.8 and result.time < 3.2);

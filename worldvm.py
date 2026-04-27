@@ -71,6 +71,9 @@ class WorldVM:
         self.lib.get_trace_count.restype = ctypes.c_uint32
         self.lib.get_trace_entry.argtypes = [ctypes.c_uint32]
         self.lib.get_trace_entry.restype = ctypes.POINTER(TraceEntry)
+        self.lib.trace_get_visualization_entry_stride.restype = ctypes.c_uint32
+        self.lib.trace_export_visualization.argtypes = [ctypes.c_int, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint16, ctypes.c_int, ctypes.c_uint16, ctypes.POINTER(ctypes.c_float), ctypes.c_uint32]
+        self.lib.trace_export_visualization.restype = ctypes.c_uint32
         self.lib.get_last_step_changed.restype = ctypes.c_int
         self.lib.get_last_step_pair_count.restype = ctypes.c_uint32
         self.lib.get_last_step_event_count.restype = ctypes.c_uint32
@@ -88,6 +91,12 @@ class WorldVM:
         self.lib.apply_torque.restype = ctypes.c_int
         self.lib.apply_explosion.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float]
         self.lib.apply_explosion.restype = None
+        self.lib.apply_point_explosion_field.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+        self.lib.apply_point_explosion_field.restype = ctypes.c_uint32
+        self.lib.apply_directional_force_field.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+        self.lib.apply_directional_force_field.restype = ctypes.c_uint32
+        self.lib.apply_vortex_force_field.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+        self.lib.apply_vortex_force_field.restype = ctypes.c_uint32
         self.lib.apply_buoyancy.argtypes = [ctypes.c_uint8, ctypes.c_float]
         self.lib.apply_buoyancy.restype = ctypes.c_int
         self.lib.get_instance_velocity.argtypes = [ctypes.c_uint8, ctypes.POINTER(ctypes.c_float)]
@@ -223,6 +232,8 @@ class WorldVM:
         self.lib.compute_ccd_stability_validation.restype = ctypes.c_int
         self.lib.compute_ccd_island_parallel_plan.argtypes = [ctypes.c_uint32]*9 + [ctypes.POINTER(ctypes.c_float)]
         self.lib.compute_ccd_island_parallel_plan.restype = ctypes.c_int
+        self.lib.compute_ccd_thread_determinism_validation.argtypes = [ctypes.c_uint32]*9 + [ctypes.POINTER(ctypes.c_float)]
+        self.lib.compute_ccd_thread_determinism_validation.restype = ctypes.c_int
         self.lib.compute_ccd_sleep_interaction.argtypes = [ctypes.c_int, ctypes.c_uint32, ctypes.c_uint32] + [ctypes.c_float]*7 + [ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_float)]
         self.lib.compute_ccd_sleep_interaction.restype = ctypes.c_int
         self.lib.compute_ccd_substep_plan.argtypes = [ctypes.c_float]*8 + [ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(ctypes.c_float)]
@@ -327,7 +338,31 @@ class WorldVM:
         self.lib.crash_defense_compute_torque_limit.restype = ctypes.c_int
         self.lib.crash_defense_compute_solver_divergence.argtypes = [ctypes.c_float]*5 + [ctypes.c_int, ctypes.POINTER(ctypes.c_float)]
         self.lib.crash_defense_compute_solver_divergence.restype = ctypes.c_int
+        self.lib.crash_defense_compute_iteration_timeout.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_float, ctypes.c_int, ctypes.POINTER(ctypes.c_float)]
+        self.lib.crash_defense_compute_iteration_timeout.restype = ctypes.c_int
+        self.lib.crash_defense_compute_no_progress.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_float, ctypes.c_int, ctypes.POINTER(ctypes.c_float)]
+        self.lib.crash_defense_compute_no_progress.restype = ctypes.c_int
+        self.lib.crash_defense_compute_emergency_stop.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32, ctypes.POINTER(ctypes.c_float)]
+        self.lib.crash_defense_compute_emergency_stop.restype = ctypes.c_int
+        self.lib.crash_defense_compute_rollback.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_int, ctypes.POINTER(ctypes.c_float)]
+        self.lib.crash_defense_compute_rollback.restype = ctypes.c_int
         self.lib.crash_defense_is_emergency_stopped.restype = ctypes.c_int
+        self.lib.crash_defense_get_emergency_reason.restype = ctypes.c_uint32
+        self.lib.crash_defense_get_emergency_stop_count.restype = ctypes.c_uint32
+        self.lib.crash_defense_record_error_log.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint8, ctypes.c_float, ctypes.c_float]
+        self.lib.crash_defense_record_error_log.restype = None
+        self.lib.crash_defense_clear_error_logs.restype = None
+        self.lib.crash_defense_get_error_log_count.restype = ctypes.c_uint32
+        self.lib.crash_defense_get_error_log_at.argtypes = [ctypes.c_uint32, ctypes.POINTER(ctypes.c_float)]
+        self.lib.crash_defense_get_error_log_at.restype = ctypes.c_int
+        self.lib.crash_defense_collect_diagnostics.argtypes = [ctypes.c_uint32, ctypes.POINTER(ctypes.c_float)]
+        self.lib.crash_defense_collect_diagnostics.restype = ctypes.c_int
+        self.lib.crash_defense_clear_diagnostics.restype = None
+        self.lib.crash_defense_get_diagnostic_count.restype = ctypes.c_uint32
+        self.lib.crash_defense_get_diagnostic_at.argtypes = [ctypes.c_uint32, ctypes.POINTER(ctypes.c_float)]
+        self.lib.crash_defense_get_diagnostic_at.restype = ctypes.c_int
+        self.lib.crash_defense_get_stats_report.argtypes = [ctypes.POINTER(ctypes.c_float)]
+        self.lib.crash_defense_get_stats_report.restype = ctypes.c_int
         self.lib.crash_defense_is_stuck.argtypes = [ctypes.c_uint32]
         self.lib.crash_defense_is_stuck.restype = ctypes.c_int
         self.lib.crash_defense_emergency_stop.restype = None
@@ -455,6 +490,44 @@ class WorldVM:
         self.lib.rewind_calculate_state_hash.restype = ctypes.c_uint64
         self.lib.rewind_record_state.argtypes = [ctypes.c_uint32, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float]
         self.lib.rewind_record_state.restype = None
+        self.lib.rewind_start_world_snapshot_playback.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_int, ctypes.c_int]
+        self.lib.rewind_start_world_snapshot_playback.restype = ctypes.c_int
+        self.lib.rewind_stop_world_snapshot_playback.restype = None
+        self.lib.rewind_get_world_snapshot_playback_state.argtypes = [ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32]
+        self.lib.rewind_get_world_snapshot_playback_state.restype = ctypes.c_int
+        self.lib.rewind_next_world_snapshot_playback_tick.argtypes = [ctypes.POINTER(ctypes.c_uint32)]
+        self.lib.rewind_next_world_snapshot_playback_tick.restype = ctypes.c_int
+        self.lib.rewind_get_active_world_snapshot_branch_id.restype = ctypes.c_uint32
+        self.lib.rewind_create_world_snapshot_branch.argtypes = [ctypes.c_uint32]
+        self.lib.rewind_create_world_snapshot_branch.restype = ctypes.c_int
+        self.lib.rewind_switch_world_snapshot_branch.argtypes = [ctypes.c_uint32]
+        self.lib.rewind_switch_world_snapshot_branch.restype = ctypes.c_int
+        self.lib.rewind_delete_world_snapshot_branch.argtypes = [ctypes.c_uint32]
+        self.lib.rewind_delete_world_snapshot_branch.restype = ctypes.c_int
+        self.lib.rewind_get_world_snapshot_branch_info.argtypes = [ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32]
+        self.lib.rewind_get_world_snapshot_branch_info.restype = ctypes.c_int
+        self.lib.rewind_list_world_snapshot_branches.argtypes = [ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32]
+        self.lib.rewind_list_world_snapshot_branches.restype = ctypes.c_uint32
+        self.lib.rewind_merge_world_snapshot_branches.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32]
+        self.lib.rewind_merge_world_snapshot_branches.restype = ctypes.c_int
+        self.lib.rewind_set_world_snapshot_budget.argtypes = [ctypes.c_uint32]
+        self.lib.rewind_set_world_snapshot_budget.restype = ctypes.c_int
+        self.lib.rewind_get_world_snapshot_budget_info.argtypes = [ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32]
+        self.lib.rewind_get_world_snapshot_budget_info.restype = ctypes.c_int
+        self.lib.rewind_collect_world_snapshot_garbage.argtypes = [ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32]
+        self.lib.rewind_collect_world_snapshot_garbage.restype = ctypes.c_int
+        self.lib.rewind_save_world_snapshots.argtypes = [ctypes.c_char_p, ctypes.c_uint32]
+        self.lib.rewind_save_world_snapshots.restype = ctypes.c_int
+        self.lib.rewind_load_world_snapshots.argtypes = [ctypes.c_char_p, ctypes.c_uint32]
+        self.lib.rewind_load_world_snapshots.restype = ctypes.c_int
+        self.lib.rewind_export_world_snapshot_network_packet.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32]
+        self.lib.rewind_export_world_snapshot_network_packet.restype = ctypes.c_int
+        self.lib.rewind_import_world_snapshot_network_packet.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32]
+        self.lib.rewind_import_world_snapshot_network_packet.restype = ctypes.c_int
+        self.lib.rewind_export_world_snapshot_network_packet_encrypted.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint64, ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32]
+        self.lib.rewind_export_world_snapshot_network_packet_encrypted.restype = ctypes.c_int
+        self.lib.rewind_import_world_snapshot_network_packet_encrypted.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32, ctypes.c_uint64, ctypes.c_uint64]
+        self.lib.rewind_import_world_snapshot_network_packet_encrypted.restype = ctypes.c_int
 
         # AI Traffic
         self.lib.ai_traffic_init.restype = None
@@ -503,6 +576,43 @@ class WorldVM:
                  "type": self.lib.get_trace_entry(i).contents.event_type.decode().rstrip('\0'),
                  "id": self.lib.get_trace_entry(i).contents.instance_id}
                 for i in range(self.lib.get_trace_count())]
+    def trace_visualization(self, include_pending=True, min_tick=0, max_tick=0xFFFFFFFF, type_mask=0, subject_id=None, max_entries=256):
+        max_entries = max(0, int(max_entries))
+        if max_entries == 0:
+            return []
+        stride = int(self.lib.trace_get_visualization_entry_stride())
+        out = (ctypes.c_float * (stride * max_entries))()
+        subject_filter_enabled = 1 if subject_id is not None else 0
+        subject_value = 0 if subject_id is None else int(subject_id)
+        count = int(self.lib.trace_export_visualization(
+            int(bool(include_pending)),
+            int(min_tick),
+            int(max_tick),
+            int(type_mask),
+            subject_filter_enabled,
+            subject_value,
+            out,
+            max_entries,
+        ))
+        type_names = {
+            1: "collision",
+            2: "sound",
+            3: "particle",
+            4: "deformation",
+            5: "breakage",
+            6: "joint_breakage",
+        }
+        return [{
+            "tick": int(out[i * stride + 0]),
+            "event_type": type_names.get(int(out[i * stride + 1]), "unknown"),
+            "event_type_id": int(out[i * stride + 1]),
+            "subject_id": int(out[i * stride + 2]),
+            "intensity": float(out[i * stride + 3]),
+            "value_a": float(out[i * stride + 4]),
+            "value_b": float(out[i * stride + 5]),
+            "value_c": float(out[i * stride + 6]),
+            "lane": int(out[i * stride + 7]),
+        } for i in range(count)]
     def apply_impulse(self, inst_idx, ix, iy, iz):
         return self.lib.apply_impulse(inst_idx, ix, iy, iz)
     def get_velocity(self, inst_idx):
@@ -517,6 +627,159 @@ class WorldVM:
         pos = (ctypes.c_int32 * 3)()
         self.lib.get_instance_pos(inst_idx, pos)
         return list(pos)
+    def rewind_start_playback(self, start_tick: int, end_tick: int, loop: bool = False, reverse: bool = False) -> bool:
+        return bool(self.lib.rewind_start_world_snapshot_playback(int(start_tick), int(end_tick), int(bool(loop)), int(bool(reverse))))
+    def rewind_stop_playback(self):
+        self.lib.rewind_stop_world_snapshot_playback()
+    def rewind_get_playback_state(self):
+        out = (ctypes.c_uint32 * 7)()
+        if self.lib.rewind_get_world_snapshot_playback_state(out, 7) != 0:
+            return None
+        return {
+            "active": bool(out[0]),
+            "loop": bool(out[1]),
+            "reverse": bool(out[2]),
+            "start_tick": int(out[3]),
+            "end_tick": int(out[4]),
+            "last_tick": int(out[5]),
+            "has_emitted": bool(out[6]),
+        }
+    def rewind_next_playback_tick(self):
+        tick = ctypes.c_uint32(0)
+        if self.lib.rewind_next_world_snapshot_playback_tick(ctypes.byref(tick)) == 0:
+            return None
+        return int(tick.value)
+    def rewind_get_active_branch_id(self) -> int:
+        return int(self.lib.rewind_get_active_world_snapshot_branch_id())
+    def rewind_create_branch(self, fork_tick: int):
+        branch_id = int(self.lib.rewind_create_world_snapshot_branch(int(fork_tick)))
+        return None if branch_id < 0 else branch_id
+    def rewind_switch_branch(self, branch_id: int) -> bool:
+        return bool(self.lib.rewind_switch_world_snapshot_branch(int(branch_id)))
+    def rewind_delete_branch(self, branch_id: int) -> bool:
+        return bool(self.lib.rewind_delete_world_snapshot_branch(int(branch_id)))
+    def rewind_get_branch_info(self, branch_id: int):
+        out = (ctypes.c_uint32 * 6)()
+        if self.lib.rewind_get_world_snapshot_branch_info(int(branch_id), out, 6) != 0:
+            return None
+        return {
+            "id": int(out[0]),
+            "parent_id": int(out[1]),
+            "fork_tick": int(out[2]),
+            "head_tick": int(out[3]),
+            "snapshot_count": int(out[4]),
+            "active": bool(out[5]),
+        }
+    def rewind_list_branches(self, max_branches: int = 8):
+        max_branches = max(1, int(max_branches))
+        out = (ctypes.c_uint32 * (max_branches * 6))()
+        count = int(self.lib.rewind_list_world_snapshot_branches(out, max_branches * 6))
+        branches = []
+        for i in range(count):
+            base = i * 6
+            branches.append({
+                "id": int(out[base + 0]),
+                "parent_id": int(out[base + 1]),
+                "fork_tick": int(out[base + 2]),
+                "head_tick": int(out[base + 3]),
+                "snapshot_count": int(out[base + 4]),
+                "active": bool(out[base + 5]),
+            })
+        return branches
+    def rewind_merge_branches(self, target_branch_id: int, source_branch_id: int, strategy="keep_target"):
+        if isinstance(strategy, str):
+            strategy_map = {
+                "keep_target": 0,
+                "keep_source": 1,
+                "keep_latest": 2,
+            }
+            if strategy not in strategy_map:
+                raise ValueError(f"Unknown merge strategy: {strategy}")
+            strategy_id = strategy_map[strategy]
+        else:
+            strategy_id = int(strategy)
+        out = (ctypes.c_uint32 * 7)()
+        if self.lib.rewind_merge_world_snapshot_branches(int(target_branch_id), int(source_branch_id), strategy_id, out, 7) != 0:
+            return None
+        return {
+            "target_branch_id": int(out[0]),
+            "source_branch_id": int(out[1]),
+            "strategy": int(out[2]),
+            "moved_count": int(out[3]),
+            "conflict_count": int(out[4]),
+            "resolved_by_source": int(out[5]),
+            "resolved_by_target": int(out[6]),
+        }
+    def rewind_set_snapshot_budget(self, max_snapshots: int) -> bool:
+        return bool(self.lib.rewind_set_world_snapshot_budget(int(max_snapshots)))
+    def rewind_get_snapshot_budget_info(self):
+        out = (ctypes.c_uint32 * 4)()
+        if self.lib.rewind_get_world_snapshot_budget_info(out, 4) != 0:
+            return None
+        return {
+            "budget": int(out[0]),
+            "count": int(out[1]),
+            "capacity": int(out[2]),
+            "evicted_count": int(out[3]),
+        }
+    def rewind_collect_snapshot_garbage(self):
+        out = (ctypes.c_uint32 * 4)()
+        if self.lib.rewind_collect_world_snapshot_garbage(out, 4) != 0:
+            return None
+        return {
+            "scanned_count": int(out[0]),
+            "removed_count": int(out[1]),
+            "removed_orphan_count": int(out[2]),
+            "removed_duplicate_count": int(out[3]),
+        }
+    def rewind_save_snapshots(self, path: str) -> bool:
+        path_bytes = os.fsencode(path)
+        return bool(self.lib.rewind_save_world_snapshots(path_bytes, len(path_bytes)))
+    def rewind_load_snapshots(self, path: str) -> bool:
+        path_bytes = os.fsencode(path)
+        return bool(self.lib.rewind_load_world_snapshots(path_bytes, len(path_bytes)))
+    def rewind_export_snapshot_packet(self, tick: int, branch_id: int = None, max_bytes: int = 65536):
+        if branch_id is None:
+            branch_id = self.rewind_get_active_branch_id()
+        max_bytes = max(1, int(max_bytes))
+        out = (ctypes.c_uint8 * max_bytes)()
+        written = int(self.lib.rewind_export_world_snapshot_network_packet(int(tick), int(branch_id), out, max_bytes))
+        if written < 0:
+            return None
+        return bytes(out[:written])
+    def rewind_import_snapshot_packet(self, packet: bytes) -> bool:
+        packet_bytes = bytes(packet)
+        if len(packet_bytes) == 0:
+            return False
+        packet_buf = (ctypes.c_uint8 * len(packet_bytes)).from_buffer_copy(packet_bytes)
+        return self.lib.rewind_import_world_snapshot_network_packet(packet_buf, len(packet_bytes)) == 0
+    def rewind_export_snapshot_packet_encrypted(self, tick: int, encryption_key: int, nonce: int, branch_id: int = None, max_bytes: int = 65536):
+        if branch_id is None:
+            branch_id = self.rewind_get_active_branch_id()
+        max_bytes = max(1, int(max_bytes))
+        out = (ctypes.c_uint8 * max_bytes)()
+        written = int(self.lib.rewind_export_world_snapshot_network_packet_encrypted(
+            int(tick),
+            int(branch_id),
+            int(encryption_key) & 0xFFFFFFFFFFFFFFFF,
+            int(nonce) & 0xFFFFFFFFFFFFFFFF,
+            out,
+            max_bytes,
+        ))
+        if written < 0:
+            return None
+        return bytes(out[:written])
+    def rewind_import_snapshot_packet_encrypted(self, packet: bytes, encryption_key: int, nonce: int) -> bool:
+        packet_bytes = bytes(packet)
+        if len(packet_bytes) == 0:
+            return False
+        packet_buf = (ctypes.c_uint8 * len(packet_bytes)).from_buffer_copy(packet_bytes)
+        return self.lib.rewind_import_world_snapshot_network_packet_encrypted(
+            packet_buf,
+            len(packet_bytes),
+            int(encryption_key) & 0xFFFFFFFFFFFFFFFF,
+            int(nonce) & 0xFFFFFFFFFFFFFFFF,
+        ) == 0
     def reset(self): self.lib.reset_context()
     def close(self): self.lib.shutdown_kernel()
 

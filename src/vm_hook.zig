@@ -42,6 +42,8 @@ pub const TraceSummary = extern struct {
     entry_count: u32,
 };
 
+const TRACE_VISUALIZATION_ENTRY_STRIDE: usize = 8;
+
 const KernelState = struct {
     s1024: scene1024.Scene1024,
     entities: [64]entity16.Entity16,
@@ -168,6 +170,57 @@ pub export fn get_trace_entry(idx: u32) ?*TraceEntry {
     return &s.trace_storage[idx];
 }
 
+pub export fn trace_get_visualization_entry_stride() u32 {
+    return TRACE_VISUALIZATION_ENTRY_STRIDE;
+}
+
+pub export fn trace_export_visualization(
+    include_pending: c_int,
+    min_tick: u32,
+    max_tick: u32,
+    type_mask: u16,
+    subject_filter_enabled: c_int,
+    subject_id: u16,
+    result_out: [*]f32,
+    max_entries: u32,
+) u32 {
+    const s = g_state orelse return 0;
+    const export_limit = @min(@as(usize, max_entries), tick_engine.MAX_TRACE_EVENTS_PER_TICK);
+    if (export_limit == 0) return 0;
+
+    var query_cfg: tick_engine.TraceQuery = .{
+        .include_pending = include_pending != 0,
+        .type_mask = if (type_mask == 0) std.math.maxInt(u16) else type_mask,
+        .limit = @intCast(export_limit),
+    };
+    if (max_tick >= min_tick) {
+        query_cfg.min_tick = min_tick;
+        query_cfg.max_tick = max_tick;
+    } else {
+        query_cfg.min_tick = min_tick;
+    }
+    if (subject_filter_enabled != 0) {
+        query_cfg.subject_id = subject_id;
+    }
+
+    var entries: [tick_engine.MAX_TRACE_EVENTS_PER_TICK]tick_engine.TraceVisualizationEntry = undefined;
+    const count = tick_engine.exportTraceVisualization(&s.engine, query_cfg, entries[0..export_limit]);
+    var idx: usize = 0;
+    while (idx < count) : (idx += 1) {
+        const base = idx * TRACE_VISUALIZATION_ENTRY_STRIDE;
+        const entry = entries[idx];
+        result_out[base + 0] = @as(f32, @floatFromInt(entry.tick_id));
+        result_out[base + 1] = @as(f32, @floatFromInt(@intFromEnum(entry.event_type)));
+        result_out[base + 2] = @as(f32, @floatFromInt(entry.subject_id));
+        result_out[base + 3] = entry.intensity;
+        result_out[base + 4] = entry.value_a;
+        result_out[base + 5] = entry.value_b;
+        result_out[base + 6] = entry.value_c;
+        result_out[base + 7] = @as(f32, @floatFromInt(@intFromEnum(entry.lane)));
+    }
+    return @intCast(count);
+}
+
 pub export fn get_last_step_pair_count() u32 {
     const s = g_state orelse return 0;
     return @intCast(@min(s.engine.last_step_result.pair_count, std.math.maxInt(u32)));
@@ -281,6 +334,27 @@ pub export fn apply_explosion(pos_x: f32, pos_y: f32, pos_z: f32, radius: f32, f
     if (g_state) |s| {
         tick_engine.applyExplosion(&s.engine, pos_x, pos_y, pos_z, radius, force);
     }
+}
+
+pub export fn apply_point_explosion_field(pos_x: f32, pos_y: f32, pos_z: f32, radius: f32, strength: f32) u32 {
+    if (g_state) |s| {
+        return tick_engine.applyPointExplosionField(&s.engine, pos_x, pos_y, pos_z, radius, strength);
+    }
+    return 0;
+}
+
+pub export fn apply_directional_force_field(center_x: f32, center_y: f32, center_z: f32, radius: f32, dir_x: f32, dir_y: f32, dir_z: f32, strength: f32) u32 {
+    if (g_state) |s| {
+        return tick_engine.applyDirectionalForceField(&s.engine, center_x, center_y, center_z, radius, dir_x, dir_y, dir_z, strength);
+    }
+    return 0;
+}
+
+pub export fn apply_vortex_force_field(center_x: f32, center_y: f32, center_z: f32, radius: f32, strength: f32) u32 {
+    if (g_state) |s| {
+        return tick_engine.applyVortexForceField(&s.engine, center_x, center_y, center_z, radius, strength);
+    }
+    return 0;
 }
 
 pub export fn apply_buoyancy(inst_idx: u8, fluid_density: f32) c_int {
@@ -1637,6 +1711,31 @@ pub export fn compute_ccd_island_parallel_plan(island_count: u32, ccd_island_cou
     return if (result.valid and result.parallel_enabled) 1 else 0;
 }
 
+pub export fn compute_ccd_thread_determinism_validation(island_count: u32, ccd_island_count: u32, candidate_count_per_island: u32, max_candidates_per_island: u32, requested_iterations: u32, hard_iteration_limit: u32, max_workers_to_check: u32, max_parallel_islands: u32, cross_island_pair_count: u32, result_out: [*]f32) c_int {
+    const result = ccd.validateCCDThreadDeterminism(
+        island_count,
+        ccd_island_count,
+        candidate_count_per_island,
+        max_candidates_per_island,
+        requested_iterations,
+        hard_iteration_limit,
+        max_workers_to_check,
+        max_parallel_islands,
+        cross_island_pair_count,
+    );
+    result_out[0] = if (result.valid) 1.0 else 0.0;
+    result_out[1] = if (result.deterministic) 1.0 else 0.0;
+    result_out[2] = @as(f32, @floatFromInt(result.checked_worker_configs));
+    result_out[3] = @as(f32, @floatFromInt(result.scheduled_islands));
+    result_out[4] = @as(f32, @floatFromInt(result.candidate_limit_per_island));
+    result_out[5] = @as(f32, @floatFromInt(result.iteration_limit));
+    result_out[6] = @as(f32, @floatFromInt(result.estimated_pair_work));
+    result_out[7] = @as(f32, @floatFromInt(result.min_batch_count));
+    result_out[8] = @as(f32, @floatFromInt(result.max_batch_count));
+    result_out[9] = @as(f32, @floatFromInt(result.reason_code));
+    return if (result.valid and result.deterministic) 1 else 0;
+}
+
 pub export fn compute_ccd_sleep_interaction(is_sleeping: c_int, sleep_tick: u32, sleep_tick_threshold: u32, motion_x: f32, motion_y: f32, motion_z: f32, angular_motion: f32, min_feature_size: f32, sweep_radius: f32, time_to_impact: f32, ccd_required: c_int, trigger_only: c_int, result_out: [*]f32) c_int {
     const result = ccd.computeCCDSleepInteraction(
         is_sleeping != 0,
@@ -2371,12 +2470,218 @@ pub export fn crash_defense_compute_solver_divergence(previous_error: f32, curre
     return if (result.valid and result.diverging) 1 else 0;
 }
 
+pub export fn crash_defense_compute_iteration_timeout(elapsed_ms: f32, budget_ms: f32, iteration_count: u32, max_iterations: u32, hard_timeout_scale: f32, emergency_on_timeout: c_int, result_out: [*]f32) c_int {
+    const result = crash_defense.computeIterationTimeoutPlan(
+        elapsed_ms,
+        budget_ms,
+        iteration_count,
+        max_iterations,
+        hard_timeout_scale,
+        emergency_on_timeout != 0,
+    );
+    result_out[0] = if (result.valid) 1.0 else 0.0;
+    result_out[1] = if (result.timed_out) 1.0 else 0.0;
+    result_out[2] = if (result.aborted) 1.0 else 0.0;
+    result_out[3] = if (result.emergency_stop_required) 1.0 else 0.0;
+    result_out[4] = result.elapsed_ms;
+    result_out[5] = result.budget_ms;
+    result_out[6] = result.overtime_ms;
+    result_out[7] = @as(f32, @floatFromInt(result.iteration_count));
+    result_out[8] = @as(f32, @floatFromInt(result.max_iterations));
+    result_out[9] = result.utilization;
+    result_out[10] = @as(f32, @floatFromInt(result.reason_code));
+    return if (result.valid and result.timed_out) 1 else 0;
+}
+
+pub export fn crash_defense_compute_no_progress(previous_progress: f32, current_progress: f32, min_progress: f32, stagnant_iterations: u32, max_stagnant_iterations: u32, hard_stagnant_scale: f32, emergency_on_no_progress: c_int, result_out: [*]f32) c_int {
+    const result = crash_defense.computeNoProgressPlan(
+        previous_progress,
+        current_progress,
+        min_progress,
+        stagnant_iterations,
+        max_stagnant_iterations,
+        hard_stagnant_scale,
+        emergency_on_no_progress != 0,
+    );
+    result_out[0] = if (result.valid) 1.0 else 0.0;
+    result_out[1] = if (result.no_progress) 1.0 else 0.0;
+    result_out[2] = if (result.stalled) 1.0 else 0.0;
+    result_out[3] = if (result.emergency_stop_required) 1.0 else 0.0;
+    result_out[4] = result.previous_progress;
+    result_out[5] = result.current_progress;
+    result_out[6] = result.progress_delta;
+    result_out[7] = result.min_progress;
+    result_out[8] = @as(f32, @floatFromInt(result.stagnant_iterations));
+    result_out[9] = @as(f32, @floatFromInt(result.max_stagnant_iterations));
+    result_out[10] = @as(f32, @floatFromInt(result.reason_code));
+    return if (result.valid and result.no_progress) 1 else 0;
+}
+
+pub export fn crash_defense_compute_emergency_stop(manual_trigger: c_int, critical_fault: c_int, repeated_fault_count: u32, repeated_fault_threshold: u32, has_snapshot: c_int, cooldown_ticks: u32, result_out: [*]f32) c_int {
+    const result = crash_defense.computeEmergencyStopPlan(
+        manual_trigger != 0,
+        critical_fault != 0,
+        repeated_fault_count,
+        repeated_fault_threshold,
+        has_snapshot != 0,
+        cooldown_ticks,
+    );
+    result_out[0] = if (result.valid) 1.0 else 0.0;
+    result_out[1] = if (result.trigger_stop) 1.0 else 0.0;
+    result_out[2] = if (result.freeze_state) 1.0 else 0.0;
+    result_out[3] = if (result.snapshot_recommended) 1.0 else 0.0;
+    result_out[4] = if (result.manual_trigger) 1.0 else 0.0;
+    result_out[5] = if (result.critical_fault) 1.0 else 0.0;
+    result_out[6] = @as(f32, @floatFromInt(result.repeated_fault_count));
+    result_out[7] = @as(f32, @floatFromInt(result.repeated_fault_threshold));
+    result_out[8] = @as(f32, @floatFromInt(result.cooldown_ticks));
+    result_out[9] = if (result.has_snapshot) 1.0 else 0.0;
+    result_out[10] = @as(f32, @floatFromInt(result.reason_code));
+    return if (result.valid and result.trigger_stop) 1 else 0;
+}
+
+pub export fn crash_defense_compute_rollback(fault_detected: c_int, emergency_stopped: c_int, has_snapshot: c_int, has_valid_snapshot: c_int, rollback_attempts: u32, max_rollback_attempts: u32, repeated_fault_count: u32, repeated_fault_threshold: u32, cooldown_ticks: u32, force_rollback: c_int, result_out: [*]f32) c_int {
+    const result = crash_defense.computeRollbackPlan(
+        fault_detected != 0,
+        emergency_stopped != 0,
+        has_snapshot != 0,
+        has_valid_snapshot != 0,
+        rollback_attempts,
+        max_rollback_attempts,
+        repeated_fault_count,
+        repeated_fault_threshold,
+        cooldown_ticks,
+        force_rollback != 0,
+    );
+    result_out[0] = if (result.valid) 1.0 else 0.0;
+    result_out[1] = if (result.rollback_required) 1.0 else 0.0;
+    result_out[2] = if (result.can_rollback) 1.0 else 0.0;
+    result_out[3] = if (result.emergency_stop_required) 1.0 else 0.0;
+    result_out[4] = if (result.has_snapshot) 1.0 else 0.0;
+    result_out[5] = if (result.has_valid_snapshot) 1.0 else 0.0;
+    result_out[6] = @as(f32, @floatFromInt(result.rollback_attempts));
+    result_out[7] = @as(f32, @floatFromInt(result.max_rollback_attempts));
+    result_out[8] = @as(f32, @floatFromInt(result.repeated_fault_count));
+    result_out[9] = @as(f32, @floatFromInt(result.repeated_fault_threshold));
+    result_out[10] = @as(f32, @floatFromInt(result.cooldown_ticks));
+    result_out[11] = @as(f32, @floatFromInt(result.reason_code));
+    return if (result.valid and result.rollback_required) 1 else 0;
+}
+
 pub export fn crash_defense_is_emergency_stopped() c_int {
     return if (crash_defense.isEmergencyStopped()) 1 else 0;
 }
 
+pub export fn crash_defense_get_emergency_reason() u32 {
+    return crash_defense.getEmergencyReasonCode();
+}
+
+pub export fn crash_defense_get_emergency_stop_count() u32 {
+    return crash_defense.getEmergencyStopCount();
+}
+
+pub export fn crash_defense_record_error_log(tick: u32, code: u32, severity: u8, value0: f32, value1: f32) void {
+    crash_defense.recordErrorLog(tick, code, severity, value0, value1);
+}
+
+pub export fn crash_defense_clear_error_logs() void {
+    crash_defense.clearErrorLogs();
+}
+
+pub export fn crash_defense_get_error_log_count() u32 {
+    return crash_defense.getErrorLogCount();
+}
+
+pub export fn crash_defense_get_error_log_at(index: u32, result_out: [*]f32) c_int {
+    const entry = crash_defense.getErrorLogAt(index) orelse return 0;
+    result_out[0] = @as(f32, @floatFromInt(entry.tick));
+    result_out[1] = @as(f32, @floatFromInt(entry.code));
+    result_out[2] = @as(f32, @floatFromInt(entry.severity));
+    result_out[3] = entry.value0;
+    result_out[4] = entry.value1;
+    return 1;
+}
+
+pub export fn crash_defense_collect_diagnostics(current_tick: u32, result_out: [*]f32) c_int {
+    const snapshot = if (g_state) |s|
+        crash_defense.collectAndRecordDiagnostics(&s.s1024, current_tick)
+    else
+        crash_defense.collectAndRecordDiagnostics(null, current_tick);
+    result_out[0] = @as(f32, @floatFromInt(snapshot.tick));
+    result_out[1] = @as(f32, @floatFromInt(snapshot.instance_count));
+    result_out[2] = if (snapshot.emergency_stopped) 1.0 else 0.0;
+    result_out[3] = @as(f32, @floatFromInt(snapshot.emergency_reason_code));
+    result_out[4] = @as(f32, @floatFromInt(snapshot.emergency_stop_count));
+    result_out[5] = @as(f32, @floatFromInt(snapshot.error_log_count));
+    result_out[6] = @as(f32, @floatFromInt(snapshot.snapshot_count));
+    result_out[7] = if (snapshot.stuck) 1.0 else 0.0;
+    result_out[8] = snapshot.max_speed;
+    result_out[9] = snapshot.avg_speed;
+    result_out[10] = @as(f32, @floatFromInt(snapshot.out_of_bounds_count));
+    result_out[11] = @as(f32, @floatFromInt(snapshot.velocity_exceeded_count));
+    result_out[12] = @as(f32, @floatFromInt(snapshot.invalid_velocity_count));
+    result_out[13] = snapshot.health_score;
+    return 1;
+}
+
+pub export fn crash_defense_clear_diagnostics() void {
+    crash_defense.clearDiagnostics();
+}
+
+pub export fn crash_defense_get_diagnostic_count() u32 {
+    return crash_defense.getDiagnosticCount();
+}
+
+pub export fn crash_defense_get_diagnostic_at(index: u32, result_out: [*]f32) c_int {
+    const snapshot = crash_defense.getDiagnosticAt(index) orelse return 0;
+    result_out[0] = @as(f32, @floatFromInt(snapshot.tick));
+    result_out[1] = @as(f32, @floatFromInt(snapshot.instance_count));
+    result_out[2] = if (snapshot.emergency_stopped) 1.0 else 0.0;
+    result_out[3] = @as(f32, @floatFromInt(snapshot.emergency_reason_code));
+    result_out[4] = @as(f32, @floatFromInt(snapshot.emergency_stop_count));
+    result_out[5] = @as(f32, @floatFromInt(snapshot.error_log_count));
+    result_out[6] = @as(f32, @floatFromInt(snapshot.snapshot_count));
+    result_out[7] = if (snapshot.stuck) 1.0 else 0.0;
+    result_out[8] = snapshot.max_speed;
+    result_out[9] = snapshot.avg_speed;
+    result_out[10] = @as(f32, @floatFromInt(snapshot.out_of_bounds_count));
+    result_out[11] = @as(f32, @floatFromInt(snapshot.velocity_exceeded_count));
+    result_out[12] = @as(f32, @floatFromInt(snapshot.invalid_velocity_count));
+    result_out[13] = snapshot.health_score;
+    return 1;
+}
+
+pub export fn crash_defense_get_stats_report(result_out: [*]f32) c_int {
+    const report = crash_defense.computeDefenseStatsReport();
+    result_out[0] = if (report.valid) 1.0 else 0.0;
+    result_out[1] = if (report.has_diagnostics) 1.0 else 0.0;
+    result_out[2] = @as(f32, @floatFromInt(report.report_tick));
+    result_out[3] = if (report.emergency_stopped) 1.0 else 0.0;
+    result_out[4] = @as(f32, @floatFromInt(report.emergency_reason_code));
+    result_out[5] = @as(f32, @floatFromInt(report.emergency_stop_count));
+    result_out[6] = @as(f32, @floatFromInt(report.total_error_logs));
+    result_out[7] = @as(f32, @floatFromInt(report.retained_error_logs));
+    result_out[8] = @as(f32, @floatFromInt(report.severe_error_count));
+    result_out[9] = @as(f32, @floatFromInt(report.total_diagnostics));
+    result_out[10] = @as(f32, @floatFromInt(report.retained_diagnostics));
+    result_out[11] = report.avg_health_score;
+    result_out[12] = report.min_health_score;
+    result_out[13] = report.max_health_score;
+    result_out[14] = report.stuck_ratio;
+    result_out[15] = report.peak_max_speed;
+    result_out[16] = report.avg_speed;
+    result_out[17] = @as(f32, @floatFromInt(report.total_out_of_bounds));
+    result_out[18] = @as(f32, @floatFromInt(report.total_velocity_exceeded));
+    result_out[19] = @as(f32, @floatFromInt(report.total_invalid_velocity));
+    return if (report.valid) 1 else 0;
+}
+
 pub export fn crash_defense_emergency_stop() void {
-    crash_defense.emergencyStop(undefined);
+    if (g_state) |s| {
+        crash_defense.emergencyStop(&s.s1024);
+    } else {
+        crash_defense.emergencyStop(null);
+    }
 }
 
 pub export fn crash_defense_reset_emergency_stop() void {
@@ -2460,6 +2765,542 @@ test "crash_defense_compute_solver_divergence export writes plan" {
     try std.testing.expectApproxEqAbs(@as(f32, 2.0), result_out[8], 0.0001);
     try std.testing.expectApproxEqAbs(@as(f32, 0.0), result_out[9], 0.0001);
     try std.testing.expectApproxEqAbs(@as(f32, 1.0), result_out[10], 0.0001);
+}
+
+test "crash_defense_compute_iteration_timeout export writes plan" {
+    var result_out: [11]f32 = undefined;
+    const rc = crash_defense_compute_iteration_timeout(12.0, 10.0, 6, 8, 2.0, 0, &result_out);
+    try std.testing.expectEqual(@as(c_int, 1), rc);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), result_out[0], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), result_out[1], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), result_out[2], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), result_out[3], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 12.0), result_out[4], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 10.0), result_out[5], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), result_out[6], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 6.0), result_out[7], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 8.0), result_out[8], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.2), result_out[9], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), result_out[10], 0.0001);
+}
+
+test "crash_defense_compute_no_progress export writes plan" {
+    var result_out: [11]f32 = undefined;
+    const rc = crash_defense_compute_no_progress(5.0, 5.00001, 0.001, 1, 3, 2.0, 0, &result_out);
+    try std.testing.expectEqual(@as(c_int, 1), rc);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), result_out[0], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), result_out[1], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), result_out[2], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), result_out[3], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 5.0), result_out[4], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 5.00001), result_out[5], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.00001), result_out[6], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.001), result_out[7], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), result_out[8], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 3.0), result_out[9], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), result_out[10], 0.0001);
+}
+
+test "crash_defense_compute_emergency_stop export writes plan" {
+    var result_out: [11]f32 = undefined;
+    const rc = crash_defense_compute_emergency_stop(0, 1, 1, 3, 1, 30, &result_out);
+    try std.testing.expectEqual(@as(c_int, 1), rc);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), result_out[0], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), result_out[1], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), result_out[2], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), result_out[3], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), result_out[4], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), result_out[5], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), result_out[6], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 3.0), result_out[7], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 30.0), result_out[8], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), result_out[9], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 3.0), result_out[10], 0.0001);
+}
+
+test "crash_defense_compute_rollback export writes plan" {
+    var result_out: [12]f32 = undefined;
+    const rc = crash_defense_compute_rollback(1, 1, 1, 1, 0, 3, 1, 3, 30, 0, &result_out);
+    try std.testing.expectEqual(@as(c_int, 1), rc);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), result_out[0], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), result_out[1], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), result_out[2], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), result_out[3], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), result_out[4], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), result_out[5], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), result_out[6], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 3.0), result_out[7], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), result_out[8], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 3.0), result_out[9], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 30.0), result_out[10], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), result_out[11], 0.0001);
+}
+
+test "crash_defense_emergency_stop export updates state without kernel" {
+    crash_defense.resetEmergencyStop();
+    crash_defense_emergency_stop();
+    try std.testing.expectEqual(@as(c_int, 1), crash_defense_is_emergency_stopped());
+    try std.testing.expectEqual(@as(u32, 1), crash_defense_get_emergency_stop_count());
+}
+
+test "crash_defense_error_log exports record and read" {
+    crash_defense_clear_error_logs();
+    crash_defense_record_error_log(42, 901, 2, 1.25, -3.5);
+    crash_defense_record_error_log(43, 902, 1, 2.5, 7.0);
+    try std.testing.expectEqual(@as(u32, 2), crash_defense_get_error_log_count());
+
+    var out: [5]f32 = undefined;
+    try std.testing.expectEqual(@as(c_int, 1), crash_defense_get_error_log_at(0, &out));
+    try std.testing.expectApproxEqAbs(@as(f32, 42.0), out[0], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 901.0), out[1], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), out[2], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.25), out[3], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, -3.5), out[4], 0.0001);
+}
+
+test "crash_defense_diagnostic exports collect and read history" {
+    crash_defense.clearDiagnostics();
+    crash_defense.clearErrorLogs();
+    crash_defense_record_error_log(100, 777, 2, 1.0, 2.0);
+
+    var out: [14]f32 = undefined;
+    try std.testing.expectEqual(@as(c_int, 1), crash_defense_collect_diagnostics(100, &out));
+    try std.testing.expectApproxEqAbs(@as(f32, 100.0), out[0], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), out[5], 0.0001);
+    try std.testing.expect(out[13] >= 0.0 and out[13] <= 1.0);
+    try std.testing.expectEqual(@as(u32, 1), crash_defense_get_diagnostic_count());
+
+    var hist: [14]f32 = undefined;
+    try std.testing.expectEqual(@as(c_int, 1), crash_defense_get_diagnostic_at(0, &hist));
+    try std.testing.expectApproxEqAbs(@as(f32, 100.0), hist[0], 0.0001);
+    try std.testing.expectApproxEqAbs(out[13], hist[13], 0.0001);
+}
+
+test "crash_defense_stats_report export aggregates metrics" {
+    crash_defense.clearDiagnostics();
+    crash_defense.clearErrorLogs();
+    crash_defense.resetEmergencyStop();
+    crash_defense_record_error_log(1, 500, 3, 0.0, 0.0);
+    var diag_out: [14]f32 = undefined;
+    _ = crash_defense_collect_diagnostics(1, &diag_out);
+
+    var out: [20]f32 = undefined;
+    try std.testing.expectEqual(@as(c_int, 1), crash_defense_get_stats_report(&out));
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), out[0], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), out[1], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), out[6], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), out[8], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), out[9], 0.0001);
+    try std.testing.expect(out[11] >= 0.0 and out[11] <= 1.0);
+}
+
+test "trace_export_visualization exposes render-friendly trace entries" {
+    try std.testing.expectEqual(@as(c_int, 0), init_kernel());
+    defer std.testing.expectEqual(@as(c_int, 0), shutdown_kernel()) catch {};
+    try std.testing.expectEqual(@as(c_int, 0), reset_context());
+
+    const s = g_state.?;
+    s.entities[0].physics.mass = 20;
+    s.entities[0].physics.material = .solid;
+    s.entities[0].physics.hardness = 40;
+    s.entities[1].physics.mass = 20;
+    s.entities[1].physics.material = .solid;
+    s.entities[1].physics.hardness = 30;
+    s.s1024.instance_count = 2;
+    s.s1024.instances[0] = .{
+        .entity_id = 0,
+        .pos_x = 0,
+        .pos_y = 1,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .falling,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = -10,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    s.s1024.instances[1] = .{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .resting,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    _ = tick_engine.stepTickResult(&s.engine);
+
+    try std.testing.expectEqual(@as(u32, TRACE_VISUALIZATION_ENTRY_STRIDE), trace_get_visualization_entry_stride());
+
+    var out: [TRACE_VISUALIZATION_ENTRY_STRIDE * 64]f32 = [_]f32{0.0} ** (TRACE_VISUALIZATION_ENTRY_STRIDE * 64);
+    const count = trace_export_visualization(
+        1,
+        0,
+        std.math.maxInt(u32),
+        0,
+        0,
+        0,
+        &out,
+        64,
+    );
+    try std.testing.expect(count > 0);
+    try std.testing.expect(out[1] >= 1.0 and out[1] <= 6.0);
+    try std.testing.expect(out[7] >= 0.0 and out[7] <= 5.0);
+
+    const subject_id = @as(u16, @intFromFloat(out[2]));
+    const filtered_count = trace_export_visualization(
+        1,
+        0,
+        std.math.maxInt(u32),
+        0,
+        1,
+        subject_id,
+        &out,
+        64,
+    );
+    try std.testing.expect(filtered_count > 0);
+    var idx: usize = 0;
+    while (idx < filtered_count) : (idx += 1) {
+        const base = idx * TRACE_VISUALIZATION_ENTRY_STRIDE;
+        try std.testing.expectEqual(subject_id, @as(u16, @intFromFloat(out[base + 2])));
+    }
+}
+
+test "apply_point_explosion_field affects only instances in radius" {
+    try std.testing.expectEqual(@as(c_int, 0), init_kernel());
+    defer std.testing.expectEqual(@as(c_int, 0), shutdown_kernel()) catch {};
+    try std.testing.expectEqual(@as(c_int, 0), reset_context());
+
+    try std.testing.expectEqual(@as(c_int, 0), spawn_instance(0, 12, 10, 10));
+    try std.testing.expectEqual(@as(c_int, 0), spawn_instance(0, 40, 10, 10));
+
+    var before_near: [3]f32 = undefined;
+    var before_far: [3]f32 = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), get_instance_velocity(0, &before_near));
+    try std.testing.expectEqual(@as(c_int, 0), get_instance_velocity(1, &before_far));
+
+    const affected = apply_point_explosion_field(10.0, 10.0, 10.0, 8.0, 120.0);
+    try std.testing.expectEqual(@as(u32, 1), affected);
+
+    var after_near: [3]f32 = undefined;
+    var after_far: [3]f32 = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), get_instance_velocity(0, &after_near));
+    try std.testing.expectEqual(@as(c_int, 0), get_instance_velocity(1, &after_far));
+
+    const near_delta = @abs(after_near[0] - before_near[0]) + @abs(after_near[1] - before_near[1]) + @abs(after_near[2] - before_near[2]);
+    const far_delta = @abs(after_far[0] - before_far[0]) + @abs(after_far[1] - before_far[1]) + @abs(after_far[2] - before_far[2]);
+    try std.testing.expect(near_delta > 0.0);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), far_delta, 0.0001);
+}
+
+test "apply_directional_force_field pushes along configured direction" {
+    try std.testing.expectEqual(@as(c_int, 0), init_kernel());
+    defer std.testing.expectEqual(@as(c_int, 0), shutdown_kernel()) catch {};
+    try std.testing.expectEqual(@as(c_int, 0), reset_context());
+
+    try std.testing.expectEqual(@as(c_int, 0), spawn_instance(0, 12, 10, 10));
+    try std.testing.expectEqual(@as(c_int, 0), spawn_instance(0, 40, 10, 10));
+
+    var before_near: [3]f32 = undefined;
+    var before_far: [3]f32 = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), get_instance_velocity(0, &before_near));
+    try std.testing.expectEqual(@as(c_int, 0), get_instance_velocity(1, &before_far));
+
+    const affected = apply_directional_force_field(10.0, 10.0, 10.0, 8.0, 1.0, 0.0, 0.0, 120.0);
+    try std.testing.expectEqual(@as(u32, 1), affected);
+
+    var after_near: [3]f32 = undefined;
+    var after_far: [3]f32 = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), get_instance_velocity(0, &after_near));
+    try std.testing.expectEqual(@as(c_int, 0), get_instance_velocity(1, &after_far));
+
+    try std.testing.expect(after_near[0] > before_near[0]);
+    const far_delta = @abs(after_far[0] - before_far[0]) + @abs(after_far[1] - before_far[1]) + @abs(after_far[2] - before_far[2]);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), far_delta, 0.0001);
+}
+
+test "apply_vortex_force_field applies tangential swirl and keeps out-of-range unchanged" {
+    try std.testing.expectEqual(@as(c_int, 0), init_kernel());
+    defer std.testing.expectEqual(@as(c_int, 0), shutdown_kernel()) catch {};
+    try std.testing.expectEqual(@as(c_int, 0), reset_context());
+
+    try std.testing.expectEqual(@as(c_int, 0), spawn_instance(0, 12, 10, 10));
+    try std.testing.expectEqual(@as(c_int, 0), spawn_instance(0, 40, 10, 10));
+
+    var before_near: [3]f32 = undefined;
+    var before_far: [3]f32 = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), get_instance_velocity(0, &before_near));
+    try std.testing.expectEqual(@as(c_int, 0), get_instance_velocity(1, &before_far));
+
+    const affected = apply_vortex_force_field(10.0, 10.0, 10.0, 8.0, 120.0);
+    try std.testing.expectEqual(@as(u32, 1), affected);
+
+    var after_near: [3]f32 = undefined;
+    var after_far: [3]f32 = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), get_instance_velocity(0, &after_near));
+    try std.testing.expectEqual(@as(c_int, 0), get_instance_velocity(1, &after_far));
+
+    try std.testing.expect(after_near[2] > before_near[2]);
+    const far_delta = @abs(after_far[0] - before_far[0]) + @abs(after_far[1] - before_far[1]) + @abs(after_far[2] - before_far[2]);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), far_delta, 0.0001);
+}
+
+fn appendVmHookPlaybackSnapshot(tick: u32) void {
+    const rewind_sys = rewind.getSystem();
+    const idx = rewind_sys.world_snapshot_index;
+    var snapshot = std.mem.zeroes(rewind.WorldSnapshot);
+    snapshot.tick = tick;
+    snapshot.world_hash = @as(u64, tick) | (@as(u64, rewind_sys.active_world_snapshot_branch_id) << 32);
+    rewind_sys.world_snapshot_branch_ids[idx] = rewind_sys.active_world_snapshot_branch_id;
+    rewind_sys.world_snapshots[idx] = snapshot;
+    rewind_sys.compressed_world_snapshots[idx] = rewind.compressWorldSnapshot(&snapshot);
+    if (rewind.getWorldSnapshotBranchInfo(rewind_sys.active_world_snapshot_branch_id)) |_| {
+        const branch_slot = blk: {
+            var i: usize = 0;
+            while (i < rewind.MAX_WORLD_SNAPSHOT_BRANCHES) : (i += 1) {
+                if (rewind_sys.world_snapshot_branches[i].active and rewind_sys.world_snapshot_branches[i].id == rewind_sys.active_world_snapshot_branch_id) {
+                    break :blk i;
+                }
+            }
+            break :blk rewind.MAX_WORLD_SNAPSHOT_BRANCHES;
+        };
+        if (branch_slot < rewind.MAX_WORLD_SNAPSHOT_BRANCHES) {
+            rewind_sys.world_snapshot_branches[branch_slot].head_tick = tick;
+        }
+    }
+    rewind_sys.world_snapshot_index = @intCast((@as(usize, idx) + 1) % rewind.MAX_WORLD_SNAPSHOTS);
+    if (rewind_sys.world_snapshot_count < rewind.MAX_WORLD_SNAPSHOTS) {
+        rewind_sys.world_snapshot_count += 1;
+    }
+}
+
+test "rewind snapshot playback exports expose sequence and state" {
+    rewind_init();
+    appendVmHookPlaybackSnapshot(11);
+    appendVmHookPlaybackSnapshot(22);
+    appendVmHookPlaybackSnapshot(33);
+
+    try std.testing.expectEqual(@as(c_int, 1), rewind_start_world_snapshot_playback(11, 33, 0, 0));
+
+    var state_out: [7]u32 = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), rewind_get_world_snapshot_playback_state(&state_out, state_out.len));
+    try std.testing.expectEqual(@as(u32, 1), state_out[0]);
+    try std.testing.expectEqual(@as(u32, 0), state_out[1]);
+    try std.testing.expectEqual(@as(u32, 0), state_out[2]);
+    try std.testing.expectEqual(@as(u32, 11), state_out[3]);
+    try std.testing.expectEqual(@as(u32, 33), state_out[4]);
+
+    var tick_out: u32 = 0;
+    try std.testing.expectEqual(@as(c_int, 1), rewind_next_world_snapshot_playback_tick(&tick_out));
+    try std.testing.expectEqual(@as(u32, 11), tick_out);
+    try std.testing.expectEqual(@as(c_int, 1), rewind_next_world_snapshot_playback_tick(&tick_out));
+    try std.testing.expectEqual(@as(u32, 22), tick_out);
+    try std.testing.expectEqual(@as(c_int, 1), rewind_next_world_snapshot_playback_tick(&tick_out));
+    try std.testing.expectEqual(@as(u32, 33), tick_out);
+    try std.testing.expectEqual(@as(c_int, 0), rewind_next_world_snapshot_playback_tick(&tick_out));
+
+    try std.testing.expectEqual(@as(c_int, 0), rewind_get_world_snapshot_playback_state(&state_out, state_out.len));
+    try std.testing.expectEqual(@as(u32, 0), state_out[0]);
+
+    try std.testing.expectEqual(@as(c_int, 1), rewind_start_world_snapshot_playback(33, 11, 1, 1));
+    try std.testing.expectEqual(@as(c_int, 1), rewind_next_world_snapshot_playback_tick(&tick_out));
+    try std.testing.expectEqual(@as(u32, 33), tick_out);
+    try std.testing.expectEqual(@as(c_int, 1), rewind_next_world_snapshot_playback_tick(&tick_out));
+    try std.testing.expectEqual(@as(u32, 22), tick_out);
+    try std.testing.expectEqual(@as(c_int, 1), rewind_next_world_snapshot_playback_tick(&tick_out));
+    try std.testing.expectEqual(@as(u32, 11), tick_out);
+    try std.testing.expectEqual(@as(c_int, 1), rewind_next_world_snapshot_playback_tick(&tick_out));
+    try std.testing.expectEqual(@as(u32, 33), tick_out);
+
+    rewind_stop_world_snapshot_playback();
+    try std.testing.expectEqual(@as(c_int, 0), rewind_next_world_snapshot_playback_tick(&tick_out));
+}
+
+test "rewind snapshot branch exports manage lifecycle" {
+    rewind_init();
+    appendVmHookPlaybackSnapshot(10);
+    appendVmHookPlaybackSnapshot(20);
+
+    try std.testing.expectEqual(@as(u32, 0), rewind_get_active_world_snapshot_branch_id());
+
+    const branch_id = rewind_create_world_snapshot_branch(20);
+    try std.testing.expect(branch_id > 0);
+
+    var info_out: [6]u32 = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), rewind_get_world_snapshot_branch_info(@intCast(branch_id), &info_out, info_out.len));
+    try std.testing.expectEqual(@as(u32, @intCast(branch_id)), info_out[0]);
+    try std.testing.expectEqual(@as(u32, 0), info_out[1]);
+    try std.testing.expectEqual(@as(u32, 20), info_out[2]);
+
+    try std.testing.expectEqual(@as(c_int, 1), rewind_switch_world_snapshot_branch(@intCast(branch_id)));
+    try std.testing.expectEqual(@as(u32, @intCast(branch_id)), rewind_get_active_world_snapshot_branch_id());
+    appendVmHookPlaybackSnapshot(30);
+
+    var list_out: [rewind.MAX_WORLD_SNAPSHOT_BRANCHES * 6]u32 = [_]u32{0} ** (rewind.MAX_WORLD_SNAPSHOT_BRANCHES * 6);
+    const count = rewind_list_world_snapshot_branches(&list_out, list_out.len);
+    try std.testing.expect(count >= 2);
+
+    try std.testing.expectEqual(@as(c_int, 0), rewind_delete_world_snapshot_branch(@intCast(branch_id)));
+    try std.testing.expectEqual(@as(c_int, 1), rewind_switch_world_snapshot_branch(0));
+    try std.testing.expectEqual(@as(c_int, 1), rewind_delete_world_snapshot_branch(@intCast(branch_id)));
+    try std.testing.expectEqual(@as(c_int, -1), rewind_get_world_snapshot_branch_info(@intCast(branch_id), &info_out, info_out.len));
+}
+
+test "rewind snapshot merge export resolves conflicts by strategy" {
+    rewind_init();
+    appendVmHookPlaybackSnapshot(10);
+    appendVmHookPlaybackSnapshot(20);
+
+    const branch_id = rewind_create_world_snapshot_branch(20);
+    try std.testing.expect(branch_id > 0);
+    try std.testing.expectEqual(@as(c_int, 1), rewind_switch_world_snapshot_branch(@intCast(branch_id)));
+    appendVmHookPlaybackSnapshot(20);
+    appendVmHookPlaybackSnapshot(30);
+
+    try std.testing.expectEqual(@as(c_int, 1), rewind_switch_world_snapshot_branch(0));
+    var merge_out: [7]u32 = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), rewind_merge_world_snapshot_branches(0, @intCast(branch_id), @intFromEnum(rewind.WorldSnapshotMergeStrategy.keep_target), &merge_out, merge_out.len));
+    try std.testing.expectEqual(@as(u32, 1), merge_out[3]); // moved_count
+    try std.testing.expectEqual(@as(u32, 1), merge_out[4]); // conflict_count
+    try std.testing.expectEqual(@as(u32, 0), merge_out[5]); // resolved_by_source
+    try std.testing.expectEqual(@as(u32, 1), merge_out[6]); // resolved_by_target
+
+    try std.testing.expectEqual(@as(c_int, 1), rewind_switch_world_snapshot_branch(@intCast(branch_id)));
+    appendVmHookPlaybackSnapshot(20);
+    try std.testing.expectEqual(@as(c_int, 1), rewind_switch_world_snapshot_branch(0));
+    try std.testing.expectEqual(@as(c_int, 0), rewind_merge_world_snapshot_branches(0, @intCast(branch_id), @intFromEnum(rewind.WorldSnapshotMergeStrategy.keep_source), &merge_out, merge_out.len));
+    try std.testing.expect(merge_out[5] >= 1); // resolved_by_source
+}
+
+test "rewind snapshot budget exports trim and report usage" {
+    rewind_init();
+    appendVmHookPlaybackSnapshot(10);
+    appendVmHookPlaybackSnapshot(20);
+    appendVmHookPlaybackSnapshot(30);
+    appendVmHookPlaybackSnapshot(40);
+    appendVmHookPlaybackSnapshot(50);
+
+    try std.testing.expectEqual(@as(u32, 5), rewind_get_world_snapshot_count());
+    try std.testing.expectEqual(@as(c_int, 1), rewind_set_world_snapshot_budget(3));
+    try std.testing.expectEqual(@as(u32, 3), rewind_get_world_snapshot_count());
+
+    var budget_out: [4]u32 = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), rewind_get_world_snapshot_budget_info(&budget_out, budget_out.len));
+    try std.testing.expectEqual(@as(u32, 3), budget_out[0]); // budget
+    try std.testing.expectEqual(@as(u32, 3), budget_out[1]); // count
+    try std.testing.expectEqual(@as(u32, rewind.MAX_WORLD_SNAPSHOTS), budget_out[2]); // capacity
+    try std.testing.expectEqual(@as(u32, 2), budget_out[3]); // evicted_count
+
+    try std.testing.expectEqual(@as(c_int, 0), rewind_set_world_snapshot_budget(0));
+}
+
+test "rewind snapshot GC export removes duplicate snapshots" {
+    rewind_init();
+    appendVmHookPlaybackSnapshot(10);
+    appendVmHookPlaybackSnapshot(10);
+    appendVmHookPlaybackSnapshot(20);
+
+    var gc_out: [4]u32 = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), rewind_collect_world_snapshot_garbage(&gc_out, gc_out.len));
+    try std.testing.expectEqual(@as(u32, 3), gc_out[0]); // scanned
+    try std.testing.expectEqual(@as(u32, 1), gc_out[1]); // removed
+    try std.testing.expectEqual(@as(u32, 0), gc_out[2]); // removed_orphan
+    try std.testing.expectEqual(@as(u32, 1), gc_out[3]); // removed_duplicate
+    try std.testing.expectEqual(@as(u32, 2), rewind_get_world_snapshot_count());
+}
+
+test "rewind snapshot persistence export round-trips snapshot state" {
+    rewind_init();
+    appendVmHookPlaybackSnapshot(10);
+    appendVmHookPlaybackSnapshot(20);
+
+    const branch_id = rewind_create_world_snapshot_branch(20);
+    try std.testing.expect(branch_id > 0);
+    try std.testing.expectEqual(@as(c_int, 1), rewind_switch_world_snapshot_branch(@intCast(branch_id)));
+    appendVmHookPlaybackSnapshot(30);
+    try std.testing.expectEqual(@as(c_int, 1), rewind_set_world_snapshot_budget(4));
+
+    const save_path = ".zig-cache/vm_hook_rewind_snapshot_persist_test.bin";
+    std.fs.cwd().makePath(".zig-cache") catch {};
+    defer std.fs.cwd().deleteFile(save_path) catch {};
+
+    try std.testing.expectEqual(@as(c_int, 0), rewind_save_world_snapshots(save_path.ptr, save_path.len));
+
+    rewind_init();
+    try std.testing.expectEqual(@as(c_int, 0), rewind_load_world_snapshots(save_path.ptr, save_path.len));
+    try std.testing.expectEqual(@as(u32, @intCast(branch_id)), rewind_get_active_world_snapshot_branch_id());
+    try std.testing.expectEqual(@as(u32, 3), rewind_get_world_snapshot_count());
+
+    var info_out: [6]u32 = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), rewind_get_world_snapshot_branch_info(@intCast(branch_id), &info_out, info_out.len));
+    try std.testing.expectEqual(@as(u32, 30), info_out[3]); // head_tick
+
+    var budget_out: [4]u32 = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), rewind_get_world_snapshot_budget_info(&budget_out, budget_out.len));
+    try std.testing.expectEqual(@as(u32, 4), budget_out[0]); // budget
+}
+
+test "rewind snapshot network packet export and import round-trips snapshot state" {
+    rewind_init();
+    appendVmHookPlaybackSnapshot(10);
+    appendVmHookPlaybackSnapshot(20);
+
+    const branch_id = rewind_create_world_snapshot_branch(20);
+    try std.testing.expect(branch_id > 0);
+    try std.testing.expectEqual(@as(c_int, 1), rewind_switch_world_snapshot_branch(@intCast(branch_id)));
+    appendVmHookPlaybackSnapshot(30);
+    const expected_hash = rewind_get_world_snapshot_hash(30);
+
+    var packet: [@sizeOf(rewind.WorldSnapshot) * 2]u8 = undefined;
+    const packet_len = rewind_export_world_snapshot_network_packet(30, @intCast(branch_id), &packet, packet.len);
+    try std.testing.expect(packet_len > 0);
+
+    rewind_init();
+    try std.testing.expectEqual(@as(c_int, 0), rewind_import_world_snapshot_network_packet(&packet, @intCast(packet_len)));
+    try std.testing.expectEqual(@as(u32, 1), rewind_get_world_snapshot_count());
+    try std.testing.expectEqual(expected_hash, rewind_get_world_snapshot_hash(30));
+
+    var info_out: [6]u32 = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), rewind_get_world_snapshot_branch_info(@intCast(branch_id), &info_out, info_out.len));
+    try std.testing.expectEqual(@as(u32, 30), info_out[3]); // head_tick
+}
+
+test "rewind snapshot network packet encrypted export/import validates key" {
+    rewind_init();
+    appendVmHookPlaybackSnapshot(10);
+    appendVmHookPlaybackSnapshot(20);
+
+    const branch_id = rewind_create_world_snapshot_branch(20);
+    try std.testing.expect(branch_id > 0);
+    try std.testing.expectEqual(@as(c_int, 1), rewind_switch_world_snapshot_branch(@intCast(branch_id)));
+    appendVmHookPlaybackSnapshot(30);
+    const expected_hash = rewind_get_world_snapshot_hash(30);
+
+    var packet: [@sizeOf(rewind.WorldSnapshot) * 2]u8 = undefined;
+    const key: u64 = 0xCAFEBABE11223344;
+    const nonce: u64 = 0x0102030405060708;
+    const packet_len = rewind_export_world_snapshot_network_packet_encrypted(30, @intCast(branch_id), key, nonce, &packet, packet.len);
+    try std.testing.expect(packet_len > 0);
+
+    rewind_init();
+    try std.testing.expectEqual(@as(c_int, -1), rewind_import_world_snapshot_network_packet_encrypted(&packet, @intCast(packet_len), key ^ 1, nonce));
+    try std.testing.expectEqual(@as(c_int, 0), rewind_import_world_snapshot_network_packet_encrypted(&packet, @intCast(packet_len), key, nonce));
+    try std.testing.expectEqual(expected_hash, rewind_get_world_snapshot_hash(30));
 }
 
 // ============================================================================
@@ -2942,6 +3783,174 @@ pub export fn rewind_get_buffer_count() u32 {
 
 pub export fn rewind_get_world_snapshot_count() u32 {
     return rewind.getWorldSnapshotBufferUsage().count;
+}
+
+pub export fn rewind_get_active_world_snapshot_branch_id() u32 {
+    return rewind.getActiveWorldSnapshotBranchId();
+}
+
+pub export fn rewind_create_world_snapshot_branch(fork_tick: u32) c_int {
+    const branch_id = rewind.createWorldSnapshotBranch(fork_tick) orelse return -1;
+    return @intCast(branch_id);
+}
+
+pub export fn rewind_switch_world_snapshot_branch(branch_id: u32) c_int {
+    if (branch_id > std.math.maxInt(u8)) return 0;
+    return if (rewind.switchWorldSnapshotBranch(@intCast(branch_id))) 1 else 0;
+}
+
+pub export fn rewind_delete_world_snapshot_branch(branch_id: u32) c_int {
+    if (branch_id > std.math.maxInt(u8)) return 0;
+    return if (rewind.deleteWorldSnapshotBranch(@intCast(branch_id))) 1 else 0;
+}
+
+pub export fn rewind_get_world_snapshot_branch_info(branch_id: u32, result_out: [*]u32, result_len: usize) c_int {
+    if (result_len < 6 or branch_id > std.math.maxInt(u8)) return -1;
+    const info = rewind.getWorldSnapshotBranchInfo(@intCast(branch_id)) orelse return -1;
+    result_out[0] = info.id;
+    result_out[1] = info.parent_id;
+    result_out[2] = info.fork_tick;
+    result_out[3] = info.head_tick;
+    result_out[4] = info.snapshot_count;
+    result_out[5] = if (info.active) 1 else 0;
+    return 0;
+}
+
+pub export fn rewind_list_world_snapshot_branches(result_out: [*]u32, result_len: usize) u32 {
+    if (result_len < 6) return 0;
+    const max_entries = result_len / 6;
+    var info_buf: [rewind.MAX_WORLD_SNAPSHOT_BRANCHES]rewind.WorldSnapshotBranchInfo = undefined;
+    const count = rewind.listWorldSnapshotBranches(info_buf[0..@min(info_buf.len, max_entries)]);
+
+    var i: u32 = 0;
+    while (i < count) : (i += 1) {
+        const info = info_buf[i];
+        const base = i * 6;
+        result_out[base + 0] = info.id;
+        result_out[base + 1] = info.parent_id;
+        result_out[base + 2] = info.fork_tick;
+        result_out[base + 3] = info.head_tick;
+        result_out[base + 4] = info.snapshot_count;
+        result_out[base + 5] = if (info.active) 1 else 0;
+    }
+    return count;
+}
+
+pub export fn rewind_merge_world_snapshot_branches(target_branch_id: u32, source_branch_id: u32, strategy: u32, result_out: [*]u32, result_len: usize) c_int {
+    if (result_len < 7) return -1;
+    if (target_branch_id > std.math.maxInt(u8) or source_branch_id > std.math.maxInt(u8)) return -1;
+    if (strategy > @intFromEnum(rewind.WorldSnapshotMergeStrategy.keep_latest)) return -1;
+
+    const merge_strategy: rewind.WorldSnapshotMergeStrategy = @enumFromInt(@as(u8, @intCast(strategy)));
+    const report = rewind.mergeWorldSnapshotBranches(@intCast(target_branch_id), @intCast(source_branch_id), merge_strategy) orelse return -1;
+    result_out[0] = report.target_branch_id;
+    result_out[1] = report.source_branch_id;
+    result_out[2] = @intFromEnum(report.strategy);
+    result_out[3] = report.moved_count;
+    result_out[4] = report.conflict_count;
+    result_out[5] = report.resolved_by_source;
+    result_out[6] = report.resolved_by_target;
+    return 0;
+}
+
+pub export fn rewind_set_world_snapshot_budget(budget: u32) c_int {
+    if (budget > std.math.maxInt(u8)) return 0;
+    return if (rewind.setWorldSnapshotBudget(@intCast(budget))) 1 else 0;
+}
+
+pub export fn rewind_get_world_snapshot_budget_info(result_out: [*]u32, result_len: usize) c_int {
+    if (result_len < 4) return -1;
+    const info = rewind.getWorldSnapshotBudgetInfo();
+    result_out[0] = info.budget;
+    result_out[1] = info.count;
+    result_out[2] = info.capacity;
+    result_out[3] = info.evicted_count;
+    return 0;
+}
+
+pub export fn rewind_collect_world_snapshot_garbage(result_out: [*]u32, result_len: usize) c_int {
+    if (result_len < 4) return -1;
+    const report = rewind.collectWorldSnapshotGarbage();
+    result_out[0] = report.scanned_count;
+    result_out[1] = report.removed_count;
+    result_out[2] = report.removed_orphan_count;
+    result_out[3] = report.removed_duplicate_count;
+    return 0;
+}
+
+pub export fn rewind_save_world_snapshots(path_ptr: [*]const u8, path_len: usize) c_int {
+    if (path_len == 0) return -1;
+    rewind.saveWorldSnapshotsToFile(path_ptr[0..path_len]) catch return -1;
+    return 0;
+}
+
+pub export fn rewind_load_world_snapshots(path_ptr: [*]const u8, path_len: usize) c_int {
+    if (path_len == 0) return -1;
+    rewind.loadWorldSnapshotsFromFile(path_ptr[0..path_len]) catch return -1;
+    return 0;
+}
+
+pub export fn rewind_export_world_snapshot_network_packet(tick: u32, branch_id: u32, result_out: [*]u8, result_len: usize) c_int {
+    if (branch_id > std.math.maxInt(u8) or result_len == 0) return -1;
+    const written = rewind.exportWorldSnapshotToNetworkPacket(tick, @intCast(branch_id), result_out[0..result_len]) orelse return -1;
+    if (written > std.math.maxInt(c_int)) return -1;
+    return @intCast(written);
+}
+
+pub export fn rewind_import_world_snapshot_network_packet(packet_ptr: [*]const u8, packet_len: usize) c_int {
+    if (packet_len == 0) return -1;
+    return if (rewind.importWorldSnapshotFromNetworkPacket(packet_ptr[0..packet_len])) 0 else -1;
+}
+
+pub export fn rewind_export_world_snapshot_network_packet_encrypted(
+    tick: u32,
+    branch_id: u32,
+    encryption_key: u64,
+    nonce: u64,
+    result_out: [*]u8,
+    result_len: usize,
+) c_int {
+    if (branch_id > std.math.maxInt(u8) or result_len == 0) return -1;
+    const written = rewind.exportWorldSnapshotToNetworkPacketEncrypted(tick, @intCast(branch_id), result_out[0..result_len], encryption_key, nonce) orelse return -1;
+    if (written > std.math.maxInt(c_int)) return -1;
+    return @intCast(written);
+}
+
+pub export fn rewind_import_world_snapshot_network_packet_encrypted(
+    packet_ptr: [*]const u8,
+    packet_len: usize,
+    encryption_key: u64,
+    nonce: u64,
+) c_int {
+    if (packet_len == 0) return -1;
+    return if (rewind.importWorldSnapshotFromNetworkPacketEncrypted(packet_ptr[0..packet_len], encryption_key, nonce)) 0 else -1;
+}
+
+pub export fn rewind_start_world_snapshot_playback(start_tick: u32, end_tick: u32, loop_enabled: c_int, reverse: c_int) c_int {
+    return if (rewind.startWorldSnapshotPlayback(start_tick, end_tick, loop_enabled != 0, reverse != 0)) 1 else 0;
+}
+
+pub export fn rewind_stop_world_snapshot_playback() void {
+    rewind.stopWorldSnapshotPlayback();
+}
+
+pub export fn rewind_get_world_snapshot_playback_state(result_out: [*]u32, result_len: usize) c_int {
+    if (result_len < 7) return -1;
+    const state = rewind.getWorldSnapshotPlaybackState();
+    result_out[0] = if (state.active) 1 else 0;
+    result_out[1] = if (state.loop) 1 else 0;
+    result_out[2] = if (state.reverse) 1 else 0;
+    result_out[3] = state.start_tick;
+    result_out[4] = state.end_tick;
+    result_out[5] = state.last_tick;
+    result_out[6] = if (state.has_emitted) 1 else 0;
+    return 0;
+}
+
+pub export fn rewind_next_world_snapshot_playback_tick(tick_out: *u32) c_int {
+    const snapshot = rewind.nextWorldSnapshotPlaybackFrame() orelse return 0;
+    tick_out.* = snapshot.tick;
+    return 1;
 }
 
 pub export fn rewind_calculate_state_hash(tick: u32, pos_x: f32, pos_y: f32, pos_z: f32) u64 {
