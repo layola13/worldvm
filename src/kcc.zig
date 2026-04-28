@@ -38,6 +38,23 @@ pub const KCCState = struct {
     step_offset: f32,
     prevent_fall_off_ledges: bool,
 
+    // Climbing state
+    climbing: bool = false,
+    climbing_wall_normal_x: f32 = 0,
+    climbing_wall_normal_z: f32 = 0,
+    climbing_target_x: f32 = 0,
+    climbing_target_y: f32 = 0,
+    climbing_target_z: f32 = 0,
+
+    // Sprinting state
+    sprinting: bool = false,
+
+    // Rolling state
+    rolling: bool = false,
+    roll_timer: f32 = 0,
+    roll_direction_x: f32 = 0,
+    roll_direction_z: f32 = 0,
+
     // Internal state for KCC
     was_grounded: bool,
     ground_normal_x: f32,
@@ -68,6 +85,18 @@ pub const KCCConfig = struct {
     max_slope_angle: f32 = 45.0,
     step_offset: f32 = 0.25,
     prevent_fall_off_ledges: bool = false,
+    // Climbing
+    climbing_enabled: bool = true,
+    climbing_speed: f32 = 100.0,
+    max_climb_height: i32 = 6,
+    // Sprinting
+    sprint_speed_mult: f32 = 1.5,
+    sprint_stamina_cost: f32 = 0.1,
+    // Rolling
+    roll_enabled: bool = true,
+    roll_speed: f32 = 300.0,
+    roll_duration: f32 = 0.4,
+    roll_cooldown: f32 = 0.5,
 };
 
 pub const MAX_KCC: usize = 8;
@@ -106,6 +135,17 @@ pub fn init() void {
             .max_slope_angle = 45.0,
             .step_offset = 0.25,
             .prevent_fall_off_ledges = false,
+            .climbing = false,
+            .climbing_wall_normal_x = 0,
+            .climbing_wall_normal_z = 0,
+            .climbing_target_x = 0,
+            .climbing_target_y = 0,
+            .climbing_target_z = 0,
+            .sprinting = false,
+            .rolling = false,
+            .roll_timer = 0,
+            .roll_direction_x = 0,
+            .roll_direction_z = 0,
             .was_grounded = false,
             .ground_normal_x = 0,
             .ground_normal_y = 1,
@@ -153,6 +193,17 @@ pub fn createCharacter(x: f32, y: f32, z: f32, config: KCCConfig) ?*KCCState {
         .max_slope_angle = config.max_slope_angle,
         .step_offset = config.step_offset,
         .prevent_fall_off_ledges = config.prevent_fall_off_ledges,
+        .climbing = false,
+        .climbing_wall_normal_x = 0,
+        .climbing_wall_normal_z = 0,
+        .climbing_target_x = 0,
+        .climbing_target_y = 0,
+        .climbing_target_z = 0,
+        .sprinting = false,
+        .rolling = false,
+        .roll_timer = 0,
+        .roll_direction_x = 0,
+        .roll_direction_z = 0,
         .was_grounded = false,
         .ground_normal_x = 0,
         .ground_normal_y = 1,
@@ -172,12 +223,28 @@ pub fn createCharacter(x: f32, y: f32, z: f32, config: KCCConfig) ?*KCCState {
 }
 
 pub fn removeCharacter(char: *KCCState) void {
-    _ = char;
-    if (g_kcc_system.count > 0) g_kcc_system.count -= 1;
+    if (g_kcc_system.count == 0) return;
+
+    const base_ptr = @intFromPtr(&g_kcc_system.characters[0]);
+    const target_ptr = @intFromPtr(char);
+    const elem_size = @sizeOf(KCCState);
+    if (target_ptr < base_ptr) return;
+
+    const offset = target_ptr - base_ptr;
+    if (offset % elem_size != 0) return;
+    const idx: usize = offset / elem_size;
+    if (idx >= g_kcc_system.count) return;
+
+    const last_idx = g_kcc_system.count - 1;
+    if (idx != last_idx) {
+        g_kcc_system.characters[idx] = g_kcc_system.characters[last_idx];
+    }
+    g_kcc_system.count -= 1;
 }
 
 pub fn move(state: *KCCState, input_x: f32, _: f32, input_z: f32, _: f32, config: KCCConfig) void {
-    const speed = if (state.crouching) config.move_speed * config.crouch_speed_mult else config.move_speed;
+    if (state.rolling or state.climbing) return;
+    const speed = getEffectiveSpeed(state, config);
     state.vel_x = input_x * speed;
     state.vel_z = input_z * speed;
 }
@@ -194,6 +261,213 @@ pub fn crouch(state: *KCCState, active: bool) void {
     if (state.grounded) {
         state.crouching = active;
     }
+}
+
+/// Start sprinting
+pub fn sprint(state: *KCCState, active: bool) void {
+    if (state.grounded and !state.climbing) {
+        state.sprinting = active;
+    } else {
+        state.sprinting = false;
+    }
+}
+
+/// Check if can start climbing
+pub fn canClimb(state: *KCCState, config: KCCConfig) bool {
+    if (!config.climbing_enabled) return false;
+    if (state.climbing) return true;
+    if (state.grounded) return false;
+    return true;
+}
+
+/// Try to grab wall for climbing
+pub fn tryGrabWall(
+    state: *KCCState,
+    s1024: *scene1024.Scene1024,
+    entities: []entity16.Entity16,
+    config: KCCConfig,
+) bool {
+    if (!canClimb(state, config)) return false;
+
+    const px = @as(i32, @intFromFloat(@floor(state.pos_x)));
+    const py = @as(i32, @intFromFloat(@floor(state.pos_y)));
+    const pz = @as(i32, @intFromFloat(@floor(state.pos_z)));
+    const height = getHeight(state);
+
+    const world_view = query.QueryWorldView{
+        .s1024 = s1024,
+        .instances = s1024.instances[0..s1024.instance_count],
+        .entities = entities,
+    };
+    const filter = query.QueryFilter{
+        .include_static = true,
+        .include_dynamic = true,
+        .include_kinematic = true,
+        .include_sensors = false,
+    };
+
+    // Check for wall in four directions
+    const directions = [_]struct { dx: i32, dz: i32 }{
+        .{ .dx = 1, .dz = 0 },
+        .{ .dx = -1, .dz = 0 },
+        .{ .dx = 0, .dz = 1 },
+        .{ .dx = 0, .dz = -1 },
+    };
+
+    for (directions) |dir| {
+        var found_wall = false;
+        var wall_normal_x: f32 = 0;
+        var wall_normal_z: f32 = 0;
+
+        var check_y: i32 = py;
+        while (check_y <= py + height and check_y < 32) : (check_y += 2) {
+            if (query.queryAnyVoxel(&world_view, px + dir.dx, check_y, pz + dir.dz, filter).hit) {
+                found_wall = true;
+                wall_normal_x = @as(f32, @floatFromInt(-dir.dx));
+                wall_normal_z = @as(f32, @floatFromInt(-dir.dz));
+                break;
+            }
+        }
+
+        if (found_wall) {
+            state.climbing = true;
+            state.climbing_wall_normal_x = wall_normal_x;
+            state.climbing_wall_normal_z = wall_normal_z;
+            state.vel_x = 0;
+            state.vel_y = 0;
+            state.vel_z = 0;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/// Update climbing movement
+pub fn climb(
+    state: *KCCState,
+    input_x: f32,
+    input_z: f32,
+    s1024: *scene1024.Scene1024,
+    entities: []entity16.Entity16,
+    config: KCCConfig,
+    dt: f32,
+) void {
+    if (!state.climbing) return;
+
+    // Move up/down/left/right along wall
+    state.vel_x = input_x * config.climbing_speed;
+    state.vel_z = input_z * config.climbing_speed;
+    state.vel_y = input_z * config.climbing_speed;
+
+    // Apply velocity
+    state.pos_x += state.vel_x * dt;
+    state.pos_y += state.vel_y * dt;
+    state.pos_z += state.vel_z * dt;
+
+    // Check if still touching wall
+    const px = @as(i32, @intFromFloat(@floor(state.pos_x)));
+    const py = @as(i32, @intFromFloat(@floor(state.pos_y)));
+    const pz = @as(i32, @intFromFloat(@floor(state.pos_z)));
+
+    const world_view = query.QueryWorldView{
+        .s1024 = s1024,
+        .instances = s1024.instances[0..s1024.instance_count],
+        .entities = entities,
+    };
+    const filter = query.QueryFilter{
+        .include_static = true,
+        .include_dynamic = true,
+        .include_kinematic = true,
+        .include_sensors = false,
+    };
+
+    const check_x = px + @as(i32, @intFromFloat(@round(state.climbing_wall_normal_x)));
+    const check_z = pz + @as(i32, @intFromFloat(@round(state.climbing_wall_normal_z)));
+
+    var touching_wall = false;
+    var check_y: i32 = py;
+    while (check_y <= py + getHeight(state) and check_y < 32) : (check_y += 2) {
+        if (query.queryAnyVoxel(&world_view, check_x, check_y, check_z, filter).hit) {
+            touching_wall = true;
+            break;
+        }
+    }
+
+    if (!touching_wall) {
+        state.climbing = false;
+    }
+
+    // Check if reached max climb height
+    if (py > @as(i32, @intFromFloat(@floor(state.pos_y))) + config.max_climb_height) {
+        state.climbing = false;
+    }
+}
+
+/// Stop climbing
+pub fn stopClimb(state: *KCCState) void {
+    state.climbing = false;
+    state.vel_x = 0;
+    state.vel_y = 0;
+    state.vel_z = 0;
+}
+
+/// Jump off wall while climbing
+pub fn wallJump(state: *KCCState, config: KCCConfig) void {
+    if (!state.climbing) return;
+
+    // Jump away from wall
+    state.vel_x = state.climbing_wall_normal_x * config.jump_force * 0.75;
+    state.vel_y = config.jump_force;
+    state.vel_z = state.climbing_wall_normal_z * config.jump_force * 0.75;
+    state.climbing = false;
+    state.grounded = false;
+    state.jumping = true;
+}
+
+/// Start rolling
+pub fn startRoll(state: *KCCState, dir_x: f32, dir_z: f32, config: KCCConfig) bool {
+    if (state.rolling) return false;
+    if (!state.grounded) return false;
+    if (!config.roll_enabled) return false;
+
+    const len = @sqrt(dir_x * dir_x + dir_z * dir_z);
+    if (len < 0.0001) return false;
+
+    state.rolling = true;
+    state.roll_timer = config.roll_duration;
+    state.roll_direction_x = dir_x / len;
+    state.roll_direction_z = dir_z / len;
+    state.vel_x = state.roll_direction_x * config.roll_speed;
+    state.vel_z = state.roll_direction_z * config.roll_speed;
+    state.vel_y = 0;
+    state.crouching = false;
+    return true;
+}
+
+/// Update rolling state
+pub fn updateRoll(state: *KCCState, dt: f32) void {
+    if (!state.rolling) return;
+
+    state.roll_timer -= dt;
+    if (state.roll_timer <= 0) {
+        state.rolling = false;
+        state.roll_timer = 0;
+    }
+}
+
+/// Check if character is rolling
+pub fn isRolling(state: *KCCState) bool {
+    return state.rolling;
+}
+
+/// Get effective speed considering sprint
+pub fn getEffectiveSpeed(state: *KCCState, config: KCCConfig) f32 {
+    var speed = if (state.crouching) config.move_speed * config.crouch_speed_mult else config.move_speed;
+    if (state.sprinting and state.grounded and !state.climbing) {
+        speed *= config.sprint_speed_mult;
+    }
+    return speed;
 }
 
 pub fn trySetCrouch(
@@ -1172,6 +1446,15 @@ pub fn getConfig(state: *const KCCState) KCCConfig {
         .max_slope_angle = state.max_slope_angle,
         .step_offset = state.step_offset,
         .prevent_fall_off_ledges = state.prevent_fall_off_ledges,
+        .climbing_enabled = true,
+        .climbing_speed = 100.0,
+        .max_climb_height = 6,
+        .sprint_speed_mult = 1.5,
+        .sprint_stamina_cost = 0.1,
+        .roll_enabled = true,
+        .roll_speed = 300.0,
+        .roll_duration = 0.4,
+        .roll_cooldown = 0.5,
     };
 }
 
@@ -1188,6 +1471,424 @@ pub fn updateSystem(
         update(state, s1024, entities, getConfig(state), dt);
     }
     resolveCharacterCharacterCollisions(sys);
+}
+
+// ============================================================================
+// KCC Animation Binding (Item 423)
+// ============================================================================
+
+pub const AnimationType = enum(u8) {
+    idle = 0,
+    walk = 1,
+    run = 2,
+    sprint = 3,
+    jump = 4,
+    fall = 5,
+    crouch_idle = 6,
+    crouch_walk = 7,
+    climb = 8,
+    roll = 9,
+    land = 10,
+};
+
+pub const AnimationBlend = struct {
+    current: AnimationType,
+    next: AnimationType,
+    blend_factor: f32,
+    duration: f32,
+    elapsed: f32,
+};
+
+pub const AnimationState = struct {
+    blend: AnimationBlend,
+    time_scale: f32,
+    looping: bool,
+    playback_pos: f32,
+};
+
+pub const KCCAnimationBinding = struct {
+    state: *KCCState,
+    anim_state: AnimationState,
+    last_grounded: bool,
+    last_crouching: bool,
+    last_sprinting: bool,
+    last_climbing: bool,
+    last_rolling: bool,
+    velocity_magnitude: f32,
+};
+
+pub fn initAnimationBinding(state: *KCCState) KCCAnimationBinding {
+    return .{
+        .state = state,
+        .anim_state = .{
+            .blend = .{
+                .current = .idle,
+                .next = .idle,
+                .blend_factor = 1.0,
+                .duration = 0.2,
+                .elapsed = 0.2,
+            },
+            .time_scale = 1.0,
+            .looping = true,
+            .playback_pos = 0.0,
+        },
+        .last_grounded = false,
+        .last_crouching = false,
+        .last_sprinting = false,
+        .last_climbing = false,
+        .last_rolling = false,
+        .velocity_magnitude = 0.0,
+    };
+}
+
+fn determineAnimationType(binding: *KCCAnimationBinding) AnimationType {
+    const state = binding.state;
+
+    // Priority order for animation selection
+    if (state.rolling) return .roll;
+    if (state.climbing) return .climb;
+    if (!state.grounded) {
+        if (state.vel_y > 0) return .jump;
+        return .fall;
+    }
+    if (state.crouching) {
+        if (binding.velocity_magnitude > 0.1) return .crouch_walk;
+        return .crouch_idle;
+    }
+    if (state.sprinting) return .sprint;
+    if (binding.velocity_magnitude > 0.1) return .run;
+    return .idle;
+}
+
+pub fn updateAnimation(binding: *KCCAnimationBinding, dt: f32) void {
+    const state = binding.state;
+
+    // Calculate velocity magnitude
+    binding.velocity_magnitude = @sqrt(state.vel_x * state.vel_x + state.vel_z * state.vel_z);
+
+    // Check for animation state changes
+    const state_changed = state.grounded != binding.last_grounded or
+        state.crouching != binding.last_crouching or
+        state.sprinting != binding.last_sprinting or
+        state.climbing != binding.last_climbing or
+        state.rolling != binding.last_rolling;
+
+    if (state_changed) {
+        const new_anim = determineAnimationType(binding);
+        if (new_anim != binding.anim_state.blend.current) {
+            binding.anim_state.blend.next = new_anim;
+            binding.anim_state.blend.blend_factor = 0.0;
+            binding.anim_state.blend.elapsed = 0.0;
+        }
+        binding.last_grounded = state.grounded;
+        binding.last_crouching = state.crouching;
+        binding.last_sprinting = state.sprinting;
+        binding.last_climbing = state.climbing;
+        binding.last_rolling = state.rolling;
+    }
+
+    // Update blend
+    if (binding.anim_state.blend.blend_factor < 1.0) {
+        binding.anim_state.blend.elapsed += dt;
+        binding.anim_state.blend.blend_factor = @min(1.0, binding.anim_state.blend.elapsed / binding.anim_state.blend.duration);
+        if (binding.anim_state.blend.blend_factor >= 1.0) {
+            binding.anim_state.blend.current = binding.anim_state.blend.next;
+        }
+    }
+
+    // Update playback position
+    binding.anim_state.playback_pos += dt * binding.anim_state.time_scale;
+    if (binding.anim_state.looping and binding.anim_state.playback_pos > 1.0) {
+        binding.anim_state.playback_pos = @mod(binding.anim_state.playback_pos, 1.0);
+    }
+}
+
+pub fn getCurrentAnimation(binding: *const KCCAnimationBinding) AnimationType {
+    if (binding.anim_state.blend.blend_factor < 0.5) {
+        return binding.anim_state.blend.current;
+    }
+    return binding.anim_state.blend.next;
+}
+
+pub fn getAnimationBlendFactor(binding: *const KCCAnimationBinding) f32 {
+    return binding.anim_state.blend.blend_factor;
+}
+
+pub fn setAnimationTimeScale(binding: *KCCAnimationBinding, scale: f32) void {
+    binding.anim_state.time_scale = @max(0.0, scale);
+}
+
+pub fn setAnimationLooping(binding: *KCCAnimationBinding, looping: bool) void {
+    binding.anim_state.looping = looping;
+}
+
+// ============================================================================
+// KCC Network Sync (Item 424)
+// ============================================================================
+
+pub const NetworkSyncState = struct {
+    pos_x: f32,
+    pos_y: f32,
+    pos_z: f32,
+    vel_x: f32,
+    vel_y: f32,
+    vel_z: f32,
+    yaw: f32,
+    grounded: bool,
+    crouching: bool,
+    jumping: bool,
+    climbing: bool,
+    rolling: bool,
+    sprinting: bool,
+    timestamp: u64,
+};
+
+pub const SyncAuthority = enum(u8) {
+    server = 0,
+    client = 1,
+    predictive = 2,
+};
+
+pub const KCCNetworkSync = struct {
+    authority: SyncAuthority,
+    last_sync_pos_x: f32,
+    last_sync_pos_y: f32,
+    last_sync_pos_z: f32,
+    last_sync_timestamp: u64,
+    position_error_x: f32,
+    position_error_y: f32,
+    position_error_z: f32,
+    error_threshold: f32,
+    snap_distance: f32,
+    interpolation_time: f32,
+    interp_progress: f32,
+    interp_start_x: f32,
+    interp_start_y: f32,
+    interp_start_z: f32,
+    interp_target_x: f32,
+    interp_target_y: f32,
+    interp_target_z: f32,
+};
+
+pub fn initNetworkSync(authority: SyncAuthority) KCCNetworkSync {
+    return .{
+        .authority = authority,
+        .last_sync_pos_x = 0,
+        .last_sync_pos_y = 0,
+        .last_sync_pos_z = 0,
+        .last_sync_timestamp = 0,
+        .position_error_x = 0,
+        .position_error_y = 0,
+        .position_error_z = 0,
+        .error_threshold = 0.5,
+        .snap_distance = 2.0,
+        .interpolation_time = 0.1,
+        .interp_progress = 1.0,
+        .interp_start_x = 0,
+        .interp_start_y = 0,
+        .interp_start_z = 0,
+        .interp_target_x = 0,
+        .interp_target_y = 0,
+        .interp_target_z = 0,
+    };
+}
+
+pub fn captureSyncState(state: *const KCCState, timestamp: u64) NetworkSyncState {
+    return .{
+        .pos_x = state.pos_x,
+        .pos_y = state.pos_y,
+        .pos_z = state.pos_z,
+        .vel_x = state.vel_x,
+        .vel_y = state.vel_y,
+        .vel_z = state.vel_z,
+        .yaw = state.yaw,
+        .grounded = state.grounded,
+        .crouching = state.crouching,
+        .jumping = state.jumping,
+        .climbing = state.climbing,
+        .rolling = state.rolling,
+        .sprinting = state.sprinting,
+        .timestamp = timestamp,
+    };
+}
+
+pub fn applySyncState(state: *KCCState, sync: *const NetworkSyncState) void {
+    state.pos_x = sync.pos_x;
+    state.pos_y = sync.pos_y;
+    state.pos_z = sync.pos_z;
+    state.vel_x = sync.vel_x;
+    state.vel_y = sync.vel_y;
+    state.vel_z = sync.vel_z;
+    state.yaw = sync.yaw;
+    state.grounded = sync.grounded;
+    state.crouching = sync.crouching;
+    state.jumping = sync.jumping;
+    state.climbing = sync.climbing;
+    state.rolling = sync.rolling;
+    state.sprinting = sync.sprinting;
+}
+
+pub fn updateNetworkSync(
+    sync: *KCCNetworkSync,
+    state: *KCCState,
+    server_state: *const NetworkSyncState,
+    dt: f32,
+    timestamp: u64,
+) void {
+    // Calculate position error
+    const error_x = state.pos_x - server_state.pos_x;
+    const error_y = state.pos_y - server_state.pos_y;
+    const error_z = state.pos_z - server_state.pos_z;
+    const error_magnitude = @sqrt(error_x * error_x + error_y * error_y + error_z * error_z);
+
+    sync.position_error_x = error_x;
+    sync.position_error_y = error_y;
+    sync.position_error_z = error_z;
+
+    // Check if we need to correct
+    if (error_magnitude > sync.snap_distance) {
+        // Start interpolation to server position
+        sync.interp_start_x = state.pos_x;
+        sync.interp_start_y = state.pos_y;
+        sync.interp_start_z = state.pos_z;
+        sync.interp_target_x = server_state.pos_x;
+        sync.interp_target_y = server_state.pos_y;
+        sync.interp_target_z = server_state.pos_z;
+        sync.interp_progress = 0.0;
+    } else if (error_magnitude > sync.error_threshold) {
+        // Smoothly interpolate
+        if (sync.interp_progress < 1.0) {
+            sync.interp_progress += dt / sync.interpolation_time;
+            if (sync.interp_progress >= 1.0) {
+                sync.interp_progress = 1.0;
+                state.pos_x = sync.interp_target_x;
+                state.pos_y = sync.interp_target_y;
+                state.pos_z = sync.interp_target_z;
+            } else {
+                state.pos_x = sync.interp_start_x + (sync.interp_target_x - sync.interp_start_x) * sync.interp_progress;
+                state.pos_y = sync.interp_start_y + (sync.interp_target_y - sync.interp_start_y) * sync.interp_progress;
+                state.pos_z = sync.interp_start_z + (sync.interp_target_z - sync.interp_start_z) * sync.interp_progress;
+            }
+        }
+    }
+
+    sync.last_sync_pos_x = server_state.pos_x;
+    sync.last_sync_pos_y = server_state.pos_y;
+    sync.last_sync_pos_z = server_state.pos_z;
+    sync.last_sync_timestamp = timestamp;
+}
+
+pub fn getPositionErrorMagnitude(sync: *const KCCNetworkSync) f32 {
+    return @sqrt(sync.position_error_x * sync.position_error_x +
+        sync.position_error_y * sync.position_error_y +
+        sync.position_error_z * sync.position_error_z);
+}
+
+pub fn setSyncThresholds(sync: *KCCNetworkSync, error_threshold: f32, snap_distance: f32) void {
+    sync.error_threshold = error_threshold;
+    sync.snap_distance = snap_distance;
+}
+
+// ============================================================================
+// KCC Prediction Rollback (Item 425)
+// ============================================================================
+
+pub const PredictionHistory = struct {
+    states: [32]NetworkSyncState,
+    count: u8,
+    capacity: u8,
+    head: u8,
+};
+
+pub const KCCPredictionRollback = struct {
+    history: PredictionHistory,
+    current_input_x: f32,
+    current_input_z: f32,
+    predicted_tick: u32,
+    confirmed_tick: u32,
+    rollback_count: u32,
+};
+
+pub fn initPredictionRollback() KCCPredictionRollback {
+    return .{
+        .history = .{
+            .states = undefined,
+            .count = 0,
+            .capacity = 32,
+            .head = 0,
+        },
+        .current_input_x = 0,
+        .current_input_z = 0,
+        .predicted_tick = 0,
+        .confirmed_tick = 0,
+        .rollback_count = 0,
+    };
+}
+
+pub fn recordPredictionState(rollback: *KCCPredictionRollback, state: *const KCCState, tick: u32) void {
+    if (rollback.history.count < rollback.history.capacity) {
+        rollback.history.count += 1;
+    }
+    const idx = rollback.history.head;
+    rollback.history.head = (rollback.history.head + 1) % rollback.history.capacity;
+    rollback.history.states[idx] = captureSyncState(state, tick);
+}
+
+pub fn rollbackToTick(rollback: *KCCPredictionRollback, state: *KCCState, tick: u32) bool {
+    if (tick >= rollback.confirmed_tick) return false;
+
+    // Find the state closest to but not after the tick
+    var best_idx: ?u8 = null;
+    var best_tick: u64 = 0;
+
+    var i: u8 = 0;
+    while (i < rollback.history.count) : (i += 1) {
+        const state_tick = rollback.history.states[i].timestamp;
+        if (state_tick <= tick and state_tick > best_tick) {
+            best_tick = state_tick;
+            best_idx = i;
+        }
+    }
+
+    if (best_idx) |idx| {
+        applySyncState(state, &rollback.history.states[idx]);
+        rollback.predicted_tick = tick;
+        rollback.rollback_count += 1;
+        return true;
+    }
+
+    return false;
+}
+
+pub fn confirmTick(rollback: *KCCPredictionRollback, tick: u32) void {
+    if (tick > rollback.confirmed_tick) {
+        rollback.confirmed_tick = tick;
+    }
+}
+
+pub fn getRollbackCount(rollback: *const KCCPredictionRollback) u32 {
+    return rollback.rollback_count;
+}
+
+pub fn clearPredictionHistory(rollback: *KCCPredictionRollback) void {
+    rollback.history.count = 0;
+    rollback.history.head = 0;
+}
+
+test "KCC removeCharacter keeps array compact and count consistent" {
+    init();
+    _ = createCharacter(1.0, 2.0, 3.0, .{}) orelse return error.TestUnexpectedResult;
+    const mid = createCharacter(4.0, 5.0, 6.0, .{}) orelse return error.TestUnexpectedResult;
+    _ = createCharacter(7.0, 8.0, 9.0, .{}) orelse return error.TestUnexpectedResult;
+
+    removeCharacter(mid);
+    const sys = getSystem();
+
+    try std.testing.expect(sys.count == 2);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), sys.characters[0].pos_x, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 7.0), sys.characters[1].pos_x, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 8.0), sys.characters[1].pos_y, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 9.0), sys.characters[1].pos_z, 0.0001);
 }
 
 test "KCC checkGrounded samples full support area instead of one diagonal" {
@@ -3029,4 +3730,431 @@ test "KCC updateSystem predictive avoidance reacts to upcoming occupancy overlap
 
     try std.testing.expect(@abs(a.pos_z) > 0.01 or @abs(b.pos_z) > 0.01);
     try std.testing.expect(a.vel_x < 1.0 or b.vel_x > -1.0);
+}
+
+// ============================================================================
+// Tests for KCC Animation Binding (Item 423)
+// ============================================================================
+
+test "423: KCC animation binding - init animation binding" {
+    init();
+    const char = createCharacter(0, 0, 0, .{}) orelse return error.TestUnexpectedResult;
+    defer init();
+    const binding = initAnimationBinding(char);
+    try std.testing.expect(binding.state == char);
+    try std.testing.expect(binding.anim_state.blend.current == .idle);
+}
+
+test "423: KCC animation binding - idle animation for stationary grounded" {
+    init();
+    const char = createCharacter(0, 0, 0, .{}) orelse return error.TestUnexpectedResult;
+    defer init();
+    char.grounded = true;
+    char.vel_x = 0;
+    char.vel_z = 0;
+    var binding = initAnimationBinding(char);
+    const anim_type = determineAnimationType(&binding);
+    try std.testing.expect(anim_type == .idle);
+}
+
+test "423: KCC animation binding - run animation for moving character" {
+    init();
+    const char = createCharacter(0, 0, 0, .{}) orelse return error.TestUnexpectedResult;
+    defer init();
+    char.grounded = true;
+    char.vel_x = 5.0;
+    char.vel_z = 0;
+    var binding = initAnimationBinding(char);
+    updateAnimation(&binding, 0.0);
+    const anim_type = determineAnimationType(&binding);
+    try std.testing.expect(anim_type == .run);
+}
+
+test "423: KCC animation binding - sprint animation for sprinting" {
+    init();
+    const char = createCharacter(0, 0, 0, .{}) orelse return error.TestUnexpectedResult;
+    defer init();
+    char.grounded = true;
+    char.vel_x = 5.0;
+    char.vel_z = 0;
+    char.sprinting = true;
+    var binding = initAnimationBinding(char);
+    updateAnimation(&binding, 0.0);
+    const anim_type = determineAnimationType(&binding);
+    try std.testing.expect(anim_type == .sprint);
+}
+
+test "423: KCC animation binding - jump animation for rising" {
+    init();
+    const char = createCharacter(0, 0, 0, .{}) orelse return error.TestUnexpectedResult;
+    defer init();
+    char.grounded = false;
+    char.vel_y = 10.0;
+    var binding = initAnimationBinding(char);
+    const anim_type = determineAnimationType(&binding);
+    try std.testing.expect(anim_type == .jump);
+}
+
+test "423: KCC animation binding - fall animation for falling" {
+    init();
+    const char = createCharacter(0, 0, 0, .{}) orelse return error.TestUnexpectedResult;
+    defer init();
+    char.grounded = false;
+    char.vel_y = -10.0;
+    var binding = initAnimationBinding(char);
+    const anim_type = determineAnimationType(&binding);
+    try std.testing.expect(anim_type == .fall);
+}
+
+test "423: KCC animation binding - crouch animation" {
+    init();
+    const char = createCharacter(0, 0, 0, .{}) orelse return error.TestUnexpectedResult;
+    defer init();
+    char.grounded = true;
+    char.crouching = true;
+    char.vel_x = 0;
+    char.vel_z = 0;
+    var binding = initAnimationBinding(char);
+    updateAnimation(&binding, 0.0);
+    const anim_type = determineAnimationType(&binding);
+    try std.testing.expect(anim_type == .crouch_idle);
+}
+
+test "423: KCC animation binding - climb animation" {
+    init();
+    const char = createCharacter(0, 0, 0, .{}) orelse return error.TestUnexpectedResult;
+    defer init();
+    char.climbing = true;
+    var binding = initAnimationBinding(char);
+    const anim_type = determineAnimationType(&binding);
+    try std.testing.expect(anim_type == .climb);
+}
+
+test "423: KCC animation binding - roll animation" {
+    init();
+    const char = createCharacter(0, 0, 0, .{}) orelse return error.TestUnexpectedResult;
+    defer init();
+    char.rolling = true;
+    var binding = initAnimationBinding(char);
+    const anim_type = determineAnimationType(&binding);
+    try std.testing.expect(anim_type == .roll);
+}
+
+test "423: KCC animation binding - animation blend transition" {
+    init();
+    const char = createCharacter(0, 0, 0, .{}) orelse return error.TestUnexpectedResult;
+    defer init();
+    char.grounded = true;
+    char.vel_x = 0;
+    var binding = initAnimationBinding(char);
+    try std.testing.expect(binding.anim_state.blend.current == .idle);
+
+    // Start running
+    char.vel_x = 5.0;
+    updateAnimation(&binding, 0.1);
+    try std.testing.expect(binding.anim_state.blend.next == .run);
+}
+
+test "423: KCC animation binding - get current animation" {
+    init();
+    const char = createCharacter(0, 0, 0, .{}) orelse return error.TestUnexpectedResult;
+    defer init();
+    char.grounded = true;
+    var binding = initAnimationBinding(char);
+    try std.testing.expect(getCurrentAnimation(&binding) == .idle);
+}
+
+test "423: KCC animation binding - get blend factor" {
+    init();
+    const char = createCharacter(0, 0, 0, .{}) orelse return error.TestUnexpectedResult;
+    defer init();
+    var binding = initAnimationBinding(char);
+    const blend = getAnimationBlendFactor(&binding);
+    try std.testing.expect(blend >= 0.0 and blend <= 1.0);
+}
+
+test "423: KCC animation binding - set time scale" {
+    init();
+    const char = createCharacter(0, 0, 0, .{}) orelse return error.TestUnexpectedResult;
+    defer init();
+    var binding = initAnimationBinding(char);
+    setAnimationTimeScale(&binding, 2.0);
+    try std.testing.expect(binding.anim_state.time_scale == 2.0);
+}
+
+test "423: KCC animation binding - set looping" {
+    init();
+    const char = createCharacter(0, 0, 0, .{}) orelse return error.TestUnexpectedResult;
+    defer init();
+    var binding = initAnimationBinding(char);
+    try std.testing.expect(binding.anim_state.looping == true);
+    setAnimationLooping(&binding, false);
+    try std.testing.expect(binding.anim_state.looping == false);
+}
+
+// ============================================================================
+// Tests for KCC Network Sync (Item 424)
+// ============================================================================
+
+test "424: KCC network sync - init network sync" {
+    const sync = initNetworkSync(.server);
+    try std.testing.expect(sync.authority == .server);
+    try std.testing.expect(sync.interp_progress == 1.0);
+}
+
+test "424: KCC network sync - capture sync state" {
+    init();
+    const char = createCharacter(1.0, 2.0, 3.0, .{}) orelse return error.TestUnexpectedResult;
+    defer init();
+    char.vel_x = 5.0;
+    char.grounded = true;
+    const sync_state = captureSyncState(char, 100);
+    try std.testing.expect(sync_state.pos_x == 1.0);
+    try std.testing.expect(sync_state.pos_y == 2.0);
+    try std.testing.expect(sync_state.pos_z == 3.0);
+    try std.testing.expect(sync_state.vel_x == 5.0);
+    try std.testing.expect(sync_state.grounded == true);
+    try std.testing.expect(sync_state.timestamp == 100);
+}
+
+test "424: KCC network sync - apply sync state" {
+    init();
+    const char = createCharacter(0, 0, 0, .{}) orelse return error.TestUnexpectedResult;
+    defer init();
+    const sync_state = NetworkSyncState{
+        .pos_x = 10.0,
+        .pos_y = 20.0,
+        .pos_z = 30.0,
+        .vel_x = 5.0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .yaw = 0,
+        .grounded = true,
+        .crouching = false,
+        .jumping = false,
+        .climbing = false,
+        .rolling = false,
+        .sprinting = false,
+        .timestamp = 100,
+    };
+    applySyncState(char, &sync_state);
+    try std.testing.expect(char.pos_x == 10.0);
+    try std.testing.expect(char.pos_y == 20.0);
+    try std.testing.expect(char.pos_z == 30.0);
+    try std.testing.expect(char.grounded == true);
+}
+
+test "424: KCC network sync - update network sync within threshold" {
+    init();
+    const char = createCharacter(0, 0, 0, .{}) orelse return error.TestUnexpectedResult;
+    defer init();
+    var sync = initNetworkSync(.client);
+    sync.error_threshold = 0.5;
+    sync.snap_distance = 2.0;
+
+    const server_state = NetworkSyncState{
+        .pos_x = 0.1,
+        .pos_y = 0,
+        .pos_z = 0.1,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .yaw = 0,
+        .grounded = true,
+        .crouching = false,
+        .jumping = false,
+        .climbing = false,
+        .rolling = false,
+        .sprinting = false,
+        .timestamp = 100,
+    };
+
+    updateNetworkSync(&sync, char, &server_state, 0.1, 100);
+    // Error should be recorded but no correction needed (client behind server)
+    try std.testing.expect(sync.position_error_x < 0);
+}
+
+test "424: KCC network sync - update network sync triggers correction" {
+    init();
+    const char = createCharacter(0, 0, 0, .{}) orelse return error.TestUnexpectedResult;
+    defer init();
+    var sync = initNetworkSync(.client);
+    sync.error_threshold = 0.1;
+    sync.snap_distance = 2.0;
+
+    const server_state = NetworkSyncState{
+        .pos_x = 5.0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .yaw = 0,
+        .grounded = true,
+        .crouching = false,
+        .jumping = false,
+        .climbing = false,
+        .rolling = false,
+        .sprinting = false,
+        .timestamp = 100,
+    };
+
+    updateNetworkSync(&sync, char, &server_state, 0.1, 100);
+    // Should start interpolation since error > snap_distance
+    try std.testing.expect(sync.interp_progress < 1.0);
+}
+
+test "424: KCC network sync - get position error magnitude" {
+    var sync = KCCNetworkSync{
+        .authority = .client,
+        .last_sync_pos_x = 0,
+        .last_sync_pos_y = 0,
+        .last_sync_pos_z = 0,
+        .last_sync_timestamp = 0,
+        .position_error_x = 3.0,
+        .position_error_y = 4.0,
+        .position_error_z = 0.0,
+        .error_threshold = 0.5,
+        .snap_distance = 2.0,
+        .interpolation_time = 0.1,
+        .interp_progress = 1.0,
+        .interp_start_x = 0,
+        .interp_start_y = 0,
+        .interp_start_z = 0,
+        .interp_target_x = 0,
+        .interp_target_y = 0,
+        .interp_target_z = 0,
+    };
+    const magnitude = getPositionErrorMagnitude(&sync);
+    try std.testing.expect(magnitude == 5.0);
+}
+
+test "424: KCC network sync - set sync thresholds" {
+    var sync = initNetworkSync(.client);
+    setSyncThresholds(&sync, 1.0, 3.0);
+    try std.testing.expect(sync.error_threshold == 1.0);
+    try std.testing.expect(sync.snap_distance == 3.0);
+}
+
+// ============================================================================
+// Tests for KCC Prediction Rollback (Item 425)
+// ============================================================================
+
+test "425: KCC prediction rollback - init prediction rollback" {
+    const rollback = initPredictionRollback();
+    try std.testing.expect(rollback.history.count == 0);
+    try std.testing.expect(rollback.predicted_tick == 0);
+    try std.testing.expect(rollback.confirmed_tick == 0);
+}
+
+test "425: KCC prediction rollback - record prediction state" {
+    init();
+    const char = createCharacter(1.0, 2.0, 3.0, .{}) orelse return error.TestUnexpectedResult;
+    defer init();
+    var rollback = initPredictionRollback();
+    recordPredictionState(&rollback, char, 10);
+    try std.testing.expect(rollback.history.count == 1);
+    try std.testing.expect(rollback.history.states[0].pos_x == 1.0);
+    try std.testing.expect(rollback.history.states[0].timestamp == 10);
+}
+
+test "425: KCC prediction rollback - rollback to tick" {
+    init();
+    const char = createCharacter(0, 0, 0, .{}) orelse return error.TestUnexpectedResult;
+    defer init();
+    var rollback = initPredictionRollback();
+
+    // Confirm tick 10 first (so we can rollback to earlier ticks)
+    confirmTick(&rollback, 10);
+
+    // Record state at tick 5
+    char.pos_x = 10.0;
+    recordPredictionState(&rollback, char, 5);
+
+    // Record state at tick 15
+    char.pos_x = 20.0;
+    recordPredictionState(&rollback, char, 15);
+
+    // Move to different position
+    char.pos_x = 30.0;
+
+    // Rollback to tick 5 (5 < 10 so should succeed)
+    const success = rollbackToTick(&rollback, char, 5);
+    try std.testing.expect(success == true);
+    try std.testing.expect(char.pos_x == 10.0);
+}
+
+test "425: KCC prediction rollback - confirm tick" {
+    var rollback = initPredictionRollback();
+    confirmTick(&rollback, 10);
+    try std.testing.expect(rollback.confirmed_tick == 10);
+    confirmTick(&rollback, 15);
+    try std.testing.expect(rollback.confirmed_tick == 15);
+    // Lower tick should not decrease
+    confirmTick(&rollback, 5);
+    try std.testing.expect(rollback.confirmed_tick == 15);
+}
+
+test "425: KCC prediction rollback - get rollback count" {
+    init();
+    const char = createCharacter(0, 0, 0, .{}) orelse return error.TestUnexpectedResult;
+    defer init();
+    var rollback = initPredictionRollback();
+
+    // Confirm tick 20 first (so we can rollback to earlier ticks)
+    confirmTick(&rollback, 20);
+
+    recordPredictionState(&rollback, char, 5);
+    recordPredictionState(&rollback, char, 10);
+    recordPredictionState(&rollback, char, 15);
+
+    _ = rollbackToTick(&rollback, char, 5);
+    try std.testing.expect(getRollbackCount(&rollback) == 1);
+    _ = rollbackToTick(&rollback, char, 10);
+    try std.testing.expect(getRollbackCount(&rollback) == 2);
+}
+
+test "425: KCC prediction rollback - clear prediction history" {
+    init();
+    const char = createCharacter(0, 0, 0, .{}) orelse return error.TestUnexpectedResult;
+    defer init();
+    var rollback = initPredictionRollback();
+
+    recordPredictionState(&rollback, char, 5);
+    recordPredictionState(&rollback, char, 10);
+    try std.testing.expect(rollback.history.count == 2);
+
+    clearPredictionHistory(&rollback);
+    try std.testing.expect(rollback.history.count == 0);
+}
+
+test "425: KCC prediction rollback - rollback to tick after confirmed" {
+    init();
+    const char = createCharacter(0, 0, 0, .{}) orelse return error.TestUnexpectedResult;
+    defer init();
+    var rollback = initPredictionRollback();
+
+    recordPredictionState(&rollback, char, 5);
+    confirmTick(&rollback, 5);
+
+    // Try to rollback to tick 5 (same as confirmed) - should fail
+    const success = rollbackToTick(&rollback, char, 5);
+    try std.testing.expect(success == false);
+}
+
+test "425: KCC prediction rollback - circular buffer" {
+    init();
+    const char = createCharacter(0, 0, 0, .{}) orelse return error.TestUnexpectedResult;
+    defer init();
+    var rollback = initPredictionRollback();
+
+    // Record more than capacity (32) states
+    var i: u32 = 0;
+    while (i < 40) : (i += 1) {
+        char.pos_x = @as(f32, @floatFromInt(i));
+        recordPredictionState(&rollback, char, i);
+    }
+
+    // Should be at capacity
+    try std.testing.expect(rollback.history.count == 32);
 }

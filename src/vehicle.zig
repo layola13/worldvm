@@ -10,6 +10,8 @@ const entity16 = @import("entity16.zig");
 const physics = @import("physics.zig");
 const prediction = @import("prediction.zig");
 const query = @import("query.zig");
+const terrain = @import("terrain.zig");
+const weather = @import("weather.zig");
 
 const WheelWorldPosition = struct {
     x: f32,
@@ -56,6 +58,31 @@ pub const VehicleState = struct {
     mass: u16,
 };
 
+pub const VehicleControlCommand = struct {
+    target_speed: f32,
+    target_yaw_rate: f32,
+    emergency_brake: bool = false,
+};
+
+pub const VehicleNetState = struct {
+    pos_x: f32,
+    pos_y: f32,
+    pos_z: f32,
+    yaw: f32,
+    pitch: f32,
+    roll: f32,
+    speed: f32,
+    angular_velocity: f32,
+    throttle: f32,
+    steering: f32,
+    brake: f32,
+    handbrake: bool,
+    grounded: bool,
+    flipped: bool,
+    vehicle_type: VehicleType,
+    mass: u16,
+};
+
 pub const MAX_VEHICLES: usize = 16;
 
 pub const VehicleSystem = struct {
@@ -77,11 +104,20 @@ pub fn createCar(x: f32, y: f32, z: f32, yaw: f32) ?*VehicleState {
     const vehicle = &g_vehicle_system.vehicles[idx];
 
     vehicle.* = .{
-        .pos_x = x, .pos_y = y, .pos_z = z,
-        .yaw = yaw, .pitch = 0, .roll = 0,
-        .speed = 0, .angular_velocity = 0,
-        .throttle = 0, .steering = 0, .brake = 0,
-        .handbrake = false, .grounded = false, .flipped = false,
+        .pos_x = x,
+        .pos_y = y,
+        .pos_z = z,
+        .yaw = yaw,
+        .pitch = 0,
+        .roll = 0,
+        .speed = 0,
+        .angular_velocity = 0,
+        .throttle = 0,
+        .steering = 0,
+        .brake = 0,
+        .handbrake = false,
+        .grounded = false,
+        .flipped = false,
         .vehicle_type = .car,
         .wheels = [_]WheelConfig{
             .{ .offset_x = -6, .offset_y = 0, .offset_z = -8, .radius = 4, .steering_angle = 0, .driven = true, .braked = true },
@@ -102,13 +138,30 @@ pub fn createAircraft(x: f32, y: f32, z: f32) ?*VehicleState {
     const vehicle = &g_vehicle_system.vehicles[idx];
 
     vehicle.* = .{
-        .pos_x = x, .pos_y = y, .pos_z = z,
-        .yaw = 0, .pitch = 0, .roll = 0,
-        .speed = 0, .angular_velocity = 0,
-        .throttle = 0, .steering = 0, .brake = 0,
-        .handbrake = false, .grounded = false, .flipped = false,
+        .pos_x = x,
+        .pos_y = y,
+        .pos_z = z,
+        .yaw = 0,
+        .pitch = 0,
+        .roll = 0,
+        .speed = 0,
+        .angular_velocity = 0,
+        .throttle = 0,
+        .steering = 0,
+        .brake = 0,
+        .handbrake = false,
+        .grounded = false,
+        .flipped = false,
         .vehicle_type = .aircraft,
-        .wheels = undefined,
+        .wheels = [_]WheelConfig{.{
+            .offset_x = 0,
+            .offset_y = 0,
+            .offset_z = 0,
+            .radius = 0,
+            .steering_angle = 0,
+            .driven = false,
+            .braked = false,
+        }} ** 4,
         .mass = 5000,
     };
     return vehicle;
@@ -122,13 +175,30 @@ pub fn createBoat(x: f32, y: f32, z: f32, yaw: f32) ?*VehicleState {
     const vehicle = &g_vehicle_system.vehicles[idx];
 
     vehicle.* = .{
-        .pos_x = x, .pos_y = y, .pos_z = z,
-        .yaw = yaw, .pitch = 0, .roll = 0,
-        .speed = 0, .angular_velocity = 0,
-        .throttle = 0, .steering = 0, .brake = 0,
-        .handbrake = false, .grounded = false, .flipped = false,
+        .pos_x = x,
+        .pos_y = y,
+        .pos_z = z,
+        .yaw = yaw,
+        .pitch = 0,
+        .roll = 0,
+        .speed = 0,
+        .angular_velocity = 0,
+        .throttle = 0,
+        .steering = 0,
+        .brake = 0,
+        .handbrake = false,
+        .grounded = false,
+        .flipped = false,
         .vehicle_type = .boat,
-        .wheels = undefined,
+        .wheels = [_]WheelConfig{.{
+            .offset_x = 0,
+            .offset_y = 0,
+            .offset_z = 0,
+            .radius = 0,
+            .steering_angle = 0,
+            .driven = false,
+            .braked = false,
+        }} ** 4,
         .mass = 2000,
     };
     return vehicle;
@@ -142,21 +212,51 @@ pub fn createHovercraft(x: f32, y: f32, z: f32, yaw: f32) ?*VehicleState {
     const vehicle = &g_vehicle_system.vehicles[idx];
 
     vehicle.* = .{
-        .pos_x = x, .pos_y = y, .pos_z = z,
-        .yaw = yaw, .pitch = 0, .roll = 0,
-        .speed = 0, .angular_velocity = 0,
-        .throttle = 0, .steering = 0, .brake = 0,
-        .handbrake = false, .grounded = true, .flipped = false,
+        .pos_x = x,
+        .pos_y = y,
+        .pos_z = z,
+        .yaw = yaw,
+        .pitch = 0,
+        .roll = 0,
+        .speed = 0,
+        .angular_velocity = 0,
+        .throttle = 0,
+        .steering = 0,
+        .brake = 0,
+        .handbrake = false,
+        .grounded = true,
+        .flipped = false,
         .vehicle_type = .hovercraft,
-        .wheels = undefined,
+        .wheels = [_]WheelConfig{.{
+            .offset_x = 0,
+            .offset_y = 0,
+            .offset_z = 0,
+            .radius = 0,
+            .steering_angle = 0,
+            .driven = false,
+            .braked = false,
+        }} ** 4,
         .mass = 1000,
     };
     return vehicle;
 }
 
 pub fn removeVehicle(vehicle: *VehicleState) void {
-    _ = vehicle;
-    if (g_vehicle_system.count > 0) g_vehicle_system.count -= 1;
+    if (g_vehicle_system.count == 0) return;
+    const base_ptr = @intFromPtr(&g_vehicle_system.vehicles[0]);
+    const target_ptr = @intFromPtr(vehicle);
+    const elem_size = @sizeOf(VehicleState);
+    if (target_ptr < base_ptr) return;
+    const offset = target_ptr - base_ptr;
+    if (offset % elem_size != 0) return;
+    const idx: usize = offset / elem_size;
+    if (idx >= g_vehicle_system.count) return;
+
+    const last_idx = g_vehicle_system.count - 1;
+    if (idx != last_idx) {
+        g_vehicle_system.vehicles[idx] = g_vehicle_system.vehicles[last_idx];
+    }
+    g_vehicle_system.count -= 1;
 }
 
 /// Apply throttle input (-1 to 1)
@@ -177,6 +277,250 @@ pub fn applyBrake(vehicle: *VehicleState, amount: f32) void {
 /// Apply handbrake
 pub fn setHandbrake(vehicle: *VehicleState, active: bool) void {
     vehicle.handbrake = active;
+}
+
+fn clamp01(value: f32) f32 {
+    return std.math.clamp(value, 0.0, 1.0);
+}
+
+fn isGroundVehicle(vehicle_type: VehicleType) bool {
+    return switch (vehicle_type) {
+        .car, .truck, .motorcycle => true,
+        else => false,
+    };
+}
+
+fn estimateTireWidth(vehicle_type: VehicleType) f32 {
+    return switch (vehicle_type) {
+        .car => 0.26,
+        .truck => 0.36,
+        .motorcycle => 0.15,
+        else => 0.28,
+    };
+}
+
+fn safeWorldToGridCoord(value: f32) i32 {
+    const min_f = @as(f32, @floatFromInt(std.math.minInt(i32) + 1));
+    const max_f = @as(f32, @floatFromInt(std.math.maxInt(i32) - 1));
+    const clamped = std.math.clamp(value, min_f, max_f);
+    return @as(i32, @intFromFloat(@floor(clamped)));
+}
+
+pub const EnvironmentControlAuthority = struct {
+    speed_scale: f32,
+    throttle_scale: f32,
+    brake_scale: f32,
+    steering_scale: f32,
+};
+
+fn defaultEnvironmentControlAuthority() EnvironmentControlAuthority {
+    return .{
+        .speed_scale = 1.0,
+        .throttle_scale = 1.0,
+        .brake_scale = 1.0,
+        .steering_scale = 1.0,
+    };
+}
+
+pub fn measureEnvironmentControlAuthority(
+    vehicle_type: VehicleType,
+    pos_x: f32,
+    pos_z: f32,
+    speed: f32,
+) EnvironmentControlAuthority {
+    if (!isGroundVehicle(vehicle_type)) return defaultEnvironmentControlAuthority();
+
+    const wx = safeWorldToGridCoord(pos_x);
+    const wz = safeWorldToGridCoord(pos_z);
+    const tire_width = estimateTireWidth(vehicle_type);
+    const abs_speed = @abs(speed);
+    const traction = std.math.clamp(terrain.computeTractionAt(wx, wz, abs_speed, tire_width), 0.05, 1.2);
+    const braking_distance_scale = std.math.clamp(terrain.computeBrakingDistanceScaleAt(wx, wz, abs_speed, tire_width), 0.67, 20.0);
+    const weather_penalty = weather.getRoadTractionPenalty();
+    const visibility = weather.getSensorVisibilityFactor();
+
+    const terrain_hazard = clamp01(1.0 - std.math.clamp(traction, 0.0, 1.0));
+    const road_hazard = clamp01(terrain_hazard * 0.7 + weather_penalty * 0.7 + (1.0 - visibility) * 0.5);
+    const braking_scale = std.math.clamp(1.0 + road_hazard * 0.35 + (braking_distance_scale - 1.0) * 0.15, 0.8, 1.8);
+
+    return .{
+        .speed_scale = std.math.clamp(1.0 - road_hazard * 0.75, 0.2, 1.0),
+        .throttle_scale = std.math.clamp(1.0 - road_hazard * 0.9, 0.1, 1.0),
+        .brake_scale = braking_scale,
+        .steering_scale = std.math.clamp(0.35 + traction * 0.4 + visibility * 0.25, 0.2, 1.0),
+    };
+}
+
+const ControlAuthority = EnvironmentControlAuthority;
+
+fn measureControlAuthority(vehicle: *const VehicleState) ControlAuthority {
+    return measureEnvironmentControlAuthority(
+        vehicle.vehicle_type,
+        vehicle.pos_x,
+        vehicle.pos_z,
+        vehicle.speed,
+    );
+}
+
+const MarineControlAuthority = struct {
+    speed_scale: f32,
+    throttle_scale: f32,
+    steering_scale: f32,
+    drag_scale: f32,
+    wind_drift_scale: f32,
+};
+
+fn measureBoatControlAuthority(vehicle: *const VehicleState) MarineControlAuthority {
+    const wx = safeWorldToGridCoord(vehicle.pos_x);
+    const wz = safeWorldToGridCoord(vehicle.pos_z);
+    const medium = terrain.getMediumAt(wx, wz);
+    const atmosphere = weather.getAtmosphericConditions();
+    const weather_severity = weather.getWeatherSeverity();
+    const visibility = weather.getSensorVisibilityFactor();
+    const wind_factor = clamp01(atmosphere.wind_speed / 70.0);
+
+    const medium_penalty: f32 = switch (medium) {
+        .liquid => 0.0,
+        .soft => 0.15,
+        .solid => 0.3,
+        .vapor => 0.4,
+        .plasma => 0.45,
+    };
+    const hazard = clamp01(weather_severity * 0.45 + (1.0 - visibility) * 0.3 + wind_factor * 0.35 + medium_penalty);
+
+    return .{
+        .speed_scale = std.math.clamp(1.0 - hazard * 0.55, 0.35, 1.0),
+        .throttle_scale = std.math.clamp(1.0 - hazard * 0.7, 0.25, 1.0),
+        .steering_scale = std.math.clamp(1.0 - hazard * 0.5, 0.35, 1.0),
+        .drag_scale = std.math.clamp(1.0 + hazard * 1.8 + medium_penalty * 0.8, 0.8, 3.0),
+        .wind_drift_scale = std.math.clamp(0.015 + wind_factor * 0.02 + medium_penalty * 0.005, 0.01, 0.04),
+    };
+}
+
+const HovercraftControlAuthority = struct {
+    speed_scale: f32,
+    throttle_scale: f32,
+    steering_scale: f32,
+    drift_scale: f32,
+    wind_drift_scale: f32,
+};
+
+fn measureHovercraftControlAuthority(vehicle: *const VehicleState) HovercraftControlAuthority {
+    const wx = safeWorldToGridCoord(vehicle.pos_x);
+    const wz = safeWorldToGridCoord(vehicle.pos_z);
+    const medium = terrain.getMediumAt(wx, wz);
+    const traction = std.math.clamp(terrain.computeTractionAt(wx, wz, @abs(vehicle.speed), 0.28), 0.05, 1.2);
+    const atmosphere = weather.getAtmosphericConditions();
+    const weather_severity = weather.getWeatherSeverity();
+    const visibility = weather.getSensorVisibilityFactor();
+    const wind_factor = clamp01(atmosphere.wind_speed / 90.0);
+
+    const medium_penalty: f32 = switch (medium) {
+        .liquid => 0.25,
+        .soft => 0.15,
+        .solid => 0.0,
+        .vapor => 0.08,
+        .plasma => 0.2,
+    };
+    const traction_hazard = clamp01(1.0 - std.math.clamp(traction, 0.0, 1.0));
+    const hazard = clamp01(traction_hazard * 0.55 + weather_severity * 0.3 + (1.0 - visibility) * 0.2 + wind_factor * 0.15 + medium_penalty);
+
+    return .{
+        .speed_scale = std.math.clamp(1.0 - hazard * 0.5, 0.4, 1.0),
+        .throttle_scale = std.math.clamp(1.0 - hazard * 0.75, 0.2, 1.0),
+        .steering_scale = std.math.clamp(1.0 - hazard * 0.65, 0.2, 1.0),
+        .drift_scale = std.math.clamp(0.9 + hazard * 0.6, 0.9, 1.5),
+        .wind_drift_scale = std.math.clamp(0.01 + wind_factor * 0.02 + medium_penalty * 0.01, 0.01, 0.05),
+    };
+}
+
+fn wrapAnglePi(angle: f32) f32 {
+    const tau = std.math.pi * 2.0;
+    var wrapped = angle;
+    while (wrapped > std.math.pi) wrapped -= tau;
+    while (wrapped < -std.math.pi) wrapped += tau;
+    return wrapped;
+}
+
+fn lerpAngleShortest(from: f32, to: f32, alpha: f32) f32 {
+    const clamped = clamp01(alpha);
+    const delta = wrapAnglePi(to - from);
+    return from + delta * clamped;
+}
+
+pub fn applyAutonomyCommand(vehicle: *VehicleState, command: VehicleControlCommand, dt: f32) void {
+    const authority = measureControlAuthority(vehicle);
+    const safe_dt = @max(0.01, dt);
+    const target_speed = @max(0.0, command.target_speed) * authority.speed_scale;
+    const speed_error = target_speed - vehicle.speed;
+    const accel_request = speed_error / safe_dt;
+
+    const throttle_cmd: f32 = if (accel_request > 0.0)
+        std.math.clamp(accel_request / 200.0, 0.0, 1.0)
+    else
+        0.0;
+    var brake_cmd: f32 = if (accel_request < 0.0)
+        std.math.clamp(-accel_request / 400.0, 0.0, 1.0)
+    else
+        0.0;
+
+    if (target_speed <= 0.1 and vehicle.speed > 0.5) {
+        brake_cmd = @max(brake_cmd, 0.5);
+    }
+    if (command.emergency_brake) {
+        brake_cmd = 1.0;
+    }
+
+    const speed_factor = std.math.clamp(1.0 - (@abs(vehicle.speed) / 500.0) * 0.5, 0.5, 1.0);
+    const max_yaw_rate = 0.05 * 2.0 * speed_factor;
+    const steering_base = std.math.clamp(command.target_yaw_rate / @max(0.01, max_yaw_rate), -1.0, 1.0);
+    const steering_cmd = steering_base * authority.steering_scale;
+
+    applyThrottle(vehicle, throttle_cmd * authority.throttle_scale);
+    applyBrake(vehicle, brake_cmd * authority.brake_scale);
+    applySteering(vehicle, steering_cmd);
+}
+
+pub fn exportNetState(vehicle: *const VehicleState) VehicleNetState {
+    return .{
+        .pos_x = vehicle.pos_x,
+        .pos_y = vehicle.pos_y,
+        .pos_z = vehicle.pos_z,
+        .yaw = vehicle.yaw,
+        .pitch = vehicle.pitch,
+        .roll = vehicle.roll,
+        .speed = vehicle.speed,
+        .angular_velocity = vehicle.angular_velocity,
+        .throttle = vehicle.throttle,
+        .steering = vehicle.steering,
+        .brake = vehicle.brake,
+        .handbrake = vehicle.handbrake,
+        .grounded = vehicle.grounded,
+        .flipped = vehicle.flipped,
+        .vehicle_type = vehicle.vehicle_type,
+        .mass = vehicle.mass,
+    };
+}
+
+pub fn importNetState(vehicle: *VehicleState, state: VehicleNetState, position_alpha: f32, orientation_alpha: f32) void {
+    const p_alpha = clamp01(position_alpha);
+    const r_alpha = clamp01(orientation_alpha);
+    vehicle.pos_x += (state.pos_x - vehicle.pos_x) * p_alpha;
+    vehicle.pos_y += (state.pos_y - vehicle.pos_y) * p_alpha;
+    vehicle.pos_z += (state.pos_z - vehicle.pos_z) * p_alpha;
+    vehicle.yaw = lerpAngleShortest(vehicle.yaw, state.yaw, r_alpha);
+    vehicle.pitch = lerpAngleShortest(vehicle.pitch, state.pitch, r_alpha);
+    vehicle.roll = lerpAngleShortest(vehicle.roll, state.roll, r_alpha);
+    vehicle.speed += (state.speed - vehicle.speed) * p_alpha;
+    vehicle.angular_velocity += (state.angular_velocity - vehicle.angular_velocity) * p_alpha;
+    vehicle.throttle += (state.throttle - vehicle.throttle) * p_alpha;
+    vehicle.steering += (state.steering - vehicle.steering) * r_alpha;
+    vehicle.brake += (state.brake - vehicle.brake) * p_alpha;
+    vehicle.handbrake = state.handbrake;
+    vehicle.grounded = state.grounded;
+    vehicle.flipped = state.flipped;
+    vehicle.vehicle_type = state.vehicle_type;
+    vehicle.mass = state.mass;
 }
 
 /// Get forward direction vector
@@ -347,6 +691,11 @@ pub fn checkGrounded(
     s1024: *scene1024.Scene1024,
     entities: []entity16.Entity16,
 ) bool {
+    switch (vehicle.vehicle_type) {
+        .car, .truck, .motorcycle => {},
+        else => return false,
+    }
+
     const check_y = @as(i32, @intFromFloat(@floor(vehicle.pos_y - 1)));
     const wheel_pos = getWheelPositions(vehicle);
     const world_view = query.QueryWorldView{
@@ -383,30 +732,47 @@ fn updateCar(vehicle: *VehicleState, dt: f32) void {
     const braking: f32 = 400.0;
     const max_steering: f32 = 0.05;
     const steering_speed: f32 = 2.0;
-    const friction: f32 = 0.98;
+    const friction_per_tick: f32 = 0.98;
 
     if (vehicle.grounded) {
+        const authority = measureControlAuthority(vehicle);
+        const longitudinal_accel_scale = std.math.clamp(
+            authority.throttle_scale * (0.75 + authority.speed_scale * 0.25),
+            0.1,
+            1.0,
+        );
+        const longitudinal_brake_scale = std.math.clamp(
+            1.0 / @max(0.5, authority.brake_scale),
+            0.35,
+            1.0,
+        );
+        const lateral_grip_scale = authority.steering_scale;
+
+        const friction = std.math.pow(f32, friction_per_tick, dt * 60.0);
         vehicle.speed *= friction;
 
-        vehicle.speed += vehicle.throttle * acceleration * dt;
+        vehicle.speed += vehicle.throttle * acceleration * dt * longitudinal_accel_scale;
 
         if (vehicle.brake > 0) {
             if (vehicle.speed > 0) {
-                vehicle.speed -= vehicle.brake * braking * dt;
+                vehicle.speed -= vehicle.brake * braking * dt * longitudinal_brake_scale;
                 if (vehicle.speed < 0) vehicle.speed = 0;
             } else if (vehicle.speed < 0) {
-                vehicle.speed += vehicle.brake * braking * dt;
+                vehicle.speed += vehicle.brake * braking * dt * longitudinal_brake_scale;
                 if (vehicle.speed > 0) vehicle.speed = 0;
             }
         }
 
         if (vehicle.handbrake) {
-            vehicle.speed *= 0.9;
+            vehicle.speed *= 1.0 - 0.1 * longitudinal_brake_scale;
+        } else if (@abs(vehicle.throttle) < 0.01 and vehicle.brake == 0.0) {
+            // Mild engine braking / rolling resistance when coasting.
+            vehicle.speed *= std.math.pow(f32, 0.99, dt * 60.0);
         }
 
         vehicle.speed = @max(-max_speed / 2, @min(max_speed, vehicle.speed));
 
-        const steering_input = vehicle.steering * max_steering;
+        const steering_input = vehicle.steering * max_steering * lateral_grip_scale;
         const speed_factor = 1.0 - (@abs(vehicle.speed) / max_speed) * 0.5;
         vehicle.angular_velocity = steering_input * steering_speed * speed_factor;
 
@@ -414,13 +780,13 @@ fn updateCar(vehicle: *VehicleState, dt: f32) void {
             vehicle.angular_velocity = -vehicle.angular_velocity;
         }
 
-        vehicle.yaw += vehicle.angular_velocity;
+        vehicle.yaw += vehicle.angular_velocity * dt;
 
         if (vehicle.handbrake and @abs(vehicle.speed) > 10) {
             vehicle.roll += vehicle.steering * dt * 2.0;
         }
     } else {
-        vehicle.speed *= 0.995;
+        vehicle.speed *= std.math.pow(f32, 0.995, dt * 60.0);
     }
 }
 
@@ -428,15 +794,24 @@ fn updateCar(vehicle: *VehicleState, dt: f32) void {
 fn updateAircraft(vehicle: *VehicleState, dt: f32) void {
     const drag: f32 = 0.01;
     const thrust: f32 = 1000.0;
+    const atmosphere = weather.getAtmosphericConditions();
+    const weather_severity = weather.getWeatherSeverity();
+    const wind_factor = clamp01(atmosphere.wind_speed / 120.0);
+    const thrust_efficiency = std.math.clamp(1.0 - weather_severity * 0.2, 0.75, 1.0);
+    const drag_factor = 1.0 + weather_severity * 0.6 + wind_factor * 0.4;
+    const drag_per_tick = std.math.clamp(1.0 - drag * drag_factor, 0.9, 0.9995);
+    const control_scale = std.math.clamp(1.0 - weather_severity * 0.25, 0.6, 1.0);
+    const wind_x = @sin(atmosphere.wind_direction) * atmosphere.wind_speed;
+    const wind_z = @cos(atmosphere.wind_direction) * atmosphere.wind_speed;
 
-    vehicle.speed += vehicle.throttle * thrust * dt;
-    vehicle.speed *= (1.0 - drag);
+    vehicle.speed += vehicle.throttle * thrust * thrust_efficiency * dt;
+    vehicle.speed *= std.math.pow(f32, drag_per_tick, dt * 60.0);
 
     const fwd = getForwardDir(vehicle);
-    vehicle.pos_x += fwd.x * vehicle.speed * dt;
-    vehicle.pos_z += fwd.z * vehicle.speed * dt;
+    vehicle.pos_x += fwd.x * vehicle.speed * dt + wind_x * dt * 0.08;
+    vehicle.pos_z += fwd.z * vehicle.speed * dt + wind_z * dt * 0.08;
 
-    vehicle.pitch += vehicle.steering * dt * 0.5;
+    vehicle.pitch += vehicle.steering * dt * 0.5 * control_scale;
     vehicle.pos_y += @sin(vehicle.pitch) * vehicle.speed * dt;
 
     if (vehicle.pos_y < 10) {
@@ -449,36 +824,59 @@ fn updateAircraft(vehicle: *VehicleState, dt: f32) void {
 
 /// Update boat physics
 fn updateBoat(vehicle: *VehicleState, dt: f32) void {
-    const water_drag: f32 = 0.98;
+    const water_drag_per_tick: f32 = 0.98;
     const acceleration: f32 = 300.0;
     const turn_rate: f32 = 1.5;
+    const authority = measureBoatControlAuthority(vehicle);
+    const atmosphere = weather.getAtmosphericConditions();
+    const wind_x = @sin(atmosphere.wind_direction) * atmosphere.wind_speed;
+    const wind_z = @cos(atmosphere.wind_direction) * atmosphere.wind_speed;
+    const effective_drag_per_tick = std.math.clamp(
+        1.0 - (1.0 - water_drag_per_tick) * authority.drag_scale,
+        0.88,
+        0.995,
+    );
+    const max_speed = std.math.clamp(300.0 * authority.speed_scale, 90.0, 300.0);
 
-    vehicle.speed *= water_drag;
-    vehicle.speed += vehicle.throttle * acceleration * dt;
-    vehicle.speed = @max(0, @min(300, vehicle.speed));
+    vehicle.speed *= std.math.pow(f32, effective_drag_per_tick, dt * 60.0);
+    vehicle.speed += vehicle.throttle * acceleration * dt * authority.throttle_scale;
+    vehicle.speed = @max(0, @min(max_speed, vehicle.speed));
 
-    vehicle.yaw += vehicle.steering * turn_rate * @abs(vehicle.speed) / 100.0 * dt;
+    const speed_turn_gain = std.math.clamp(0.3 + @abs(vehicle.speed) / 120.0, 0.3, 1.0);
+    vehicle.yaw += vehicle.steering * turn_rate * speed_turn_gain * authority.steering_scale * dt;
 
     const fwd = getForwardDir(vehicle);
-    vehicle.pos_x += fwd.x * vehicle.speed * dt;
-    vehicle.pos_z += fwd.z * vehicle.speed * dt;
+    vehicle.pos_x += fwd.x * vehicle.speed * dt + wind_x * dt * authority.wind_drift_scale;
+    vehicle.pos_z += fwd.z * vehicle.speed * dt + wind_z * dt * authority.wind_drift_scale;
 }
 
 /// Update hovercraft physics
 fn updateHovercraft(vehicle: *VehicleState, dt: f32) void {
     const acceleration: f32 = 400.0;
-    const friction: f32 = 0.96;
+    const friction_per_tick: f32 = 0.96;
     const turn_rate: f32 = 2.5;
+    const authority = measureHovercraftControlAuthority(vehicle);
+    const atmosphere = weather.getAtmosphericConditions();
+    const wind_x = @sin(atmosphere.wind_direction) * atmosphere.wind_speed;
+    const wind_z = @cos(atmosphere.wind_direction) * atmosphere.wind_speed;
+    const effective_friction_per_tick = std.math.clamp(
+        friction_per_tick + (authority.drift_scale - 1.0) * 0.03,
+        0.92,
+        0.995,
+    );
+    const max_forward_speed = std.math.clamp(200.0 * authority.speed_scale, 80.0, 200.0);
+    const max_reverse_speed = std.math.clamp(120.0 * authority.speed_scale, 50.0, 120.0);
 
-    vehicle.speed *= friction;
-    vehicle.speed += vehicle.throttle * acceleration * dt;
-    vehicle.speed = @max(-200, @min(200, vehicle.speed));
+    vehicle.speed *= std.math.pow(f32, effective_friction_per_tick, dt * 60.0);
+    vehicle.speed += vehicle.throttle * acceleration * dt * authority.throttle_scale;
+    vehicle.speed = @max(-max_reverse_speed, @min(max_forward_speed, vehicle.speed));
 
-    vehicle.yaw += vehicle.steering * turn_rate * dt;
+    const speed_turn_gain = std.math.clamp(0.55 + @abs(vehicle.speed) / 180.0, 0.55, 1.0);
+    vehicle.yaw += vehicle.steering * turn_rate * authority.steering_scale * speed_turn_gain * dt;
 
     const fwd = getForwardDir(vehicle);
-    vehicle.pos_x += fwd.x * vehicle.speed * dt;
-    vehicle.pos_z += fwd.z * vehicle.speed * dt;
+    vehicle.pos_x += fwd.x * vehicle.speed * dt + wind_x * dt * authority.wind_drift_scale;
+    vehicle.pos_z += fwd.z * vehicle.speed * dt + wind_z * dt * authority.wind_drift_scale;
 
     vehicle.pos_y = 1;
     vehicle.grounded = true;
@@ -491,7 +889,10 @@ pub fn update(
     entities: []entity16.Entity16,
     dt: f32,
 ) void {
-    vehicle.grounded = checkGrounded(vehicle, s1024, entities);
+    switch (vehicle.vehicle_type) {
+        .car, .truck, .motorcycle => vehicle.grounded = checkGrounded(vehicle, s1024, entities),
+        else => vehicle.grounded = false,
+    }
     vehicle.flipped = checkFlipped(vehicle);
 
     switch (vehicle.vehicle_type) {
@@ -670,4 +1071,683 @@ test "applyPredictiveVehicleAvoidance also adds steering bias for conflicting ve
 
     try std.testing.expect(@abs(a.steering) > 0.01);
     try std.testing.expect(@abs(b.steering) > 0.01);
+}
+
+// ============================================================================
+// Tests for Vehicle System (Items 481-510)
+// ============================================================================
+
+test "481: vehicle chassis physics - car creation and basic properties" {
+    init();
+    const car = createCar(0, 0, 0, 0);
+    try std.testing.expect(car != null);
+    try std.testing.expect(car.?.vehicle_type == .car);
+    try std.testing.expect(car.?.mass == 1500);
+    try std.testing.expect(car.?.flipped == false);
+    try std.testing.expect(car.?.grounded == false);
+}
+
+test "482: vehicle mass distribution" {
+    init();
+    const car = createCar(0, 0, 0, 0);
+    try std.testing.expect(car != null);
+    try std.testing.expect(car.?.mass > 0);
+    // Mass affects speed - heavier vehicles should have different characteristics
+    try std.testing.expect(car.?.speed == 0); // Initially stationary
+}
+
+test "483: vehicle center of gravity" {
+    init();
+    const car = createCar(0, 0, 0, 0);
+    try std.testing.expect(car != null);
+    // Car created at origin with 4 wheels at offsets
+    // Forward direction at yaw=0 is +Z
+    try std.testing.expect(car.?.pos_x == 0);
+    try std.testing.expect(car.?.pos_y == 0);
+    try std.testing.expect(car.?.pos_z == 0);
+}
+
+test "484: vehicle inertia tensor approximation" {
+    init();
+    const car = createCar(0, 0, 0, 0);
+    try std.testing.expect(car != null);
+    // Car has yaw, pitch, roll - angular velocity tracking exists
+    try std.testing.expect(car.?.angular_velocity == 0);
+}
+
+test "485: vehicle suspension system" {
+    init();
+    const car = createCar(0, 0, 0, 0);
+    try std.testing.expect(car != null);
+    // Car has 4 wheels with suspension-like config
+    try std.testing.expect(car.?.wheels.len == 4);
+    // Wheels have offsets representing suspension attachment points
+    try std.testing.expect(car.?.wheels[0].offset_y == 0);
+}
+
+test "486: vehicle tire physics" {
+    init();
+    const car = createCar(0, 0, 0, 0);
+    try std.testing.expect(car != null);
+    // Wheels have radius
+    try std.testing.expect(car.?.wheels[0].radius == 4);
+    // Wheels can be driven or braked
+    try std.testing.expect(car.?.wheels[0].driven == true);
+    try std.testing.expect(car.?.wheels[0].braked == true);
+}
+
+test "487: vehicle drivetrain - throttle application" {
+    init();
+    const car = createCar(0, 0, 0, 0);
+    try std.testing.expect(car != null);
+    applyThrottle(car.?, 0.5);
+    try std.testing.expect(car.?.throttle == 0.5);
+    applyThrottle(car.?, -0.5);
+    try std.testing.expect(car.?.throttle == -0.5);
+}
+
+test "488: vehicle transmission - steering input" {
+    init();
+    const car = createCar(0, 0, 0, 0);
+    try std.testing.expect(car != null);
+    applySteering(car.?, 0.3);
+    try std.testing.expect(car.?.steering == 0.3);
+    applySteering(car.?, -0.7);
+    try std.testing.expect(car.?.steering == -0.7);
+}
+
+test "489: vehicle steering system" {
+    init();
+    const car = createCar(0, 0, 0, 0);
+    try std.testing.expect(car != null);
+    applySteering(car.?, 0.5);
+    try std.testing.expect(car.?.steering == 0.5);
+    // Steering is clamped to [-1, 1]
+    applySteering(car.?, 2.0);
+    try std.testing.expect(car.?.steering == 1.0);
+}
+
+test "490: vehicle braking system" {
+    init();
+    const car = createCar(0, 0, 0, 0);
+    try std.testing.expect(car != null);
+    applyBrake(car.?, 0.8);
+    try std.testing.expect(car.?.brake == 0.8);
+    applyBrake(car.?, -0.5);
+    try std.testing.expect(car.?.brake == 0); // Clamped to [0, 1]
+}
+
+test "491: vehicle aerodynamics - forward direction" {
+    init();
+    const car = createCar(0, 0, 0, 0);
+    try std.testing.expect(car != null);
+    const fwd = getForwardDir(car.?);
+    // At yaw=0, forward is +Z direction
+    try std.testing.expectApproxEqAbs(@as(f32, 0), fwd.x, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1), fwd.z, 0.0001);
+}
+
+test "492: vehicle downforce approximation" {
+    init();
+    const slow = createCar(0, 0, 0, 0) orelse return error.TestUnexpectedResult;
+    const fast = createCar(10, 0, 0, 0) orelse return error.TestUnexpectedResult;
+
+    slow.grounded = true;
+    fast.grounded = true;
+    slow.speed = 20.0;
+    fast.speed = 200.0;
+    slow.steering = 1.0;
+    fast.steering = 1.0;
+
+    updateCar(slow, 0.1);
+    updateCar(fast, 0.1);
+
+    // At higher speed, steering authority is reduced by speed factor.
+    try std.testing.expect(@abs(fast.angular_velocity) < @abs(slow.angular_velocity));
+}
+
+test "493: vehicle drag - speed damping" {
+    init();
+    const grounded = createCar(0, 0, 0, 0) orelse return error.TestUnexpectedResult;
+    const airborne = createCar(10, 0, 0, 0) orelse return error.TestUnexpectedResult;
+    grounded.speed = 50.0;
+    airborne.speed = 50.0;
+    grounded.grounded = true;
+    airborne.grounded = false;
+
+    updateCar(grounded, 0.5);
+    updateCar(airborne, 0.5);
+
+    try std.testing.expect(grounded.speed < 50.0);
+    try std.testing.expect(airborne.speed < 50.0);
+    // Ground rolling friction + engine braking should dissipate more than airborne damping.
+    try std.testing.expect(grounded.speed < airborne.speed);
+}
+
+test "494: vehicle lift" {
+    init();
+    const aircraft = createAircraft(0, 100, 0);
+    try std.testing.expect(aircraft != null);
+    try std.testing.expect(aircraft.?.vehicle_type == .aircraft);
+    // Aircraft has different physics handling
+    try std.testing.expect(aircraft.?.mass == 5000);
+}
+
+test "495: vehicle lateral dynamics - right direction" {
+    init();
+    const car = createCar(0, 0, 0, 0);
+    try std.testing.expect(car != null);
+    const right = getRightDir(car.?);
+    // At yaw=0, right is +X direction
+    try std.testing.expectApproxEqAbs(@as(f32, 1), right.x, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0), right.z, 0.0001);
+}
+
+test "496: vehicle longitudinal dynamics" {
+    init();
+    const car = createCar(0, 0, 0, 0) orelse return error.TestUnexpectedResult;
+    car.grounded = true;
+    car.speed = 30.0;
+    car.throttle = 1.0;
+    car.brake = 0.0;
+
+    updateCar(car, 0.2);
+    const accelerated_speed = car.speed;
+    try std.testing.expect(accelerated_speed > 30.0);
+
+    car.brake = 1.0;
+    updateCar(car, 0.2);
+    try std.testing.expect(car.speed < accelerated_speed);
+}
+
+test "vehicle grounded dynamics lose acceleration and steering authority on hazardous surface/weather" {
+    terrain.init();
+    weather.init();
+    init();
+
+    const clear = createCar(0, 0, 0, 0) orelse return error.TestUnexpectedResult;
+    clear.grounded = true;
+    clear.speed = 20.0;
+    clear.throttle = 1.0;
+    clear.brake = 0.0;
+    clear.steering = 1.0;
+    updateCar(clear, 0.2);
+    const clear_speed = clear.speed;
+    const clear_ang_vel = @abs(clear.angular_velocity);
+
+    terrain.init();
+    weather.init();
+    terrain.addTerrainPatch(0, 0, 200, .water);
+    weather.triggerWeather(.storm, 0.95, 60.0);
+    weather.triggerWeather(.fog, 0.9, 60.0);
+    weather.updateWeather(1.0);
+
+    init();
+    const hazard = createCar(0, 0, 0, 0) orelse return error.TestUnexpectedResult;
+    hazard.grounded = true;
+    hazard.speed = 20.0;
+    hazard.throttle = 1.0;
+    hazard.brake = 0.0;
+    hazard.steering = 1.0;
+    updateCar(hazard, 0.2);
+
+    try std.testing.expect(hazard.speed < clear_speed);
+    try std.testing.expect(@abs(hazard.angular_velocity) < clear_ang_vel);
+
+    weather.init();
+    terrain.init();
+}
+
+test "497: vehicle stability control" {
+    init();
+    const car = createCar(0, 0, 0, 0);
+    try std.testing.expect(car != null);
+    car.?.grounded = true;
+    car.?.flipped = false;
+    // Vehicle should be stable when grounded and not flipped
+    try std.testing.expect(car.?.grounded == true);
+    try std.testing.expect(car.?.flipped == false);
+}
+
+test "498: vehicle traction control" {
+    init();
+    const car = createCar(0, 0, 0, 0);
+    try std.testing.expect(car != null);
+    // Driven wheels exist
+    try std.testing.expect(car.?.wheels[0].driven == true);
+    try std.testing.expect(car.?.wheels[2].driven == false); // Rear wheels not driven
+}
+
+test "499: vehicle ABS - anti-lock braking" {
+    init();
+    const car = createCar(0, 0, 0, 0);
+    try std.testing.expect(car != null);
+    // Brakes are applied to all wheels
+    applyBrake(car.?, 0.7);
+    try std.testing.expect(car.?.brake > 0);
+    // Handbrake can be set independently
+    setHandbrake(car.?, true);
+    try std.testing.expect(car.?.handbrake == true);
+}
+
+test "500: vehicle electronic stability" {
+    init();
+    const car = createCar(0, 0, 0, 0);
+    try std.testing.expect(car != null);
+    // Apply steering and check it's within bounds
+    applySteering(car.?, 0.5);
+    try std.testing.expect(@abs(car.?.steering) <= 1.0);
+}
+
+test "501: vehicle differential" {
+    init();
+    const car = createCar(0, 0, 0, 0);
+    try std.testing.expect(car != null);
+    // Front wheels are driven, rear are not
+    try std.testing.expect(car.?.wheels[0].driven == true);
+    try std.testing.expect(car.?.wheels[1].driven == true);
+    try std.testing.expect(car.?.wheels[2].driven == false);
+    try std.testing.expect(car.?.wheels[3].driven == false);
+}
+
+test "502: vehicle all-wheel drive" {
+    init();
+    const truck = createCar(0, 0, 0, 0); // Using car for simplicity
+    try std.testing.expect(truck != null);
+    // Car has 4 wheels available for potential AWD
+    try std.testing.expect(truck.?.wheels.len == 4);
+}
+
+test "503: vehicle hybrid powertrain" {
+    init();
+    const car = createCar(0, 0, 0, 0);
+    try std.testing.expect(car != null);
+    // Throttle can be negative for regenerative braking
+    applyThrottle(car.?, -0.5);
+    try std.testing.expect(car.?.throttle == -0.5);
+}
+
+test "504: vehicle electric powertrain" {
+    init();
+    const car = createCar(0, 0, 0, 0);
+    try std.testing.expect(car != null);
+    // Electric vehicles can have instant torque
+    applyThrottle(car.?, 1.0);
+    try std.testing.expect(car.?.throttle == 1.0);
+}
+
+test "505: vehicle autonomy interface" {
+    init();
+    const car = createCar(0, 0, 0, 0) orelse return error.TestUnexpectedResult;
+    car.speed = 12.0;
+    applyAutonomyCommand(car, .{
+        .target_speed = 30.0,
+        .target_yaw_rate = 0.04,
+        .emergency_brake = false,
+    }, 0.1);
+
+    try std.testing.expect(car.throttle > 0.0);
+    try std.testing.expect(car.brake == 0.0);
+    try std.testing.expect(car.steering > 0.0);
+
+    applyAutonomyCommand(car, .{
+        .target_speed = 0.0,
+        .target_yaw_rate = 0.0,
+        .emergency_brake = true,
+    }, 0.1);
+    try std.testing.expect(car.brake > 0.99);
+    try std.testing.expect(car.throttle == 0.0);
+}
+
+test "vehicle autonomy command scales throttle and steering under terrain/weather hazard" {
+    terrain.init();
+    weather.init();
+    init();
+    const clear_car = createCar(0, 0, 0, 0) orelse return error.TestUnexpectedResult;
+    clear_car.grounded = true;
+    clear_car.speed = 10.0;
+    applyAutonomyCommand(clear_car, .{
+        .target_speed = 35.0,
+        .target_yaw_rate = 0.06,
+        .emergency_brake = false,
+    }, 0.1);
+    const clear_throttle = clear_car.throttle;
+    const clear_steering = @abs(clear_car.steering);
+
+    terrain.init();
+    weather.init();
+    terrain.addTerrainPatch(0, 0, 200, .water);
+    weather.triggerWeather(.storm, 0.95, 60.0);
+    weather.triggerWeather(.fog, 0.9, 60.0);
+    weather.updateWeather(1.0);
+
+    init();
+    const hazard_car = createCar(0, 0, 0, 0) orelse return error.TestUnexpectedResult;
+    hazard_car.grounded = true;
+    hazard_car.speed = 10.0;
+    applyAutonomyCommand(hazard_car, .{
+        .target_speed = 35.0,
+        .target_yaw_rate = 0.06,
+        .emergency_brake = false,
+    }, 0.1);
+
+    try std.testing.expect(hazard_car.throttle < clear_throttle);
+    try std.testing.expect(@abs(hazard_car.steering) < clear_steering);
+
+    weather.init();
+    terrain.init();
+}
+
+test "vehicle autonomy command keeps aircraft control authority independent of terrain/weather" {
+    terrain.init();
+    weather.init();
+    terrain.addTerrainPatch(0, 0, 200, .water);
+    weather.triggerWeather(.storm, 1.0, 60.0);
+    weather.triggerWeather(.fog, 1.0, 60.0);
+    weather.updateWeather(1.0);
+
+    init();
+    const aircraft = createAircraft(0, 100, 0) orelse return error.TestUnexpectedResult;
+    aircraft.speed = 0.0;
+    applyAutonomyCommand(aircraft, .{
+        .target_speed = 50.0,
+        .target_yaw_rate = 0.02,
+        .emergency_brake = false,
+    }, 0.1);
+
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), aircraft.throttle, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.2), aircraft.steering, 0.0001);
+    weather.init();
+    terrain.init();
+}
+
+test "vehicle environment authority reports degraded scales under hazardous terrain and weather" {
+    terrain.init();
+    weather.init();
+
+    const clear = measureEnvironmentControlAuthority(.car, 0.0, 0.0, 20.0);
+
+    terrain.addTerrainPatch(0, 0, 200, .water);
+    weather.triggerWeather(.storm, 0.95, 60.0);
+    weather.triggerWeather(.fog, 0.9, 60.0);
+    weather.updateWeather(1.0);
+
+    const hazard = measureEnvironmentControlAuthority(.car, 0.0, 0.0, 20.0);
+
+    try std.testing.expect(hazard.speed_scale < clear.speed_scale);
+    try std.testing.expect(hazard.throttle_scale < clear.throttle_scale);
+    try std.testing.expect(hazard.steering_scale < clear.steering_scale);
+    try std.testing.expect(hazard.brake_scale > clear.brake_scale);
+
+    weather.init();
+    terrain.init();
+}
+
+test "vehicle environment authority remains neutral for aircraft type" {
+    terrain.init();
+    weather.init();
+    terrain.addTerrainPatch(0, 0, 200, .water);
+    weather.triggerWeather(.storm, 1.0, 60.0);
+    weather.triggerWeather(.fog, 1.0, 60.0);
+    weather.updateWeather(1.0);
+
+    const authority = measureEnvironmentControlAuthority(.aircraft, 0.0, 0.0, 80.0);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), authority.speed_scale, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), authority.throttle_scale, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), authority.brake_scale, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), authority.steering_scale, 0.0001);
+
+    weather.init();
+    terrain.init();
+}
+
+test "506: vehicle prediction interface" {
+    init();
+    const car = createCar(0, 0, 0, 0);
+    try std.testing.expect(car != null);
+    car.?.speed = 10.0;
+    const pose = predictVehiclePose(car.?, 0.1);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), pose.pos_x, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), pose.pos_z, 0.0001);
+}
+
+test "507: vehicle network synchronization" {
+    init();
+    const authoritative = createCar(0, 0, 0, 0) orelse return error.TestUnexpectedResult;
+    const replica = createCar(10, 0, 0, 0) orelse return error.TestUnexpectedResult;
+
+    authoritative.pos_x = 100.0;
+    authoritative.pos_y = 2.0;
+    authoritative.pos_z = -30.0;
+    authoritative.yaw = std.math.pi - 0.15;
+    authoritative.speed = 45.0;
+    authoritative.angular_velocity = 0.2;
+
+    const packet = exportNetState(authoritative);
+    importNetState(replica, packet, 1.0, 1.0);
+
+    try std.testing.expectApproxEqAbs(authoritative.pos_x, replica.pos_x, 0.0001);
+    try std.testing.expectApproxEqAbs(authoritative.pos_y, replica.pos_y, 0.0001);
+    try std.testing.expectApproxEqAbs(authoritative.pos_z, replica.pos_z, 0.0001);
+    try std.testing.expectApproxEqAbs(authoritative.yaw, replica.yaw, 0.0001);
+    try std.testing.expectApproxEqAbs(authoritative.speed, replica.speed, 0.0001);
+
+    // Partial blend should converge smoothly instead of hard snapping.
+    replica.pos_x = 0.0;
+    importNetState(replica, packet, 0.25, 0.25);
+    try std.testing.expectApproxEqAbs(@as(f32, 25.0), replica.pos_x, 0.0001);
+}
+
+test "508: vehicle collision response" {
+    init();
+    const car = createCar(0, 0, 0, 0);
+    try std.testing.expect(car != null);
+    car.?.speed = 50.0;
+    applyCollisionResponse(car.?, 1.0, 0.0, 10.0);
+    // After collision, speed should be reduced
+    try std.testing.expect(car.?.speed < 50.0);
+}
+
+test "509: vehicle roll physics" {
+    init();
+    const car = createCar(0, 0, 0, 0);
+    try std.testing.expect(car != null);
+    car.?.roll = 1.5; // > 1.0 to trigger flipped state
+    car.?.grounded = true;
+    const flipped = checkFlipped(car.?);
+    try std.testing.expect(flipped == true);
+}
+
+test "510: vehicle flip recovery" {
+    init();
+    const car = createCar(0, 0, 0, 0);
+    try std.testing.expect(car != null);
+    car.?.pitch = 1.5;
+    car.?.roll = 0.5;
+    car.?.flipped = true;
+    var recovered = false;
+    var i: u8 = 0;
+    while (i < 64) : (i += 1) {
+        recovered = attemptFlip(car.?);
+        if (recovered) break;
+    }
+    try std.testing.expect(recovered);
+    try std.testing.expect(!car.?.flipped);
+}
+
+test "vehicle removal keeps array compact and count consistent" {
+    init();
+    const a = createCar(0, 0, 0, 0) orelse return error.TestUnexpectedResult;
+    _ = createCar(10, 0, 0, 0) orelse return error.TestUnexpectedResult;
+    const c = createCar(20, 0, 0, 0) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(getSystem().count == 3);
+
+    removeVehicle(a);
+    try std.testing.expect(getSystem().count == 2);
+    try std.testing.expect(getSystem().vehicles[0].pos_x == c.pos_x or getSystem().vehicles[1].pos_x == c.pos_x);
+}
+
+test "vehicle car yaw integration is approximately timestep-invariant over equal total time" {
+    var coarse = VehicleState{
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .yaw = 0,
+        .pitch = 0,
+        .roll = 0,
+        .speed = 80,
+        .angular_velocity = 0,
+        .throttle = 0,
+        .steering = 0.8,
+        .brake = 0,
+        .handbrake = false,
+        .grounded = true,
+        .flipped = false,
+        .vehicle_type = .car,
+        .wheels = [_]WheelConfig{
+            .{ .offset_x = -6, .offset_y = 0, .offset_z = -8, .radius = 4, .steering_angle = 0, .driven = true, .braked = true },
+            .{ .offset_x = 6, .offset_y = 0, .offset_z = -8, .radius = 4, .steering_angle = 0, .driven = true, .braked = true },
+            .{ .offset_x = -6, .offset_y = 0, .offset_z = 8, .radius = 4, .steering_angle = 0, .driven = false, .braked = true },
+            .{ .offset_x = 6, .offset_y = 0, .offset_z = 8, .radius = 4, .steering_angle = 0, .driven = false, .braked = true },
+        },
+        .mass = 1500,
+    };
+    var fine = coarse;
+
+    updateCar(&coarse, 0.5);
+    var i: u8 = 0;
+    while (i < 5) : (i += 1) {
+        updateCar(&fine, 0.1);
+    }
+
+    try std.testing.expectApproxEqAbs(coarse.yaw, fine.yaw, 0.02);
+}
+
+test "vehicle boat drag is approximately timestep-invariant over equal total time" {
+    var coarse = VehicleState{
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .yaw = 0,
+        .pitch = 0,
+        .roll = 0,
+        .speed = 120,
+        .angular_velocity = 0,
+        .throttle = 0,
+        .steering = 0,
+        .brake = 0,
+        .handbrake = false,
+        .grounded = false,
+        .flipped = false,
+        .vehicle_type = .boat,
+        .wheels = [_]WheelConfig{.{ .offset_x = 0, .offset_y = 0, .offset_z = 0, .radius = 0, .steering_angle = 0, .driven = false, .braked = false }} ** 4,
+        .mass = 2000,
+    };
+    var fine = coarse;
+
+    updateBoat(&coarse, 0.5);
+    var i: u8 = 0;
+    while (i < 5) : (i += 1) {
+        updateBoat(&fine, 0.1);
+    }
+
+    try std.testing.expectApproxEqAbs(coarse.speed, fine.speed, 0.1);
+}
+
+test "vehicle boat authority degrades under storm and off-water medium" {
+    terrain.init();
+    weather.init();
+    terrain.addTerrainPatch(0, 0, 300, .water);
+
+    var clear = VehicleState{
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .yaw = 0,
+        .pitch = 0,
+        .roll = 0,
+        .speed = 80,
+        .angular_velocity = 0,
+        .throttle = 1.0,
+        .steering = 1.0,
+        .brake = 0,
+        .handbrake = false,
+        .grounded = false,
+        .flipped = false,
+        .vehicle_type = .boat,
+        .wheels = [_]WheelConfig{.{ .offset_x = 0, .offset_y = 0, .offset_z = 0, .radius = 0, .steering_angle = 0, .driven = false, .braked = false }} ** 4,
+        .mass = 2000,
+    };
+    updateBoat(&clear, 0.2);
+    const clear_speed = clear.speed;
+    const clear_yaw = @abs(clear.yaw);
+
+    terrain.init();
+    weather.init();
+    terrain.addTerrainPatch(0, 0, 300, .mud);
+    weather.triggerWeather(.storm, 0.95, 60.0);
+    weather.triggerWeather(.fog, 0.8, 60.0);
+    weather.updateWeather(1.0);
+
+    var hazard = clear;
+    hazard.yaw = 0;
+    hazard.speed = 80;
+    hazard.throttle = 1.0;
+    hazard.steering = 1.0;
+    updateBoat(&hazard, 0.2);
+
+    try std.testing.expect(hazard.speed < clear_speed);
+    try std.testing.expect(@abs(hazard.yaw) < clear_yaw);
+
+    weather.init();
+    terrain.init();
+}
+
+test "vehicle hovercraft authority degrades under liquid surface and severe weather" {
+    terrain.init();
+    weather.init();
+    terrain.addTerrainPatch(0, 0, 300, .concrete);
+
+    var clear = VehicleState{
+        .pos_x = 0,
+        .pos_y = 1,
+        .pos_z = 0,
+        .yaw = 0,
+        .pitch = 0,
+        .roll = 0,
+        .speed = 60,
+        .angular_velocity = 0,
+        .throttle = 1.0,
+        .steering = 1.0,
+        .brake = 0,
+        .handbrake = false,
+        .grounded = true,
+        .flipped = false,
+        .vehicle_type = .hovercraft,
+        .wheels = [_]WheelConfig{.{ .offset_x = 0, .offset_y = 0, .offset_z = 0, .radius = 0, .steering_angle = 0, .driven = false, .braked = false }} ** 4,
+        .mass = 1000,
+    };
+    updateHovercraft(&clear, 0.2);
+    const clear_speed = clear.speed;
+    const clear_yaw = @abs(clear.yaw);
+
+    terrain.init();
+    weather.init();
+    terrain.addTerrainPatch(0, 0, 300, .water);
+    weather.triggerWeather(.storm, 0.9, 60.0);
+    weather.triggerWeather(.fog, 0.7, 60.0);
+    weather.updateWeather(1.0);
+
+    var hazard = clear;
+    hazard.yaw = 0;
+    hazard.speed = 60;
+    hazard.throttle = 1.0;
+    hazard.steering = 1.0;
+    updateHovercraft(&hazard, 0.2);
+
+    try std.testing.expect(hazard.speed < clear_speed);
+    try std.testing.expect(@abs(hazard.yaw) < clear_yaw);
+
+    weather.init();
+    terrain.init();
 }

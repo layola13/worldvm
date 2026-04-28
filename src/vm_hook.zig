@@ -3303,6 +3303,27 @@ test "rewind snapshot network packet encrypted export/import validates key" {
     try std.testing.expectEqual(expected_hash, rewind_get_world_snapshot_hash(30));
 }
 
+test "ai traffic exports preserve requested target speed while exposing governed speed" {
+    terrain.init();
+    ai_traffic_init();
+
+    try std.testing.expectEqual(@as(c_int, 1), ai_traffic_spawn_vehicle(0.0, 0.0, 0.0, @intFromEnum(ai_traffic.AIBehavior.normal)));
+    try std.testing.expectEqual(@as(u8, 1), ai_traffic_get_vehicle_count());
+    try std.testing.expectEqual(@as(c_int, 0), ai_traffic_set_vehicle_target_speed(0, 30.0));
+    ai_traffic.getTrafficVehicles()[0].vel_z = 24.0;
+
+    terrain.addTerrainPatch(0, 0, 200, .water);
+    ai_traffic_update(0.1);
+
+    try std.testing.expectApproxEqAbs(@as(f32, 30.0), ai_traffic_get_vehicle_target_speed(0), 0.0001);
+    const governed = ai_traffic_get_vehicle_governed_target_speed(0);
+    try std.testing.expect(governed >= 0.0 and governed < 30.0);
+
+    try std.testing.expectEqual(@as(c_int, -1), ai_traffic_set_vehicle_target_speed(1, 10.0));
+    try std.testing.expect(ai_traffic_get_vehicle_target_speed(1) < 0.0);
+    try std.testing.expect(ai_traffic_get_vehicle_governed_target_speed(1) < 0.0);
+}
+
 // ============================================================================
 // Tire Functions
 // ============================================================================
@@ -4125,6 +4146,31 @@ pub export fn ai_traffic_get_vehicle_count() u8 {
 
 pub export fn ai_traffic_get_light_count() u8 {
     return ai_traffic.getTrafficLightCount();
+}
+
+pub export fn ai_traffic_update(dt: f32) void {
+    if (!std.math.isFinite(dt) or dt <= 0.0) return;
+    ai_traffic.updateAI(dt);
+}
+
+pub export fn ai_traffic_set_vehicle_target_speed(vehicle_idx: u8, target_speed: f32) c_int {
+    if (!std.math.isFinite(target_speed)) return -1;
+    const vehicles = ai_traffic.getTrafficVehicles();
+    if (vehicle_idx >= vehicles.len) return -1;
+    vehicles[vehicle_idx].target_vel = @max(0.0, target_speed);
+    return 0;
+}
+
+pub export fn ai_traffic_get_vehicle_target_speed(vehicle_idx: u8) f32 {
+    const vehicles = ai_traffic.getTrafficVehicles();
+    if (vehicle_idx >= vehicles.len) return -1.0;
+    return vehicles[vehicle_idx].target_vel;
+}
+
+pub export fn ai_traffic_get_vehicle_governed_target_speed(vehicle_idx: u8) f32 {
+    const vehicles = ai_traffic.getTrafficVehicles();
+    if (vehicle_idx >= vehicles.len) return -1.0;
+    return vehicles[vehicle_idx].governed_target_vel;
 }
 
 pub export fn ai_traffic_trigger_emergency(vehicle_idx: u8) void {

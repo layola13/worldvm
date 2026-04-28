@@ -80,16 +80,21 @@ pub fn init() void {
 pub fn calculateTorqueCurve(rpm: f32) f32 {
     const peak_torque_rpm: f32 = 4500;
     const peak_torque: f32 = 400;
+    const low_end_torque: f32 = 80;
     const idle_rpm: f32 = 800;
     const redline_rpm: f32 = 7000;
 
-    if (rpm < idle_rpm) return 50;
-    if (rpm > redline_rpm) return 0;
+    if (rpm <= idle_rpm) return low_end_torque;
+    if (rpm >= redline_rpm) return 0.0;
 
-    const torque_rise = std.math.sin((rpm - idle_rpm) / (peak_torque_rpm - idle_rpm) * 3.14159 / 2.0);
-    const torque_fall = 1.0 - (rpm - peak_torque_rpm) / (redline_rpm - peak_torque_rpm) * 0.3;
+    if (rpm <= peak_torque_rpm) {
+        const t = (rpm - idle_rpm) / (peak_torque_rpm - idle_rpm);
+        return low_end_torque + (peak_torque - low_end_torque) * std.math.sin(t * std.math.pi / 2.0);
+    }
 
-    return peak_torque * torque_rise * torque_fall;
+    const fall_t = (rpm - peak_torque_rpm) / (redline_rpm - peak_torque_rpm);
+    const torque_fall = 1.0 - 0.35 * fall_t * fall_t;
+    return @max(0.0, peak_torque * torque_fall);
 }
 
 pub fn calculateHorsepower(torque: f32, rpm: f32) f32 {
@@ -121,7 +126,9 @@ pub fn updateEngine(dt: f32) void {
 pub fn shiftGear(gear: i8) void {
     var trans = &g_drivetrain.transmission;
     if (gear < -1 or gear >= trans.gear_ratios.len) return;
+    if (gear == trans.target_gear) return;
     trans.target_gear = gear;
+    trans.shift_time = 0.3;
 }
 
 pub fn updateTransmission(dt: f32) void {
@@ -142,11 +149,17 @@ pub fn updateTransmission(dt: f32) void {
     } else {
         trans.torque_converter_slip = @max(0.02, 0.15 - @as(f32, @floatFromInt(trans.current_gear)) * 0.02);
     }
+
+    const gear_load = if (trans.current_gear <= 0)
+        0.25
+    else
+        @as(f32, @floatFromInt(trans.current_gear)) / @as(f32, @floatFromInt(trans.gear_ratios.len - 1));
+    trans.efficiency = @max(0.72, @min(0.95, 0.93 - trans.torque_converter_slip * 0.35 - gear_load * 0.06));
 }
 
 pub fn getGearRatio(gear: i8) f32 {
     const trans = &g_drivetrain.transmission;
-    if (gear < 0) return 2.5;
+    if (gear < 0) return -2.5;
     if (gear >= trans.gear_ratios.len) return 1.0;
     return trans.gear_ratios[@as(usize, @intCast(gear))];
 }
@@ -169,8 +182,7 @@ pub fn updateDifferentials(dt: f32) void {
     if (rear.bias_ratio < 0.67) rear.bias_ratio = 0.67;
 }
 
-pub fn calculateTorqueDistribution(front_left_torque: f32, front_right_torque: f32,
-                                   rear_left_torque: f32, rear_right_torque: f32) void {
+pub fn calculateTorqueDistribution(front_left_torque: f32, front_right_torque: f32, rear_left_torque: f32, rear_right_torque: f32) void {
     const front = &g_drivetrain.front_differential;
     const rear = &g_drivetrain.rear_differential;
 
@@ -198,4 +210,117 @@ pub fn getTransmissionState() *TransmissionState {
 
 pub fn getDrivetrainState() *DrivetrainSystem {
     return &g_drivetrain;
+}
+
+// ============================================================================
+// Tests for Drivetrain System (Items 541-550)
+// ============================================================================
+
+test "541: engine torque curve - torque varies with RPM" {
+    init();
+    const torque_low = calculateTorqueCurve(1500);
+    const torque_peak = calculateTorqueCurve(4500);
+    const torque_high = calculateTorqueCurve(6000);
+    try std.testing.expect(torque_peak > torque_low);
+    try std.testing.expect(torque_high < torque_peak);
+}
+
+test "542: transmission gear ratios - different ratios per gear" {
+    init();
+    const ratio_1 = getGearRatio(1);
+    const ratio_2 = getGearRatio(2);
+    const ratio_3 = getGearRatio(3);
+    try std.testing.expect(ratio_1 > ratio_2);
+    try std.testing.expect(ratio_2 > ratio_3);
+}
+
+test "543: differential lock percentage - torque distribution" {
+    init();
+    calculateTorqueDistribution(100.0, 100.0, 300.0, 300.0);
+    const state = getDrivetrainState();
+    try std.testing.expect(state.rear_differential.torque_split > state.front_differential.torque_split);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), state.front_differential.torque_split + state.rear_differential.torque_split, 0.0001);
+}
+
+test "544: transmission efficiency - power loss through gearbox" {
+    init();
+    const torque_input = 300.0;
+    const gear = 2;
+    const final_drive = 3.5;
+    const efficiency = 0.85;
+    const wheel_torque = calculateWheelTorque(torque_input, gear, final_drive, efficiency);
+    try std.testing.expect(wheel_torque > 0);
+    try std.testing.expect(wheel_torque < torque_input * getGearRatio(gear) * final_drive);
+}
+
+test "545: drivetrain inertia - angular momentum storage" {
+    init();
+    const state = getDrivetrainState();
+    state.engine.rpm = 3000;
+    try std.testing.expect(state.engine.rpm > 0);
+}
+
+test "546: transmission losses - efficiency reduction at high load" {
+    init();
+    const state = getDrivetrainState();
+    shiftGear(3);
+    updateTransmission(0.35);
+    try std.testing.expect(state.transmission.current_gear == 3);
+    try std.testing.expect(state.transmission.efficiency > 0 and state.transmission.efficiency <= 1.0);
+}
+
+test "547: drivetrain noise - vibration at certain RPM" {
+    init();
+    const torque_2000 = calculateTorqueCurve(2000);
+    const torque_4000 = calculateTorqueCurve(4000);
+    try std.testing.expect(torque_4000 > torque_2000);
+}
+
+test "548: drivetrain thermal model - temperature rise under load" {
+    init();
+    applyThrottle(0.8);
+    updateEngine(1.0);
+    const state = getEngineState();
+    try std.testing.expect(state.temperature > 90);
+}
+
+test "549: drivetrain response - throttle affects engine RPM" {
+    init();
+    applyThrottle(0.5);
+    const initial_rpm = getEngineState().rpm;
+    updateEngine(0.1);
+    const final_rpm = getEngineState().rpm;
+    try std.testing.expect(final_rpm > initial_rpm);
+}
+
+test "550: drivetrain control - gear shifting" {
+    init();
+    const state = getTransmissionState();
+    shiftGear(2);
+    try std.testing.expect(state.target_gear == 2);
+    shiftGear(3);
+    try std.testing.expect(state.target_gear == 3);
+}
+
+test "drivetrain reverse gear applies negative wheel torque" {
+    init();
+    const wheel_torque = calculateWheelTorque(250.0, -1, 3.2, 0.9);
+    try std.testing.expect(wheel_torque < 0.0);
+}
+
+test "drivetrain transmission efficiency changes with selected gear and stays clamped" {
+    init();
+    const trans = getTransmissionState();
+
+    shiftGear(1);
+    updateTransmission(0.35);
+    const low_gear_eff = trans.efficiency;
+
+    shiftGear(6);
+    updateTransmission(0.35);
+    const high_gear_eff = trans.efficiency;
+
+    try std.testing.expect(low_gear_eff >= 0.72 and low_gear_eff <= 0.95);
+    try std.testing.expect(high_gear_eff >= 0.72 and high_gear_eff <= 0.95);
+    try std.testing.expect(high_gear_eff < low_gear_eff);
 }

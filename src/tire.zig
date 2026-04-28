@@ -25,6 +25,7 @@ pub const TireState = struct {
     grip_level: f32,
     rolling_resistance: f32,
     hydroplaning: bool,
+    heat_transfer_coefficient: f32,
 };
 
 pub const TireConfig = struct {
@@ -63,9 +64,15 @@ pub fn createTire(x: f32, y: f32, z: f32, config: TireConfig) ?*TireState {
     const tire = &g_tire_system.tires[idx];
 
     tire.* = .{
-        .pos_x = x, .pos_y = y, .pos_z = z,
-        .vel_x = 0, .vel_y = 0, .vel_z = 0,
-        .yaw = 0, .pitch = 0, .roll = 0,
+        .pos_x = x,
+        .pos_y = y,
+        .pos_z = z,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .yaw = 0,
+        .pitch = 0,
+        .roll = 0,
         .angular_velocity = 0,
         .steering_angle = 0,
         .camber_angle = 0,
@@ -76,6 +83,7 @@ pub fn createTire(x: f32, y: f32, z: f32, config: TireConfig) ?*TireState {
         .grip_level = 1.0,
         .rolling_resistance = config.rolling_resistance_coefficient,
         .hydroplaning = false,
+        .heat_transfer_coefficient = config.heat_transfer_coefficient,
     };
     return tire;
 }
@@ -180,4 +188,362 @@ pub fn getWheelPositions(tire: *const TireState) struct { x: f32, y: f32, z: f32
 
 pub fn getSystem() *TireSystem {
     return &g_tire_system;
+}
+
+// ============================================================================
+// Tests for Tire System (Items 511-525)
+// ============================================================================
+
+test "511: tire physics model - tire creation and basic properties" {
+    init();
+    const config = TireConfig{
+        .radius = 0.3,
+        .width = 0.2,
+        .mass = 5.0,
+        .lateral_stiffness = 10000,
+        .longitudinal_stiffness = 10000,
+        .camber_thrust_coefficient = 0.5,
+        .peak_slip_ratio = 0.15,
+        .peak_slip_angle = 0.1,
+        .friction_coefficient = 1.0,
+        .rolling_resistance_coefficient = 0.015,
+        .heat_transfer_coefficient = 0.1,
+        .optimal_temperature = 90,
+        .max_temperature = 120,
+    };
+    const tire = createTire(0, 0, 0, config);
+    try std.testing.expect(tire != null);
+    try std.testing.expect(tire.?.normal_force > 0);
+    try std.testing.expect(tire.?.grip_level == 1.0);
+    try std.testing.expect(tire.?.hydroplaning == false);
+}
+
+test "512: tire friction circle - combined force limiting" {
+    init();
+    const config = TireConfig{
+        .radius = 0.3,
+        .width = 0.2,
+        .mass = 5.0,
+        .lateral_stiffness = 10000,
+        .longitudinal_stiffness = 10000,
+        .camber_thrust_coefficient = 0.5,
+        .peak_slip_ratio = 0.15,
+        .peak_slip_angle = 0.1,
+        .friction_coefficient = 1.0,
+        .rolling_resistance_coefficient = 0.015,
+        .heat_transfer_coefficient = 0.1,
+        .optimal_temperature = 90,
+        .max_temperature = 120,
+    };
+    const tire = createTire(0, 0, 0, config).?;
+    const max_friction = tire.normal_force * config.friction_coefficient;
+    const combined = calculateFrictionCircle(5000, 3000, max_friction);
+    try std.testing.expect(combined <= max_friction);
+}
+
+test "513: tire slip ratio - calculation from velocity difference" {
+    init();
+    const config = TireConfig{
+        .radius = 0.3,
+        .width = 0.2,
+        .mass = 5.0,
+        .lateral_stiffness = 10000,
+        .longitudinal_stiffness = 10000,
+        .camber_thrust_coefficient = 0.5,
+        .peak_slip_ratio = 0.15,
+        .peak_slip_angle = 0.1,
+        .friction_coefficient = 1.0,
+        .rolling_resistance_coefficient = 0.015,
+        .heat_transfer_coefficient = 0.1,
+        .optimal_temperature = 90,
+        .max_temperature = 120,
+    };
+    const tire = createTire(0, 0, 0, config).?;
+    tire.angular_velocity = 20.0;
+    const slip_ratio = calculateSlipRatio(tire, 10.0, config.radius);
+    try std.testing.expect(slip_ratio != 0);
+}
+
+test "514: tire slip angle - calculation from yaw rate" {
+    init();
+    const config = TireConfig{
+        .radius = 0.3,
+        .width = 0.2,
+        .mass = 5.0,
+        .lateral_stiffness = 10000,
+        .longitudinal_stiffness = 10000,
+        .camber_thrust_coefficient = 0.5,
+        .peak_slip_ratio = 0.15,
+        .peak_slip_angle = 0.1,
+        .friction_coefficient = 1.0,
+        .rolling_resistance_coefficient = 0.015,
+        .heat_transfer_coefficient = 0.1,
+        .optimal_temperature = 90,
+        .max_temperature = 120,
+    };
+    const tire = createTire(0, 0, 0, config).?;
+    tire.steering_angle = 0.1;
+    const slip_angle = calculateSlipAngle(tire, 20.0, 0.5);
+    try std.testing.expect(slip_angle != 0);
+}
+
+test "515: tire longitudinal force - force calculation from slip ratio" {
+    init();
+    const config = TireConfig{
+        .radius = 0.3,
+        .width = 0.2,
+        .mass = 5.0,
+        .lateral_stiffness = 10000,
+        .longitudinal_stiffness = 10000,
+        .camber_thrust_coefficient = 0.5,
+        .peak_slip_ratio = 0.15,
+        .peak_slip_angle = 0.1,
+        .friction_coefficient = 1.0,
+        .rolling_resistance_coefficient = 0.015,
+        .heat_transfer_coefficient = 0.1,
+        .optimal_temperature = 90,
+        .max_temperature = 120,
+    };
+    const tire = createTire(0, 0, 0, config).?;
+    const long_force = calculateLongitudinalForce(tire, 0.1, config);
+    try std.testing.expect(long_force != 0);
+}
+
+test "516: tire lateral force - force calculation from slip angle" {
+    init();
+    const config = TireConfig{
+        .radius = 0.3,
+        .width = 0.2,
+        .mass = 5.0,
+        .lateral_stiffness = 10000,
+        .longitudinal_stiffness = 10000,
+        .camber_thrust_coefficient = 0.5,
+        .peak_slip_ratio = 0.15,
+        .peak_slip_angle = 0.1,
+        .friction_coefficient = 1.0,
+        .rolling_resistance_coefficient = 0.015,
+        .heat_transfer_coefficient = 0.1,
+        .optimal_temperature = 90,
+        .max_temperature = 120,
+    };
+    const tire = createTire(0, 0, 0, config).?;
+    tire.camber_angle = 0.05;
+    const lat_force = calculateLateralForce(tire, 0.08, config);
+    try std.testing.expect(lat_force != 0);
+}
+
+test "517: tire combined slip - interaction of longitudinal and lateral forces" {
+    init();
+    const config = TireConfig{
+        .radius = 0.3,
+        .width = 0.2,
+        .mass = 5.0,
+        .lateral_stiffness = 10000,
+        .longitudinal_stiffness = 10000,
+        .camber_thrust_coefficient = 0.5,
+        .peak_slip_ratio = 0.15,
+        .peak_slip_angle = 0.1,
+        .friction_coefficient = 1.0,
+        .rolling_resistance_coefficient = 0.015,
+        .heat_transfer_coefficient = 0.1,
+        .optimal_temperature = 90,
+        .max_temperature = 120,
+    };
+    const tire = createTire(0, 0, 0, config).?;
+    tire.normal_force = 4000;
+    const long_force = calculateLongitudinalForce(tire, 0.05, config);
+    const lat_force = calculateLateralForce(tire, 0.05, config);
+    const max_friction = tire.normal_force * config.friction_coefficient;
+    const combined = calculateFrictionCircle(long_force, lat_force, max_friction);
+    const uncapped = @sqrt(long_force * long_force + lat_force * lat_force);
+    try std.testing.expect(combined >= 0.0);
+    try std.testing.expect(combined <= max_friction);
+    try std.testing.expectApproxEqAbs(@min(uncapped, max_friction), combined, 0.001);
+}
+
+test "518: tire thermal model - temperature update from friction work" {
+    init();
+    const config = TireConfig{
+        .radius = 0.3,
+        .width = 0.2,
+        .mass = 5.0,
+        .lateral_stiffness = 10000,
+        .longitudinal_stiffness = 10000,
+        .camber_thrust_coefficient = 0.5,
+        .peak_slip_ratio = 0.15,
+        .peak_slip_angle = 0.1,
+        .friction_coefficient = 1.0,
+        .rolling_resistance_coefficient = 0.015,
+        .heat_transfer_coefficient = 0.1,
+        .optimal_temperature = 90,
+        .max_temperature = 120,
+    };
+    const tire = createTire(0, 0, 0, config).?;
+    const initial_temp = tire.surface_temperature;
+    updateTemperature(tire, 100.0, 0.1, 20.0);
+    try std.testing.expect(tire.surface_temperature != initial_temp);
+}
+
+test "519: tire wear model - grip level affects force output" {
+    init();
+    const config = TireConfig{
+        .radius = 0.3,
+        .width = 0.2,
+        .mass = 5.0,
+        .lateral_stiffness = 10000,
+        .longitudinal_stiffness = 10000,
+        .camber_thrust_coefficient = 0.5,
+        .peak_slip_ratio = 0.15,
+        .peak_slip_angle = 0.1,
+        .friction_coefficient = 1.0,
+        .rolling_resistance_coefficient = 0.015,
+        .heat_transfer_coefficient = 0.1,
+        .optimal_temperature = 90,
+        .max_temperature = 120,
+    };
+    const tire = createTire(0, 0, 0, config).?;
+    tire.grip_level = 1.0;
+    const force_full_grip = calculateLongitudinalForce(tire, 0.1, config);
+    tire.grip_level = 0.5;
+    const force_worn = calculateLongitudinalForce(tire, 0.1, config);
+    try std.testing.expect(@abs(force_worn) < @abs(force_full_grip));
+}
+
+test "520: tire pressure model - load sensitivity affects force distribution" {
+    init();
+    const config = TireConfig{
+        .radius = 0.3,
+        .width = 0.2,
+        .mass = 5.0,
+        .lateral_stiffness = 10000,
+        .longitudinal_stiffness = 10000,
+        .camber_thrust_coefficient = 0.5,
+        .peak_slip_ratio = 0.15,
+        .peak_slip_angle = 0.1,
+        .friction_coefficient = 1.0,
+        .rolling_resistance_coefficient = 0.015,
+        .heat_transfer_coefficient = 0.1,
+        .optimal_temperature = 90,
+        .max_temperature = 120,
+    };
+    const tire = createTire(0, 0, 0, config).?;
+    applyLoadSensitivity(tire, 1000);
+    try std.testing.expect(tire.normal_force == 1000);
+    try std.testing.expect(tire.load_sensitivity < 1.0);
+}
+
+test "521: tire hydroplaning - detection at high speed in water" {
+    init();
+    const config = TireConfig{
+        .radius = 0.3,
+        .width = 0.2,
+        .mass = 5.0,
+        .lateral_stiffness = 10000,
+        .longitudinal_stiffness = 10000,
+        .camber_thrust_coefficient = 0.5,
+        .peak_slip_ratio = 0.15,
+        .peak_slip_angle = 0.1,
+        .friction_coefficient = 1.0,
+        .rolling_resistance_coefficient = 0.015,
+        .heat_transfer_coefficient = 0.1,
+        .optimal_temperature = 90,
+        .max_temperature = 120,
+    };
+    const tire = createTire(0, 0, 0, config).?;
+    tire.normal_force = 4000;
+    const no_hydro = checkHydroplaning(tire, 0.0005, 30.0);
+    const hydro = checkHydroplaning(tire, 0.1, 80.0);
+    try std.testing.expect(!no_hydro);
+    try std.testing.expect(hydro);
+}
+
+test "522: tire snow conditions - reduced friction coefficient" {
+    init();
+    const config = TireConfig{
+        .radius = 0.3,
+        .width = 0.2,
+        .mass = 5.0,
+        .lateral_stiffness = 10000,
+        .longitudinal_stiffness = 10000,
+        .camber_thrust_coefficient = 0.5,
+        .peak_slip_ratio = 0.15,
+        .peak_slip_angle = 0.1,
+        .friction_coefficient = 0.4,
+        .rolling_resistance_coefficient = 0.015,
+        .heat_transfer_coefficient = 0.1,
+        .optimal_temperature = 90,
+        .max_temperature = 120,
+    };
+    const tire = createTire(0, 0, 0, config).?;
+    const snow_force = calculateLongitudinalForce(tire, 0.1, config);
+    try std.testing.expect(@abs(snow_force) < tire.normal_force);
+}
+
+test "523: tire ice conditions - very low friction" {
+    init();
+    const config = TireConfig{
+        .radius = 0.3,
+        .width = 0.2,
+        .mass = 5.0,
+        .lateral_stiffness = 10000,
+        .longitudinal_stiffness = 10000,
+        .camber_thrust_coefficient = 0.5,
+        .peak_slip_ratio = 0.15,
+        .peak_slip_angle = 0.1,
+        .friction_coefficient = 0.15,
+        .rolling_resistance_coefficient = 0.015,
+        .heat_transfer_coefficient = 0.1,
+        .optimal_temperature = 90,
+        .max_temperature = 120,
+    };
+    const tire = createTire(0, 0, 0, config).?;
+    const ice_force = calculateLongitudinalForce(tire, 0.05, config);
+    try std.testing.expect(@abs(ice_force) < 500);
+}
+
+test "524: tire off-road - higher slip threshold for mud" {
+    init();
+    const config = TireConfig{
+        .radius = 0.3,
+        .width = 0.2,
+        .mass = 5.0,
+        .lateral_stiffness = 10000,
+        .longitudinal_stiffness = 10000,
+        .camber_thrust_coefficient = 0.5,
+        .peak_slip_ratio = 0.3,
+        .peak_slip_angle = 0.2,
+        .friction_coefficient = 0.6,
+        .rolling_resistance_coefficient = 0.02,
+        .heat_transfer_coefficient = 0.1,
+        .optimal_temperature = 90,
+        .max_temperature = 120,
+    };
+    const tire = createTire(0, 0, 0, config).?;
+    tire.normal_force = 3000;
+    const offroad_force = calculateLongitudinalForce(tire, 0.2, config);
+    try std.testing.expect(offroad_force != 0);
+}
+
+test "525: tire raycast suspension - position tracking" {
+    init();
+    const config = TireConfig{
+        .radius = 0.3,
+        .width = 0.2,
+        .mass = 5.0,
+        .lateral_stiffness = 10000,
+        .longitudinal_stiffness = 10000,
+        .camber_thrust_coefficient = 0.5,
+        .peak_slip_ratio = 0.15,
+        .peak_slip_angle = 0.1,
+        .friction_coefficient = 1.0,
+        .rolling_resistance_coefficient = 0.015,
+        .heat_transfer_coefficient = 0.1,
+        .optimal_temperature = 90,
+        .max_temperature = 120,
+    };
+    const tire = createTire(10.0, 5.0, 20.0, config).?;
+    const pos = getWheelPositions(tire);
+    try std.testing.expect(pos.x == 10.0);
+    try std.testing.expect(pos.y == 5.0);
+    try std.testing.expect(pos.z == 20.0);
 }

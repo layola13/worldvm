@@ -536,6 +536,14 @@ class WorldVM:
         self.lib.ai_traffic_add_traffic_light.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_float]
         self.lib.ai_traffic_add_traffic_light.restype = ctypes.c_int
         self.lib.ai_traffic_get_vehicle_count.restype = ctypes.c_uint8
+        self.lib.ai_traffic_update.argtypes = [ctypes.c_float]
+        self.lib.ai_traffic_update.restype = None
+        self.lib.ai_traffic_set_vehicle_target_speed.argtypes = [ctypes.c_uint8, ctypes.c_float]
+        self.lib.ai_traffic_set_vehicle_target_speed.restype = ctypes.c_int
+        self.lib.ai_traffic_get_vehicle_target_speed.argtypes = [ctypes.c_uint8]
+        self.lib.ai_traffic_get_vehicle_target_speed.restype = ctypes.c_float
+        self.lib.ai_traffic_get_vehicle_governed_target_speed.argtypes = [ctypes.c_uint8]
+        self.lib.ai_traffic_get_vehicle_governed_target_speed.restype = ctypes.c_float
         self.lib.ai_traffic_trigger_emergency.argtypes = [ctypes.c_uint8]
         self.lib.ai_traffic_trigger_emergency.restype = None
 
@@ -551,6 +559,18 @@ class WorldVM:
 
     def get_time_scale(self) -> float:
         return self.lib.get_time_scale()
+
+    def ai_traffic_update(self, dt: float):
+        self.lib.ai_traffic_update(float(dt))
+
+    def ai_traffic_set_vehicle_target_speed(self, vehicle_idx: int, target_speed: float) -> bool:
+        return self.lib.ai_traffic_set_vehicle_target_speed(int(vehicle_idx), float(target_speed)) == 0
+
+    def ai_traffic_get_vehicle_target_speed(self, vehicle_idx: int) -> float:
+        return float(self.lib.ai_traffic_get_vehicle_target_speed(int(vehicle_idx)))
+
+    def ai_traffic_get_vehicle_governed_target_speed(self, vehicle_idx: int) -> float:
+        return float(self.lib.ai_traffic_get_vehicle_governed_target_speed(int(vehicle_idx)))
 
     def spawn(self, eid, x, y, z): self.lib.spawn_instance(eid, x, y, z)
     def run(self, t=1): return self.lib.run_ticks(t)

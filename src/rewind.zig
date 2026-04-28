@@ -2390,6 +2390,7 @@ pub fn diffWorldSnapshots(a: *const WorldSnapshot, b: *const WorldSnapshot) Worl
             if (a.ai_traffic_vehicles[i].pos_x != b.ai_traffic_vehicles[i].pos_x or
                 a.ai_traffic_vehicles[i].pos_z != b.ai_traffic_vehicles[i].pos_z or
                 a.ai_traffic_vehicles[i].target_vel != b.ai_traffic_vehicles[i].target_vel or
+                a.ai_traffic_vehicles[i].governed_target_vel != b.ai_traffic_vehicles[i].governed_target_vel or
                 a.ai_traffic_vehicles[i].behavior != b.ai_traffic_vehicles[i].behavior or
                 a.ai_traffic_vehicles[i].active != b.ai_traffic_vehicles[i].active)
             {
@@ -4064,6 +4065,7 @@ test "World snapshot restore rebuilds ai traffic state" {
 
     const traffic_vehicle = ai_traffic.spawnAIVehicle(10, 0, 20, .aggressive) orelse return error.TestUnexpectedResult;
     traffic_vehicle.target_vel = 44;
+    traffic_vehicle.governed_target_vel = 41;
     const traffic_light = ai_traffic.addTrafficLight(30, 40, 60) orelse return error.TestUnexpectedResult;
     traffic_light.state = .yellow;
     traffic_light.timer = 12.5;
@@ -4078,6 +4080,7 @@ test "World snapshot restore rebuilds ai traffic state" {
     try std.testing.expect(traffic_sys.vehicle_count == 1);
     try std.testing.expect(traffic_sys.light_count == 1);
     try std.testing.expectApproxEqAbs(@as(f32, 44), traffic_sys.vehicles[0].target_vel, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 41), traffic_sys.vehicles[0].governed_target_vel, 0.0001);
     try std.testing.expect(traffic_sys.vehicles[0].behavior == .aggressive);
     try std.testing.expect(traffic_sys.lights[0].state == .yellow);
     try std.testing.expectApproxEqAbs(@as(f32, 12.5), traffic_sys.lights[0].timer, 0.0001);
