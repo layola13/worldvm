@@ -131,7 +131,9 @@ pub export fn run_ticks(max_ticks: u32) c_int {
     syncGlobalJointsToEngine(s);
     var t: u32 = 0;
     while (t < max_ticks and !s.engine.stable) : (t += 1) {
-        tick_engine.stepPhysicsWorld(&s.engine, tick_engine.getFixedDT(&s.engine));
+        const dt = tick_engine.getFixedDT(&s.engine);
+        ai_traffic.updateAI(dt);
+        tick_engine.stepPhysicsWorld(&s.engine, dt);
         s.affect_sys.update(&s.tri_bus);
 
         var i: u16 = 0;
@@ -4184,6 +4186,7 @@ pub export fn ai_traffic_get_light_count() u8 {
 
 pub export fn ai_traffic_update(dt: f32) void {
     if (!std.math.isFinite(dt) or dt <= 0.0) return;
+    ai_traffic.syncTrafficVehiclesFromPhysics();
     ai_traffic.updateAI(dt);
 }
 
