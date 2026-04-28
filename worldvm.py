@@ -544,6 +544,16 @@ class WorldVM:
         self.lib.ai_traffic_get_vehicle_target_speed.restype = ctypes.c_float
         self.lib.ai_traffic_get_vehicle_governed_target_speed.argtypes = [ctypes.c_uint8]
         self.lib.ai_traffic_get_vehicle_governed_target_speed.restype = ctypes.c_float
+        self.lib.vehicle_link_ai.restype = ctypes.c_int
+        self.lib.vehicle_unlink_ai.restype = ctypes.c_int
+        self.lib.vehicle_get_ai_link_info.restype = ctypes.c_int
+        self.lib.vehicle_get_ai_link_info.argtypes = [
+            ctypes.c_int,
+            ctypes.POINTER(ctypes.c_uint16),
+            ctypes.POINTER(ctypes.c_float),
+        ]
+        self.lib.vehicle_link_ai.argtypes = (ctypes.c_int, ctypes.c_uint16, ctypes.c_float)
+        self.lib.vehicle_unlink_ai.argtypes = (ctypes.c_int,)
         self.lib.ai_traffic_trigger_emergency.argtypes = [ctypes.c_uint8]
         self.lib.ai_traffic_trigger_emergency.restype = None
 
@@ -562,6 +572,34 @@ class WorldVM:
 
     def ai_traffic_update(self, dt: float):
         self.lib.ai_traffic_update(float(dt))
+
+    def vehicle_link_ai(self, vehicle_idx: int, ai_vehicle_id: int, initial_target_speed: float) -> bool:
+        """Link a physics vehicle (by index) to an AI traffic vehicle.
+
+        Returns True on success, False if vehicle_idx is out of range.
+        """
+        return self.lib.vehicle_link_ai(int(vehicle_idx), int(ai_vehicle_id), float(initial_target_speed)) == 1
+
+    def vehicle_unlink_ai(self, vehicle_idx: int) -> bool:
+        """Unlink a physics vehicle from any AI traffic vehicle it's attached to."""
+        return self.lib.vehicle_unlink_ai(int(vehicle_idx)) == 1
+
+    def vehicle_get_ai_link_info(self, vehicle_idx: int) -> tuple:
+        """Get the ai_vehicle_id and current ai_target_speed for a physics vehicle.
+
+        Returns (ai_vehicle_id: int, ai_target_speed: float).
+        Raises RuntimeError if vehicle_idx is out of range.
+        """
+        ai_id_out = ctypes.c_int(0)
+        speed_out = ctypes.c_float(0.0)
+        ok = self.lib.vehicle_get_ai_link_info(
+            int(vehicle_idx),
+            ctypes.byref(ai_id_out),
+            ctypes.byref(speed_out),
+        )
+        if ok == 0:
+            raise RuntimeError(f"vehicle_idx {vehicle_idx} out of range")
+        return (int(ai_id_out.value), float(speed_out.value))
 
     def ai_traffic_set_vehicle_target_speed(self, vehicle_idx: int, target_speed: float) -> bool:
         return self.lib.ai_traffic_set_vehicle_target_speed(int(vehicle_idx), float(target_speed)) == 0
