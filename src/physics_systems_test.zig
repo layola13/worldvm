@@ -1218,3 +1218,54 @@ test "AI Traffic emergency vehicle" {
     ai_traffic.triggerEmergencyVehicle(ai_vehicle2.?);
     try testing.expect(ai_vehicle2.?.behavior == .reckless);
 }
+
+
+test "vehicle-AI traffic bidirectional sync end-to-end" {
+    ai_traffic.init();
+    vehicle.init();
+
+    const ai_veh = ai_traffic.spawnAIVehicle(0.0, 0.0, 0.0, .normal, 0) orelse return error.TestUnexpectedResult;
+    ai_veh.governed_target_vel = 25.0;
+    ai_veh.pos_x = 100.0;
+    ai_veh.pos_z = 200.0;
+    ai_veh.vel_x = 5.0;
+    ai_veh.vel_z = 10.0;
+
+    const car = vehicle.createCar(5.0, 0.0, 0.0, 0.0) orelse return error.TestUnexpectedResult;
+    car.speed = 15.0;
+    vehicle.setAIVehicleLink(car, ai_veh.vehicle_id, 20.0);
+
+    // setAIVehicleLink -> syncVehicleToTraffic propagated vehicle pose into AI vehicle.
+    try testing.expectApproxEqAbs(car.pos_x, ai_veh.pos_x, 0.0001);
+    try testing.expectApproxEqAbs(car.pos_z, ai_veh.pos_z, 0.0001);
+    const fwd_x = @sin(car.yaw);
+    const fwd_z = @cos(car.yaw);
+    try testing.expectApproxEqAbs(fwd_x * car.speed, ai_veh.vel_x, 0.0001);
+    try testing.expectApproxEqAbs(fwd_z * car.speed, ai_veh.vel_z, 0.0001);
+
+    // syncTrafficVehiclesFromPhysics reads governed_target_vel from AI traffic.
+    ai_traffic.syncTrafficVehiclesFromPhysics();
+    const governed = ai_traffic.getGovernedTargetSpeed(ai_veh.vehicle_id);
+    try testing.expect(governed != null);
+    try testing.expectApproxEqAbs(@as(f32, 25.0), governed.?, 0.0001);
+}
+
+test "physics vehicle AI link and unlink" {
+    ai_traffic.init();
+    vehicle.init();
+
+    const ai_veh = ai_traffic.spawnAIVehicle(0.0, 0.0, 0.0, .normal, 0) orelse return error.TestUnexpectedResult;
+    const car = vehicle.createCar(0.0, 0.0, 0.0, 0.0) orelse return error.TestUnexpectedResult;
+
+    // Before link: ai_vehicle_id should be 0.
+    try testing.expect(car.ai_vehicle_id == 0);
+
+    // Link.
+    vehicle.setAIVehicleLink(car, ai_veh.vehicle_id, 15.0);
+    try testing.expect(car.ai_vehicle_id == ai_veh.vehicle_id);
+
+    // Unlink by setting to 0.
+    vehicle.setAIVehicleLink(car, 0, -1);
+    try testing.expect(car.ai_vehicle_id == 0);
+    try testing.expect(vehicle.getAIVehicleTargetVel(car) < 0);
+}
