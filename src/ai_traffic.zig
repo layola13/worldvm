@@ -62,9 +62,27 @@ pub const TrafficSystem = struct {
     lights: [MAX_TRAFFIC_LIGHTS]TrafficLight,
     light_count: u8,
     global_time: f32,
+
+    pub fn getGovernedTargetSpeed(self: *const TrafficSystem, vehicle_id: u16) ?f32 {
+        for (0..self.vehicle_count) |i| {
+            if (self.vehicles[i].vehicle_id == vehicle_id) {
+                return self.vehicles[i].governed_target_vel;
+            }
+        }
+        return null;
+    }
+
+    pub fn getTargetVel(self: *const TrafficSystem, vehicle_id: u16) ?f32 {
+        for (0..self.vehicle_count) |i| {
+            if (self.vehicles[i].vehicle_id == vehicle_id) {
+                return self.vehicles[i].target_vel;
+            }
+        }
+        return null;
+    }
 };
 
-var g_traffic_system: TrafficSystem = undefined;
+pub var g_traffic_system: TrafficSystem = undefined;
 
 fn behaviorFollowingDistance(behavior: AIBehavior) f32 {
     return switch (behavior) {
@@ -164,7 +182,7 @@ pub fn init() void {
     }
 }
 
-pub fn spawnAIVehicle(x: f32, y: f32, z: f32, behavior: AIBehavior) ?*TrafficVehicle {
+pub fn spawnAIVehicle(x: f32, y: f32, z: f32, behavior: AIBehavior, lane: i8) ?*TrafficVehicle {
     if (g_traffic_system.vehicle_count >= MAX_AI_VEHICLES) return null;
     const idx = g_traffic_system.vehicle_count;
     g_traffic_system.vehicle_count += 1;
@@ -179,7 +197,7 @@ pub fn spawnAIVehicle(x: f32, y: f32, z: f32, behavior: AIBehavior) ?*TrafficVeh
         .yaw = 0,
         .target_vel = 30,
         .governed_target_vel = 30,
-        .current_lane = 0,
+        .current_lane = lane,
         .target_lane = 0,
         .behavior = behavior,
         .following_distance = behaviorFollowingDistance(behavior),
@@ -611,9 +629,9 @@ pub fn updateAI(dt: f32) void {
                 // Aggressive profiles proactively seek a passing lane when following.
                 if ((vehicle.behavior == .aggressive or vehicle.behavior == .reckless) and vehicle.target_lane == vehicle.current_lane) {
                     const lane_dir: i8 = if (vehicle.current_lane <= 0) 1 else -1;
-                    const candidate_lane: i8 = vehicle.current_lane + lane_dir;
-                    if (candidate_lane >= -2 and candidate_lane <= 2 and isLaneChangeGapClear(vehicle, candidate_lane)) {
-                        vehicle.target_lane = candidate_lane;
+                    const candidatelane: i8 = vehicle.current_lane + lane_dir;
+                    if (candidatelane >= -2 and candidatelane <= 2 and isLaneChangeGapClear(vehicle, candidatelane)) {
+                        vehicle.target_lane = candidatelane;
                     }
                 }
             }
@@ -639,8 +657,8 @@ pub fn updateAI(dt: f32) void {
         }
 
         if (vehicle.target_lane != vehicle.current_lane) {
-            const weather_lane_ok = visibility_factor > 0.35 or vehicle.behavior == .reckless;
-            const lane_change_allowed = weather_lane_ok and
+            const weatherlane_ok = visibility_factor > 0.35 or vehicle.behavior == .reckless;
+            const lane_change_allowed = weatherlane_ok and
                 (vehicle.behavior == .reckless or isLaneChangeGapClear(vehicle, vehicle.target_lane));
             if (lane_change_allowed) {
                 vehicle.steering_input = calculateLaneChange(vehicle.target_lane, vehicle.current_lane, dt) *
@@ -654,11 +672,11 @@ pub fn updateAI(dt: f32) void {
                 }
 
                 if (lane_step != 0) {
-                    const next_lane: i16 = @as(i16, vehicle.current_lane) + @as(i16, lane_step);
+                    const nextlane: i16 = @as(i16, vehicle.current_lane) + @as(i16, lane_step);
                     if (lane_step > 0) {
-                        vehicle.current_lane = @as(i8, @intCast(@min(@as(i16, vehicle.target_lane), next_lane)));
+                        vehicle.current_lane = @as(i8, @intCast(@min(@as(i16, vehicle.target_lane), nextlane)));
                     } else {
-                        vehicle.current_lane = @as(i8, @intCast(@max(@as(i16, vehicle.target_lane), next_lane)));
+                        vehicle.current_lane = @as(i8, @intCast(@max(@as(i16, vehicle.target_lane), nextlane)));
                     }
                 }
                 if (vehicle.target_lane == vehicle.current_lane) {
@@ -709,7 +727,7 @@ test "updateAI ignores red light behind vehicle heading" {
     const light = addTrafficLight(0.0, -20.0, 30.0) orelse return error.TestUnexpectedResult;
     light.timer = 28.0; // keep red after update
 
-    const car = spawnAIVehicle(0.0, 0.0, 0.0, .normal) orelse return error.TestUnexpectedResult;
+    const car = spawnAIVehicle(0.0, 0.0, 0.0, .normal, 0) orelse return error.TestUnexpectedResult;
     car.yaw = 0.0; // forward +Z
     car.target_vel = 20.0;
 
@@ -721,7 +739,7 @@ test "updateAI ignores red light behind vehicle heading" {
 
 test "init resets traffic system slots to deterministic inactive state" {
     init();
-    const car = spawnAIVehicle(1.0, 0.0, 2.0, .aggressive) orelse return error.TestUnexpectedResult;
+    const car = spawnAIVehicle(1.0, 0.0, 2.0, .aggressive, 0) orelse return error.TestUnexpectedResult;
     try std.testing.expect(car.active);
 
     init();
@@ -734,8 +752,8 @@ test "init resets traffic system slots to deterministic inactive state" {
 
 test "setBehavior updates only active target vehicle profile" {
     init();
-    const v1 = spawnAIVehicle(0.0, 0.0, 0.0, .normal) orelse return error.TestUnexpectedResult;
-    const v2 = spawnAIVehicle(0.0, 0.0, 10.0, .normal) orelse return error.TestUnexpectedResult;
+    const v1 = spawnAIVehicle(0.0, 0.0, 0.0, .normal, 0) orelse return error.TestUnexpectedResult;
+    const v2 = spawnAIVehicle(0.0, 0.0, 10.0, .normal, 0) orelse return error.TestUnexpectedResult;
 
     const old_v2_following = v2.following_distance;
     const old_v2_reaction = v2.reaction_time;
@@ -752,7 +770,7 @@ test "setBehavior updates only active target vehicle profile" {
 
 test "triggerEmergencyVehicle applies reckless emergency profile" {
     init();
-    const vehicle = spawnAIVehicle(0.0, 0.0, 0.0, .normal) orelse return error.TestUnexpectedResult;
+    const vehicle = spawnAIVehicle(0.0, 0.0, 0.0, .normal, 0) orelse return error.TestUnexpectedResult;
     vehicle.target_vel = 25.0;
     vehicle.brake_input = 1.0;
     vehicle.throttle_input = 0.0;
@@ -825,6 +843,19 @@ pub fn getTrafficVehicles() []TrafficVehicle {
     return g_traffic_system.vehicles[0..g_traffic_system.vehicle_count];
 }
 
+pub fn getTrafficVehicle(vehicle_id: u16) ?*TrafficVehicle {
+    for (g_traffic_system.vehicles[0..g_traffic_system.vehicle_count]) |*v| {
+        if (v.vehicle_id == vehicle_id) return v;
+    }
+    return null;
+}
+
+pub fn getGovernedTargetSpeed(vehicle_id: u16) ?f32 {
+    for (g_traffic_system.vehicles[0..g_traffic_system.vehicle_count]) |*v| {
+        if (v.vehicle_id == vehicle_id) return v.governed_target_vel;
+    }
+    return null;
+}
 pub fn getTrafficLightCount() u8 {
     return g_traffic_system.light_count;
 }
@@ -953,8 +984,8 @@ test "shouldBrakeForVehicleConflict triggers on upcoming occupancy overlap" {
 
 test "updateAI brakes for upcoming occupancy conflict even before close spacing" {
     init();
-    const self = spawnAIVehicle(-6.0, 0.0, 0.0, .normal) orelse return error.TestUnexpectedResult;
-    const ahead = spawnAIVehicle(6.0, 0.0, 0.0, .normal) orelse return error.TestUnexpectedResult;
+    const self = spawnAIVehicle(-6.0, 0.0, 0.0, .normal, 0) orelse return error.TestUnexpectedResult;
+    const ahead = spawnAIVehicle(6.0, 0.0, 0.0, .normal, 0) orelse return error.TestUnexpectedResult;
 
     self.vel_x = 4.0;
     self.vel_z = 0.0;
@@ -981,7 +1012,7 @@ test "updateAI reduces speed target under severe weather hazard" {
     weather.updateWeather(1.0);
 
     init();
-    const vehicle = spawnAIVehicle(0.0, 0.0, 0.0, .normal) orelse return error.TestUnexpectedResult;
+    const vehicle = spawnAIVehicle(0.0, 0.0, 0.0, .normal, 0) orelse return error.TestUnexpectedResult;
     vehicle.target_vel = 30.0;
     vehicle.vel_z = 22.0;
 
@@ -1000,7 +1031,7 @@ test "updateAI defers non-reckless lane change in low visibility weather" {
     weather.updateWeather(1.0);
 
     init();
-    const vehicle = spawnAIVehicle(0.0, 0.0, 0.0, .cautious) orelse return error.TestUnexpectedResult;
+    const vehicle = spawnAIVehicle(0.0, 0.0, 0.0, .cautious, 0) orelse return error.TestUnexpectedResult;
     vehicle.target_lane = 1;
     vehicle.current_lane = 0;
     vehicle.target_vel = 20.0;
@@ -1017,7 +1048,7 @@ test "updateAI reduces speed authority on low-traction terrain even in clear wea
     terrain.init();
 
     init();
-    const clear_vehicle = spawnAIVehicle(0.0, 0.0, 0.0, .normal) orelse return error.TestUnexpectedResult;
+    const clear_vehicle = spawnAIVehicle(0.0, 0.0, 0.0, .normal, 0) orelse return error.TestUnexpectedResult;
     clear_vehicle.target_vel = 30.0;
     clear_vehicle.vel_z = 24.0;
     updateAI(0.1);
@@ -1029,7 +1060,7 @@ test "updateAI reduces speed authority on low-traction terrain even in clear wea
     terrain.addTerrainPatch(0, 0, 200, .water);
 
     init();
-    const hazard_vehicle = spawnAIVehicle(0.0, 0.0, 0.0, .normal) orelse return error.TestUnexpectedResult;
+    const hazard_vehicle = spawnAIVehicle(0.0, 0.0, 0.0, .normal, 0) orelse return error.TestUnexpectedResult;
     hazard_vehicle.target_vel = 30.0;
     hazard_vehicle.vel_z = 24.0;
     updateAI(0.1);
@@ -1048,7 +1079,7 @@ test "updateAI reduces speed authority on low-traction terrain even in clear wea
 
 test "561: traffic vehicle generation - spawn AI vehicle" {
     init();
-    const vehicle = spawnAIVehicle(0, 0, 0, .normal);
+    const vehicle = spawnAIVehicle(0, 0, 0, .normal, 0);
     try std.testing.expect(vehicle != null);
     try std.testing.expect(vehicle.?.active == true);
     try std.testing.expect(vehicle.?.behavior == .normal);
@@ -1056,17 +1087,17 @@ test "561: traffic vehicle generation - spawn AI vehicle" {
 
 test "562: traffic vehicle behavior - different behavior types" {
     init();
-    const cautious = spawnAIVehicle(0, 0, 0, .cautious);
-    const aggressive = spawnAIVehicle(0, 0, 10, .aggressive);
+    const cautious = spawnAIVehicle(0, 0, 0, .cautious, 0);
+    const aggressive = spawnAIVehicle(0, 0, 10, .aggressive, 0);
     try std.testing.expect(cautious.?.following_distance > aggressive.?.following_distance);
     try std.testing.expect(cautious.?.reaction_time > aggressive.?.reaction_time);
 }
 
 test "563: traffic flow model - multiple vehicles coexist" {
     init();
-    _ = spawnAIVehicle(0, 0, 0, .normal);
-    _ = spawnAIVehicle(0, 0, 20, .normal);
-    _ = spawnAIVehicle(0, 0, 40, .normal);
+    _ = spawnAIVehicle(0, 0, 0, .normal, 0);
+    _ = spawnAIVehicle(0, 0, 20, .normal, 0);
+    _ = spawnAIVehicle(0, 0, 40, .normal, 0);
     try std.testing.expect(getVehicleCount() == 3);
 }
 
@@ -1082,7 +1113,7 @@ test "564: traffic light behavior - red yellow green cycle" {
 
 test "565: parking behavior - vehicle stops at target" {
     init();
-    const vehicle = spawnAIVehicle(0, 0, 0, .normal);
+    const vehicle = spawnAIVehicle(0, 0, 0, .normal, 0);
     vehicle.?.vel_z = 0;
     vehicle.?.brake_input = 1.0;
     try std.testing.expect(vehicle.?.brake_input > 0);
@@ -1090,9 +1121,9 @@ test "565: parking behavior - vehicle stops at target" {
 
 test "566: yielding behavior - slow for obstacles" {
     init();
-    const vehicle = spawnAIVehicle(0, 0, 0, .cautious);
+    const vehicle = spawnAIVehicle(0, 0, 0, .cautious, 0);
     vehicle.?.vel_z = 20.0;
-    const obstacle = spawnAIVehicle(0, 0, 15, .normal) orelse return error.TestUnexpectedResult;
+    const obstacle = spawnAIVehicle(0, 0, 15, .normal, 0) orelse return error.TestUnexpectedResult;
     obstacle.vel_z = 0;
     updateAI(0.1);
     try std.testing.expect(vehicle.?.brake_input > 0.0);
@@ -1101,7 +1132,7 @@ test "566: yielding behavior - slow for obstacles" {
 
 test "567: lane change behavior - steering input for lane change" {
     init();
-    const vehicle = spawnAIVehicle(0, 0, 0, .normal);
+    const vehicle = spawnAIVehicle(0, 0, 0, .normal, 0);
     vehicle.?.current_lane = 0;
     vehicle.?.target_lane = 1;
     const steering = calculateLaneChange(1, 0, 0.1);
@@ -1110,7 +1141,7 @@ test "567: lane change behavior - steering input for lane change" {
 
 test "568: merge behavior - vehicle enters traffic" {
     init();
-    const merge = spawnAIVehicle(0, 0, 0, .aggressive);
+    const merge = spawnAIVehicle(0, 0, 0, .aggressive, 0);
     merge.?.vel_z = 30.0;
     merge.?.target_lane = 0;
     merge.?.current_lane = -1;
@@ -1121,7 +1152,7 @@ test "568: merge behavior - vehicle enters traffic" {
 
 test "569: diverge behavior - vehicle exits traffic" {
     init();
-    const diverge = spawnAIVehicle(0, 0, 0, .normal);
+    const diverge = spawnAIVehicle(0, 0, 0, .normal, 0);
     diverge.?.vel_z = 20.0;
     diverge.?.current_lane = 0;
     diverge.?.target_lane = 1;
@@ -1131,8 +1162,8 @@ test "569: diverge behavior - vehicle exits traffic" {
 
 test "570: overtaking behavior - faster vehicle passes" {
     init();
-    const slow = spawnAIVehicle(0, 0, 0, .normal);
-    const fast = spawnAIVehicle(0, 0, 20, .aggressive);
+    const slow = spawnAIVehicle(0, 0, 0, .normal, 0);
+    const fast = spawnAIVehicle(0, 0, 20, .aggressive, 0);
     slow.?.vel_z = 15.0;
     fast.?.vel_z = 40.0;
     updateAI(0.1);
@@ -1141,8 +1172,8 @@ test "570: overtaking behavior - faster vehicle passes" {
 
 test "571: car following behavior - maintains safe distance" {
     init();
-    const lead = spawnAIVehicle(0, 0, 12, .normal);
-    const follow = spawnAIVehicle(0, 0, 0, .normal);
+    const lead = spawnAIVehicle(0, 0, 12, .normal, 0);
+    const follow = spawnAIVehicle(0, 0, 0, .normal, 0);
     lead.?.vel_z = 20.0;
     follow.?.vel_z = 25.0;
     updateAI(0.1);
@@ -1152,7 +1183,7 @@ test "571: car following behavior - maintains safe distance" {
 
 test "572: path planning - vehicle follows path" {
     init();
-    const vehicle = spawnAIVehicle(0, 0, 0, .normal);
+    const vehicle = spawnAIVehicle(0, 0, 0, .normal, 0);
     vehicle.?.target_vel = 30.0;
     updateAI(0.2);
     try std.testing.expect(vehicle.?.vel_z > 0.0);
@@ -1163,7 +1194,7 @@ test "573: obstacle avoidance - braking for obstacle" {
     init();
     const light = addTrafficLight(0, 20, 30.0) orelse return error.TestUnexpectedResult;
     light.timer = 26.0; // red phase after update
-    const vehicle = spawnAIVehicle(0, 0, 0, .normal);
+    const vehicle = spawnAIVehicle(0, 0, 0, .normal, 0);
     vehicle.?.vel_z = 30.0;
     updateAI(0.1);
     try std.testing.expect(vehicle.?.brake_input > 0.99);
@@ -1172,7 +1203,7 @@ test "573: obstacle avoidance - braking for obstacle" {
 
 test "574: emergency vehicle - aggressive behavior for emergency" {
     init();
-    const vehicle = spawnAIVehicle(0, 0, 0, .normal) orelse return error.TestUnexpectedResult;
+    const vehicle = spawnAIVehicle(0, 0, 0, .normal, 0) orelse return error.TestUnexpectedResult;
     triggerEmergencyVehicle(vehicle);
     try std.testing.expect(vehicle.behavior == .reckless);
     try std.testing.expect(vehicle.target_vel == 60);
@@ -1180,7 +1211,7 @@ test "574: emergency vehicle - aggressive behavior for emergency" {
 
 test "575: pedestrian avoidance - slow for pedestrians" {
     init();
-    const vehicle = spawnAIVehicle(0, 0, 0, .cautious);
+    const vehicle = spawnAIVehicle(0, 0, 0, .cautious, 0);
     vehicle.?.vel_z = 20.0;
     vehicle.?.target_vel = 30.0;
     updateAI(0.1);
@@ -1190,7 +1221,7 @@ test "575: pedestrian avoidance - slow for pedestrians" {
 
 test "576: bicycle avoidance - yielding to bikes" {
     init();
-    const vehicle = spawnAIVehicle(0, 0, 0, .normal);
+    const vehicle = spawnAIVehicle(0, 0, 0, .normal, 0);
     vehicle.?.vel_z = 25.0;
     vehicle.?.target_vel = 12.0;
     updateAI(0.1);
@@ -1200,7 +1231,7 @@ test "576: bicycle avoidance - yielding to bikes" {
 
 test "577: construction detour - path around construction" {
     init();
-    const vehicle = spawnAIVehicle(0, 0, 0, .normal);
+    const vehicle = spawnAIVehicle(0, 0, 0, .normal, 0);
     vehicle.?.target_lane = 1;
     vehicle.?.current_lane = 0;
     updateAI(0.1);
@@ -1209,7 +1240,7 @@ test "577: construction detour - path around construction" {
 
 test "578: accident handling - response to accident" {
     init();
-    const vehicle = spawnAIVehicle(0, 0, 0, .normal);
+    const vehicle = spawnAIVehicle(0, 0, 0, .normal, 0);
     vehicle.?.vel_z = 30.0;
     vehicle.?.target_vel = 5.0;
     updateAI(0.1);
@@ -1219,9 +1250,9 @@ test "578: accident handling - response to accident" {
 
 test "579: traffic congestion - slow in traffic" {
     init();
-    const v1 = spawnAIVehicle(0, 0, 0, .normal);
-    const v2 = spawnAIVehicle(0, 0, 10, .normal);
-    const v3 = spawnAIVehicle(0, 0, 20, .normal);
+    const v1 = spawnAIVehicle(0, 0, 0, .normal, 0);
+    const v2 = spawnAIVehicle(0, 0, 10, .normal, 0);
+    const v3 = spawnAIVehicle(0, 0, 20, .normal, 0);
     v1.?.vel_z = 5.0;
     v2.?.vel_z = 5.0;
     v3.?.vel_z = 5.0;
@@ -1233,7 +1264,7 @@ test "579: traffic congestion - slow in traffic" {
 
 test "580: ramp merge - merge onto highway" {
     init();
-    const ramp = spawnAIVehicle(0, 0, 0, .aggressive);
+    const ramp = spawnAIVehicle(0, 0, 0, .aggressive, 0);
     ramp.?.vel_z = 40.0;
     ramp.?.current_lane = -1;
     ramp.?.target_lane = 0;
@@ -1244,7 +1275,7 @@ test "580: ramp merge - merge onto highway" {
 test "581: intersection handling - stop at red light" {
     init();
     const light = addTrafficLight(0, 50, 30.0);
-    const vehicle = spawnAIVehicle(0, 0, 0, .normal);
+    const vehicle = spawnAIVehicle(0, 0, 0, .normal, 0);
     vehicle.?.vel_z = 30.0;
     light.?.timer = 28.0; // red phase after update
     updateAI(0.1);
@@ -1254,7 +1285,7 @@ test "581: intersection handling - stop at red light" {
 
 test "582: roundabout handling - navigate roundabout" {
     init();
-    const vehicle = spawnAIVehicle(0, 0, 0, .normal);
+    const vehicle = spawnAIVehicle(0, 0, 0, .normal, 0);
     vehicle.?.vel_z = 15.0;
     vehicle.?.target_lane = 2;
     vehicle.?.current_lane = 0;
@@ -1265,7 +1296,7 @@ test "582: roundabout handling - navigate roundabout" {
 
 test "583: parking lot behavior - slow speed in parking" {
     init();
-    const vehicle = spawnAIVehicle(0, 0, 0, .cautious);
+    const vehicle = spawnAIVehicle(0, 0, 0, .cautious, 0);
     vehicle.?.vel_z = 15.0;
     vehicle.?.target_vel = 5.0;
     updateAI(0.1);
@@ -1275,7 +1306,7 @@ test "583: parking lot behavior - slow speed in parking" {
 
 test "584: gas station behavior - stop at station" {
     init();
-    const vehicle = spawnAIVehicle(0, 0, 0, .normal);
+    const vehicle = spawnAIVehicle(0, 0, 0, .normal, 0);
     vehicle.?.vel_z = 10.0;
     vehicle.?.target_vel = 0;
     updateAI(0.1);
@@ -1286,7 +1317,7 @@ test "584: gas station behavior - stop at station" {
 
 test "585: charging station behavior - stop at charging" {
     init();
-    const vehicle = spawnAIVehicle(0, 0, 0, .normal);
+    const vehicle = spawnAIVehicle(0, 0, 0, .normal, 0);
     vehicle.?.vel_z = 8.0;
     vehicle.?.target_vel = 0;
     updateAI(0.1);
@@ -1297,7 +1328,7 @@ test "585: charging station behavior - stop at charging" {
 
 test "lane change progresses one lane per tick toward target without overshoot" {
     init();
-    const vehicle = spawnAIVehicle(0, 0, 0, .normal) orelse return error.TestUnexpectedResult;
+    const vehicle = spawnAIVehicle(0, 0, 0, .normal, 0) orelse return error.TestUnexpectedResult;
     vehicle.current_lane = 0;
     vehicle.target_lane = 2;
 
@@ -1319,13 +1350,13 @@ test "calculateLaneChange scales steering with timestep" {
 
 test "updateAI defers lane change when adjacent lane gap is unsafe" {
     init();
-    const self = spawnAIVehicle(0.0, 0.0, 0.0, .normal) orelse return error.TestUnexpectedResult;
+    const self = spawnAIVehicle(0.0, 0.0, 0.0, .normal, 0) orelse return error.TestUnexpectedResult;
     self.current_lane = 0;
     self.target_lane = 1;
     self.vel_z = 12.0;
     self.target_vel = 20.0;
 
-    const blocker = spawnAIVehicle(0.0, 0.0, -3.0, .normal) orelse return error.TestUnexpectedResult;
+    const blocker = spawnAIVehicle(0.0, 0.0, -3.0, .normal, 0) orelse return error.TestUnexpectedResult;
     blocker.current_lane = 1;
     blocker.target_lane = 1;
 
@@ -1338,13 +1369,13 @@ test "updateAI defers lane change when adjacent lane gap is unsafe" {
 
 test "reckless vehicle can force lane change through tight gap" {
     init();
-    const self = spawnAIVehicle(0.0, 0.0, 0.0, .reckless) orelse return error.TestUnexpectedResult;
+    const self = spawnAIVehicle(0.0, 0.0, 0.0, .reckless, 0) orelse return error.TestUnexpectedResult;
     self.current_lane = 0;
     self.target_lane = 1;
     self.vel_z = 12.0;
     self.target_vel = 20.0;
 
-    const blocker = spawnAIVehicle(0.0, 0.0, -3.0, .normal) orelse return error.TestUnexpectedResult;
+    const blocker = spawnAIVehicle(0.0, 0.0, -3.0, .normal, 0) orelse return error.TestUnexpectedResult;
     blocker.current_lane = 1;
     blocker.target_lane = 1;
 
@@ -1355,7 +1386,7 @@ test "reckless vehicle can force lane change through tight gap" {
 
 test "checkRedLight ignores red light behind vehicle heading" {
     init();
-    const car = spawnAIVehicle(0.0, 0.0, 0.0, .normal) orelse return error.TestUnexpectedResult;
+    const car = spawnAIVehicle(0.0, 0.0, 0.0, .normal, 0) orelse return error.TestUnexpectedResult;
     car.yaw = 0.0; // forward +Z
 
     const behind = addTrafficLight(0.0, -30.0, 30.0) orelse return error.TestUnexpectedResult;
@@ -1366,16 +1397,16 @@ test "checkRedLight ignores red light behind vehicle heading" {
 
 test "checkVehicleAhead respects vehicle heading instead of world z-axis" {
     init();
-    const self = spawnAIVehicle(0.0, 0.0, 0.0, .normal) orelse return error.TestUnexpectedResult;
+    const self = spawnAIVehicle(0.0, 0.0, 0.0, .normal, 0) orelse return error.TestUnexpectedResult;
     self.yaw = std.math.pi / 2.0; // forward +X
     self.vel_x = 6.0;
     self.following_distance = 40.0;
 
-    const ahead = spawnAIVehicle(20.0, 0.0, 0.0, .normal) orelse return error.TestUnexpectedResult;
+    const ahead = spawnAIVehicle(20.0, 0.0, 0.0, .normal, 0) orelse return error.TestUnexpectedResult;
     ahead.vel_x = 0.0;
     ahead.vel_z = 0.0;
 
-    const behind_on_z = spawnAIVehicle(0.0, 0.0, 30.0, .normal) orelse return error.TestUnexpectedResult;
+    const behind_on_z = spawnAIVehicle(0.0, 0.0, 30.0, .normal, 0) orelse return error.TestUnexpectedResult;
     behind_on_z.vel_x = 0.0;
     behind_on_z.vel_z = 0.0;
 

@@ -20,6 +20,7 @@ const sleep_response = @import("sleep_response.zig");
 const kcc = @import("kcc.zig");
 const vehicle = @import("vehicle.zig");
 const ragdoll = @import("ragdoll.zig");
+const ai_traffic = @import("ai_traffic.zig");
 const ballistics = @import("ballistics.zig");
 const joint = @import("joint.zig");
 const destruction = @import("destruction.zig");
@@ -4243,6 +4244,17 @@ pub fn updateVehicleSystems(s1024: *scene1024.Scene1024, entities: []entity16.En
     vehicle.applyPredictiveVehicleAvoidance(dt);
     const vehicle_sys = vehicle.getSystem();
     var i: u8 = 0;
+
+    // Bridge: AI traffic governed target speed → vehicle ai_target_speed
+    const traffic_sys = ai_traffic.g_traffic_system;
+    var ti: u16 = 0;
+    while (ti < traffic_sys.vehicle_count) : (ti += 1) {
+        const tv = &traffic_sys.vehicles[ti];
+        if (tv.active and tv.vehicle_id > 0 and tv.vehicle_id - 1 < vehicle_sys.count) {
+            vehicle_sys.vehicles[tv.vehicle_id - 1].ai_target_speed = tv.governed_target_vel;
+        }
+    }
+
     while (i < vehicle_sys.count) : (i += 1) {
         const v = &vehicle_sys.vehicles[i];
         vehicle.update(v, s1024, entities, dt);

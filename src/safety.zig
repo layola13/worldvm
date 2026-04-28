@@ -5,7 +5,7 @@
 
 const std = @import("std");
 const DEFAULT_REACTION_TIME: f32 = 0.8;
-const MAX_BRAKE_DECELERATION: f32 = 10.0;
+pub const MAX_BRAKE_DECELERATION: f32 = 10.0;
 
 fn clamp01(v: f32) f32 {
     return std.math.clamp(v, 0.0, 1.0);

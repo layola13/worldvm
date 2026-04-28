@@ -3,6 +3,7 @@
 const std = @import("std");
 const entity16 = @import("entity16.zig");
 const scene32 = @import("scene32.zig");
+const ai_traffic = @import("ai_traffic.zig");
 const scene1024 = @import("scene1024.zig");
 const tick_engine = @import("tick_engine.zig");
 const renderer = @import("renderer.zig");
@@ -76,7 +77,8 @@ fn cmdRun(allocator: std.mem.Allocator, args: *std.process.ArgIterator) !void {
     
     var t: u32 = 0;
     while (t < ticks and !engine.stable) : (t += 1) {
-        tick_engine.stepPhysicsWorld(&engine, tick_engine.getFixedDT(&engine));
+        ai_traffic.updateAI(tick_engine.getFixedDT(&engine));
+            tick_engine.stepPhysicsWorld(&engine, tick_engine.getFixedDT(&engine));
         if (verbose) {
             try renderer.renderScene(scene, stdout);
             try stdout.print("\n", .{});
@@ -119,6 +121,7 @@ fn cmdBench(allocator: std.mem.Allocator, args: *std.process.ArgIterator) !void 
         const start = std.time.nanoTimestamp();
         var ticks_run: u32 = 0;
         while (ticks_run < 100 and !engine.stable) : (ticks_run += 1) {
+            ai_traffic.updateAI(tick_engine.getFixedDT(&engine));
             tick_engine.stepPhysicsWorld(&engine, tick_engine.getFixedDT(&engine));
         }
         const elapsed = (@as(u64, @intCast(std.time.nanoTimestamp() - start))) / 1000;

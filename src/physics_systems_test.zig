@@ -1176,7 +1176,7 @@ test "AI Traffic init" {
 
 test "AI Traffic spawn vehicle" {
     ai_traffic.init();
-    const ai_vehicle = ai_traffic.spawnAIVehicle(0, 0, 0, .normal);
+    const ai_vehicle = ai_traffic.spawnAIVehicle(0, 0, 0, .normal, 0);
     try testing.expect(ai_vehicle != null);
     try testing.expect(ai_vehicle.?.behavior == .normal);
 }
@@ -1190,7 +1190,7 @@ test "AI Traffic traffic light" {
 
 test "AI Traffic update" {
     ai_traffic.init();
-    _ = ai_traffic.spawnAIVehicle(0, 0, 0, .normal);
+    _ = ai_traffic.spawnAIVehicle(0, 0, 0, .normal, 0);
     ai_traffic.updateAI(0.016);
     const vehicles = ai_traffic.getTrafficVehicles();
     try testing.expect(vehicles.len > 0);
@@ -1198,7 +1198,7 @@ test "AI Traffic update" {
 
 test "AI Traffic safe pass estimate blocks late yellow" {
     ai_traffic.init();
-    const vehicle_ptr = ai_traffic.spawnAIVehicle(0, 0, 0, .normal);
+    const vehicle_ptr = ai_traffic.spawnAIVehicle(0, 0, 0, .normal, 0);
     const light_ptr = ai_traffic.addTrafficLight(0, 20, 60);
     try testing.expect(vehicle_ptr != null);
     try testing.expect(light_ptr != null);
@@ -1214,7 +1214,7 @@ test "AI Traffic safe pass estimate blocks late yellow" {
 
 test "AI Traffic emergency vehicle" {
     ai_traffic.init();
-    const ai_vehicle2 = ai_traffic.spawnAIVehicle(0, 0, 0, .cautious);
+    const ai_vehicle2 = ai_traffic.spawnAIVehicle(0, 0, 0, .cautious, 0);
     ai_traffic.triggerEmergencyVehicle(ai_vehicle2.?);
     try testing.expect(ai_vehicle2.?.behavior == .reckless);
 }

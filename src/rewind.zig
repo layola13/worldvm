@@ -4063,7 +4063,7 @@ test "World snapshot restore rebuilds ai traffic state" {
     var entities: [1]entity16.Entity16 = undefined;
     entities[0] = entity16.Prototypes.apple();
 
-    const traffic_vehicle = ai_traffic.spawnAIVehicle(10, 0, 20, .aggressive) orelse return error.TestUnexpectedResult;
+    const traffic_vehicle = ai_traffic.spawnAIVehicle(10, 0, 20, .aggressive, 0) orelse return error.TestUnexpectedResult;
     traffic_vehicle.target_vel = 44;
     traffic_vehicle.governed_target_vel = 41;
     const traffic_light = ai_traffic.addTrafficLight(30, 40, 60) orelse return error.TestUnexpectedResult;

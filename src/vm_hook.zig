@@ -4131,7 +4131,7 @@ pub export fn ai_traffic_init() void {
 
 pub export fn ai_traffic_spawn_vehicle(x: f32, y: f32, z: f32, behavior: u8) c_int {
     const b: ai_traffic.AIBehavior = @enumFromInt(behavior);
-    const v = ai_traffic.spawnAIVehicle(x, y, z, b);
+    const v = ai_traffic.spawnAIVehicle(x, y, z, b, 0);
     return if (v != null) 1 else 0;
 }
 
@@ -4190,3 +4190,12 @@ pub export fn ai_traffic_estimate_safe_pass(vehicle_idx: u8, light_idx: u8, vehi
     result_out[2] = result.margin_to_change;
     return if (result.can_pass) 1 else 0;
 }
+
+pub export fn ai_traffic_get_vehicle_target_speed_by_id(vehicle_id: u16) f32 {
+    return ai_traffic.g_traffic_system.getTargetVel(vehicle_id) orelse -1;
+}
+
+pub export fn ai_traffic_get_vehicle_governed_speed_by_id(vehicle_id: u16) f32 {
+    return ai_traffic.g_traffic_system.getGovernedTargetSpeed(vehicle_id) orelse -1;
+}
+

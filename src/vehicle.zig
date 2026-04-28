@@ -12,7 +12,9 @@ const prediction = @import("prediction.zig");
 const query = @import("query.zig");
 const terrain = @import("terrain.zig");
 const weather = @import("weather.zig");
+const ai_traffic = @import("ai_traffic.zig");
 
+const safety = @import("safety.zig");
 const WheelWorldPosition = struct {
     x: f32,
     y: f32,
@@ -49,6 +51,8 @@ pub const VehicleState = struct {
     angular_velocity: f32,
     throttle: f32,
     steering: f32,
+    ai_vehicle_id: u16 = 0,      // 0=not linked, >0=linked to ai_traffic vehicle ID
+    ai_target_speed: f32 = -1,  // -1=no AI control, >=0=AI target speed (m/s)
     brake: f32,
     handbrake: bool,
     grounded: bool,
@@ -64,6 +68,14 @@ pub const VehicleControlCommand = struct {
     emergency_brake: bool = false,
 };
 
+
+/// Link a vehicle to an AI traffic vehicle and set initial target speed.
+/// If ai_vehicle_id=0, unlinks and disables AI control.
+pub fn setAIVehicleLink(vehicle: *VehicleState, ai_vehicle_id: u16, initial_target_speed: f32) void {
+    vehicle.ai_vehicle_id = ai_vehicle_id;
+    vehicle.ai_target_speed = initial_target_speed;
+}
+
 pub const VehicleNetState = struct {
     pos_x: f32,
     pos_y: f32,
@@ -75,6 +87,8 @@ pub const VehicleNetState = struct {
     angular_velocity: f32,
     throttle: f32,
     steering: f32,
+    ai_target_speed: f32,
+    ai_vehicle_id: u16 = 0,     // linked AI traffic vehicle ID (0=none)
     brake: f32,
     handbrake: bool,
     grounded: bool,
@@ -493,6 +507,8 @@ pub fn exportNetState(vehicle: *const VehicleState) VehicleNetState {
         .angular_velocity = vehicle.angular_velocity,
         .throttle = vehicle.throttle,
         .steering = vehicle.steering,
+        .ai_target_speed = vehicle.ai_target_speed,
+        .ai_vehicle_id = vehicle.ai_vehicle_id,
         .brake = vehicle.brake,
         .handbrake = vehicle.handbrake,
         .grounded = vehicle.grounded,
@@ -521,6 +537,7 @@ pub fn importNetState(vehicle: *VehicleState, state: VehicleNetState, position_a
     vehicle.flipped = state.flipped;
     vehicle.vehicle_type = state.vehicle_type;
     vehicle.mass = state.mass;
+    vehicle.ai_vehicle_id = state.ai_vehicle_id;
 }
 
 /// Get forward direction vector
@@ -735,6 +752,57 @@ fn updateCar(vehicle: *VehicleState, dt: f32) void {
     const friction_per_tick: f32 = 0.98;
 
     if (vehicle.grounded) {
+        // AI autonomous speed control: read governed target speed from AI traffic if linked
+        var ai_target: f32 = -1;
+        if (vehicle.ai_vehicle_id > 0) {
+            if (ai_traffic.g_traffic_system.getGovernedTargetSpeed(vehicle.ai_vehicle_id)) |speed| {
+                ai_target = speed;
+            }
+        }
+        if (ai_target < 0) ai_target = vehicle.ai_target_speed;
+        if (ai_target >= 0) {
+            const target = ai_target;
+            const err = target - vehicle.speed;
+            const kp_t = 0.08;
+            const kp_b = 0.10;
+            const deadband = 0.5;
+            if (err > deadband) {
+                vehicle.throttle = std.math.clamp(err * kp_t, 0.0, 1.0);
+                vehicle.brake = 0;
+            } else if (err < -deadband) {
+                vehicle.throttle = 0;
+                vehicle.brake = std.math.clamp(-err * kp_b, 0.0, 1.0);
+            } else {
+                vehicle.throttle = 0;
+                vehicle.brake = 0;
+            }
+        }
+
+        // Safety intervention override (AEB / LKA)
+        if (vehicle.ai_vehicle_id > 0) {
+            var forward_dist: f32 = 30.0;
+            var target_spd: f32 = vehicle.speed;
+            if (vehicle.ai_vehicle_id <= ai_traffic.g_traffic_system.vehicles.len) {
+                const tv = ai_traffic.g_traffic_system.vehicles[vehicle.ai_vehicle_id - 1];
+                if (tv.active) {
+                    forward_dist = tv.following_distance;
+                    target_spd = tv.governed_target_vel;
+                }
+            }
+            const intervention = safety.evaluateSafetyIntervention(
+                vehicle.speed, target_spd, forward_dist,
+                vehicle.pos_x, 3.5,
+            );
+            if (intervention.apply_aeb) {
+                vehicle.brake = 1.0;
+                vehicle.throttle = 0.0;
+                vehicle.speed = @max(0, vehicle.speed - safety.MAX_BRAKE_DECELERATION * dt);
+            } else if (intervention.warning != .none) {
+                vehicle.throttle *= 0.5;
+                vehicle.brake = @max(vehicle.brake, @as(f32, intervention.brake_decel) / braking);
+            }
+        }
+
         const authority = measureControlAuthority(vehicle);
         const longitudinal_accel_scale = std.math.clamp(
             authority.throttle_scale * (0.75 + authority.speed_scale * 0.25),
@@ -766,8 +834,8 @@ fn updateCar(vehicle: *VehicleState, dt: f32) void {
         if (vehicle.handbrake) {
             vehicle.speed *= 1.0 - 0.1 * longitudinal_brake_scale;
         } else if (@abs(vehicle.throttle) < 0.01 and vehicle.brake == 0.0) {
-            // Mild engine braking / rolling resistance when coasting.
-            vehicle.speed *= std.math.pow(f32, 0.99, dt * 60.0);
+            // Mild engine braking / rolling resistance when coasting
+            vehicle.speed *= std.math.pow(f32, 0.995, dt * 60.0);
         }
 
         vehicle.speed = @max(-max_speed / 2, @min(max_speed, vehicle.speed));
@@ -789,8 +857,6 @@ fn updateCar(vehicle: *VehicleState, dt: f32) void {
         vehicle.speed *= std.math.pow(f32, 0.995, dt * 60.0);
     }
 }
-
-/// Update aircraft physics
 fn updateAircraft(vehicle: *VehicleState, dt: f32) void {
     const drag: f32 = 0.01;
     const thrust: f32 = 1000.0;
@@ -889,6 +955,9 @@ pub fn update(
     entities: []entity16.Entity16,
     dt: f32,
 ) void {
+    // Sync AI planned target speed from traffic system
+    syncFromAI(vehicle);
+
     switch (vehicle.vehicle_type) {
         .car, .truck, .motorcycle => vehicle.grounded = checkGrounded(vehicle, s1024, entities),
         else => vehicle.grounded = false,
@@ -1750,4 +1819,18 @@ test "vehicle hovercraft authority degrades under liquid surface and severe weat
 
     weather.init();
     terrain.init();
+}
+
+/// Sync vehicle AI target speed from AI traffic system.
+/// Reads governed_target_vel from ai_traffic if linked.
+/// Must be called after ai_traffic.update() each tick.
+
+/// Sync vehicle AI target speed from AI traffic system.
+/// Reads governed_target_vel from ai_traffic if linked.
+/// Must be called after ai_traffic.update() each tick.
+pub fn syncFromAI(vehicle: *VehicleState) void {
+    if (vehicle.ai_vehicle_id == 0) return;
+    if (ai_traffic.getTrafficVehicle(vehicle.ai_vehicle_id)) |tv| {
+        vehicle.ai_target_speed = tv.governed_target_vel;
+    }
 }
