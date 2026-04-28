@@ -2100,6 +2100,40 @@ pub export fn vehicle_predictive_conflict_response(
 }
 
 // ============================================================================
+// AI Traffic Link Functions
+// ============================================================================
+
+/// Link a physics vehicle (by index) to an AI traffic vehicle and set the
+/// initial target speed.  Returns 1 on success, 0 on failure (bad vehicle_idx
+/// or ai_vehicle_id collision).
+pub export fn vehicle_link_ai(vehicle_idx: u8, ai_vehicle_id: u16, initial_target_speed: f32) c_int {
+    const sys = vehicle.getSystem();
+    if (vehicle_idx >= sys.count) return 0;
+    vehicle.setAIVehicleLink(&sys.vehicles[vehicle_idx], ai_vehicle_id, initial_target_speed);
+    return 1;
+}
+
+/// Unlink a physics vehicle (by index) from any AI traffic vehicle it was
+/// linked to, disabling AI speed control for that vehicle.
+pub export fn vehicle_unlink_ai(vehicle_idx: u8) c_int {
+    const sys = vehicle.getSystem();
+    if (vehicle_idx >= sys.count) return 0;
+    vehicle.setAIVehicleLink(&sys.vehicles[vehicle_idx], 0, -1);
+    return 1;
+}
+
+/// Write out the ai_vehicle_id and current ai_target_speed for a physics
+/// vehicle (by index).  Returns 1 on success, 0 if vehicle_idx is out of range.
+pub export fn vehicle_get_ai_link_info(vehicle_idx: u8, out_ai_id: [*]u16, out_speed: [*]f32) c_int {
+    const sys = vehicle.getSystem();
+    if (vehicle_idx >= sys.count) return 0;
+    const v = &sys.vehicles[vehicle_idx];
+    out_ai_id[0] = v.ai_vehicle_id;
+    out_speed[0] = v.ai_target_speed;
+    return 1;
+}
+
+// ============================================================================
 // Network Functions
 // ============================================================================
 
