@@ -731,7 +731,7 @@ pub fn applyPredictiveVehicleAvoidance(dt: f32) void {
     }
 }
 
-/// Check if vehicle is grounded
+/// Check if vehicle is grounded by sampling voxels below each wheel
 pub fn checkGrounded(
     vehicle: *const VehicleState,
     s1024: *scene1024.Scene1024,
@@ -742,8 +742,6 @@ pub fn checkGrounded(
         else => return false,
     }
 
-    const check_y = @as(i32, @intFromFloat(@floor(vehicle.pos_y - 1)));
-    const wheel_pos = getWheelPositions(vehicle);
     const world_view = query.QueryWorldView{
         .s1024 = s1024,
         .instances = s1024.instances[0..s1024.instance_count],
@@ -756,15 +754,18 @@ pub fn checkGrounded(
         .include_sensors = false,
     };
 
+    const wheel_pos = getWheelPositions(vehicle);
     for (wheel_pos) |pos| {
-        const wx = @as(i32, @intFromFloat(@floor(pos.x)));
-        const wz = @as(i32, @intFromFloat(@floor(pos.z)));
-        if (query.queryAnyVoxel(&world_view, wx, check_y, wz, filter).hit) {
+        const base_x = @as(i32, @intFromFloat(@floor(pos.x)));
+        const check_y = @as(i32, @intFromFloat(@floor(pos.y))) - 1;
+        const base_z = @as(i32, @intFromFloat(@floor(pos.z)));
+        if (query.queryAnyVoxel(&world_view, base_x, check_y, base_z, filter).hit) {
             return true;
         }
     }
     return false;
 }
+
 
 /// Check if vehicle is flipped
 pub fn checkFlipped(vehicle: *const VehicleState) bool {
@@ -772,16 +773,15 @@ pub fn checkFlipped(vehicle: *const VehicleState) bool {
 }
 
 /// Update car physics
+/// Full physics pipeline: drivetrain + tire + suspension -> speed/yaw
+/// Phase 21-24: Engine torque, tire Pacejka forces, suspension dynamics
 fn updateCar(vehicle: *VehicleState, dt: f32) void {
     const max_speed: f32 = 500.0;
-    const acceleration: f32 = 200.0;
-    const braking: f32 = 400.0;
+    const final_drive: f32 = 3.5;
     const max_steering: f32 = 0.05;
     const steering_speed: f32 = 2.0;
-    const friction_per_tick: f32 = 0.98;
 
     if (vehicle.grounded) {
-        // AI autonomous speed control: read governed target speed from AI traffic if linked
         var ai_target: f32 = -1;
         if (vehicle.ai_vehicle_id > 0) {
             if (ai_traffic.g_traffic_system.getGovernedTargetSpeed(vehicle.ai_vehicle_id)) |speed| {
@@ -790,24 +790,19 @@ fn updateCar(vehicle: *VehicleState, dt: f32) void {
         }
         if (ai_target < 0) ai_target = vehicle.ai_target_speed;
         if (ai_target >= 0) {
-            const target = ai_target;
-            const err = target - vehicle.speed;
-            const kp_t = 0.08;
-            const kp_b = 0.10;
-            const deadband = 0.5;
-            if (err > deadband) {
-                vehicle.throttle = std.math.clamp(err * kp_t, 0.0, 1.0);
+            const err = ai_target - vehicle.speed;
+            if (err > 0.5) {
+                vehicle.throttle = std.math.clamp(err * 0.08, 0.0, 1.0);
                 vehicle.brake = 0;
-            } else if (err < -deadband) {
+            } else if (err < -0.5) {
                 vehicle.throttle = 0;
-                vehicle.brake = std.math.clamp(-err * kp_b, 0.0, 1.0);
+                vehicle.brake = std.math.clamp(-err * 0.10, 0.0, 1.0);
             } else {
                 vehicle.throttle = 0;
                 vehicle.brake = 0;
             }
         }
 
-        // Safety intervention override (AEB / LKA)
         if (vehicle.ai_vehicle_id > 0) {
             var forward_dist: f32 = 30.0;
             var target_spd: f32 = vehicle.speed;
@@ -819,71 +814,113 @@ fn updateCar(vehicle: *VehicleState, dt: f32) void {
                 }
             }
             const intervention = safety.evaluateSafetyIntervention(
-                vehicle.speed, target_spd, forward_dist,
-                vehicle.pos_x, 3.5,
-            );
+                vehicle.speed, target_spd, forward_dist, vehicle.pos_x, 3.5);
             if (intervention.apply_aeb) {
                 vehicle.brake = 1.0;
                 vehicle.throttle = 0.0;
                 vehicle.speed = @max(0, vehicle.speed - safety.MAX_BRAKE_DECELERATION * dt);
             } else if (intervention.warning != .none) {
                 vehicle.throttle *= 0.5;
-                vehicle.brake = @max(vehicle.brake, @as(f32, intervention.brake_decel) / braking);
+                vehicle.brake = @max(vehicle.brake, @as(f32, intervention.brake_decel) / 400.0);
             }
         }
 
         const authority = measureControlAuthority(vehicle);
-        const longitudinal_accel_scale = std.math.clamp(
-            authority.throttle_scale * (0.75 + authority.speed_scale * 0.25),
-            0.1,
-            1.0,
-        );
-        const longitudinal_brake_scale = std.math.clamp(
-            1.0 / @max(0.5, authority.brake_scale),
-            0.35,
-            1.0,
-        );
-        const lateral_grip_scale = authority.steering_scale;
 
-        const friction = std.math.pow(f32, friction_per_tick, dt * 60.0);
-        vehicle.speed *= friction;
+        // 1. Engine: RPM tracks throttle, torque from peak-torque curve
+        const idle_rpm: f32 = 800.0;
+        const redline_rpm: f32 = 7000.0;
+        const peak_torque_rpm: f32 = 4500.0;
+        const peak_torque: f32 = 400.0;
+        const low_end_torque: f32 = 80.0;
+        const target_rpm = idle_rpm + (redline_rpm - idle_rpm) * vehicle.throttle;
+        const rpm_delta = target_rpm - vehicle.engine_rpm;
+        vehicle.engine_rpm += std.math.copysign(@min(@abs(rpm_delta), 3000.0 * dt), rpm_delta);
+        vehicle.engine_rpm = @max(idle_rpm, @min(redline_rpm, vehicle.engine_rpm));
 
-        vehicle.speed += vehicle.throttle * acceleration * dt * longitudinal_accel_scale;
+        if (vehicle.engine_rpm <= peak_torque_rpm) {
+            const t = (vehicle.engine_rpm - idle_rpm) / @max(1.0, peak_torque_rpm - idle_rpm);
+            vehicle.engine_torque = low_end_torque + (peak_torque - low_end_torque) * @sin(t * std.math.pi * 0.5);
+        } else {
+            const fall_t = (vehicle.engine_rpm - peak_torque_rpm) / @max(1.0, redline_rpm - peak_torque_rpm);
+            vehicle.engine_torque = @max(0.0, peak_torque * (1.0 - 0.35 * fall_t * fall_t));
+        }
+        // 2. Per-wheel tire + suspension force accumulation
+        var total_longitudinal_force: f32 = 0.0;
+        var total_lateral_force: f32 = 0.0;
+        var total_rolling_resistance: f32 = 0.0;
 
+        const abs_speed = @abs(vehicle.speed);
+        const yaw_rate = vehicle.angular_velocity;
+
+        for (vehicle.wheels, 0..) |wheel, i| {
+            const radius = @as(f32, @floatFromInt(wheel.radius)) * 0.1;
+            const wheel_speed = if (abs_speed > 0.1) abs_speed else 0.0;
+            const slip_ratio = if (wheel.driven and abs_speed > 0.1)
+                @max(-3.0, @min(3.0, (vehicle.engine_torque * final_drive / @max(abs_speed, 0.1) - abs_speed) / @max(abs_speed, 0.1))) else 0.0;
+            const slip_angle = if (abs_speed > 0.1)
+                @max(-1.2, @min(1.2, yaw_rate * radius * 2.0 / @max(abs_speed, 0.1))) else 0.0;
+            const B: f32 = 10.0;
+            const C: f32 = 1.9;
+            const E: f32 = 0.97;
+            const peak_slip = if (wheel.driven) wheel.tire_peak_slip_ratio else wheel.tire_peak_slip_angle;
+            const D = wheel.tire_friction * authority.throttle_scale * @as(f32, @floatFromInt(vehicle.mass)) * 9.81 / 4.0;
+            const x_s = B * slip_ratio / @max(peak_slip, 0.001);
+            const longitudinal_force = D * @sin(C * std.math.atan(x_s - E * (x_s - std.math.atan(x_s))));
+            const x_a = B * slip_angle / @max(wheel.tire_peak_slip_angle, 0.001);
+            const lateral_force = D * @sin(C * std.math.atan(x_a - E * (x_a - std.math.atan(x_a))));
+            const susp_compression = @min(1.0, @max(0.0, @as(f32, @floatFromInt(wheel.offset_y)) / 4.0));
+            vehicle.susp_compression[i] = susp_compression;
+            const susp_force = wheel.susp_spring_rate * susp_compression * authority.throttle_scale;
+            const rolling_r = wheel.tire_rolling_resistance * authority.brake_scale * abs_speed * 50.0;
+            if (wheel.driven) total_longitudinal_force += longitudinal_force;
+            total_lateral_force += lateral_force * authority.steering_scale;
+            total_rolling_resistance += rolling_r;
+            _ = susp_force;
+        }
+
+        // 3. Net force -> acceleration -> speed
+        const mass_f: f32 = @as(f32, @floatFromInt(vehicle.mass));
+        const roll_r_coef = 1.0 - @min(total_rolling_resistance / @max(mass_f * 10.0, 1.0), 0.9);
+        vehicle.speed *= std.math.pow(f32, @max(roll_r_coef, 0.5), dt * 60.0);
+        const throttle_accel = if (vehicle.throttle > 0)
+            (vehicle.throttle * total_longitudinal_force / mass_f) * authority.throttle_scale else 0.0;
+        vehicle.speed += throttle_accel * dt;
         if (vehicle.brake > 0) {
             if (vehicle.speed > 0) {
-                vehicle.speed -= vehicle.brake * braking * dt * longitudinal_brake_scale;
+                vehicle.speed -= vehicle.brake * authority.brake_scale * 400.0 * dt;
                 if (vehicle.speed < 0) vehicle.speed = 0;
             } else if (vehicle.speed < 0) {
-                vehicle.speed += vehicle.brake * braking * dt * longitudinal_brake_scale;
+                vehicle.speed += vehicle.brake * authority.brake_scale * 400.0 * dt;
                 if (vehicle.speed > 0) vehicle.speed = 0;
             }
         }
 
         if (vehicle.handbrake) {
-            vehicle.speed *= 1.0 - 0.1 * longitudinal_brake_scale;
-        } else if (@abs(vehicle.throttle) < 0.01 and vehicle.brake == 0.0) {
-            // Mild engine braking / rolling resistance when coasting
-            vehicle.speed *= std.math.pow(f32, 0.995, dt * 60.0);
+            vehicle.speed *= 1.0 - 0.1 * authority.brake_scale;
+        } else if (vehicle.throttle == 0 and vehicle.brake == 0) {
+            const surface_x = @as(i32, @intFromFloat(@floor(vehicle.pos_x)));
+            const surface_z = @as(i32, @intFromFloat(@floor(vehicle.pos_z)));
+            vehicle.speed = contact_response.applyVehicleRollingResistance(vehicle.speed, surface_x, surface_z, @floatFromInt(vehicle.mass), dt);
         }
 
-        vehicle.speed = @max(-max_speed / 2, @min(max_speed, vehicle.speed));
+        vehicle.speed = @max(-max_speed / 2.0, @min(max_speed, vehicle.speed));
 
-        const steering_input = vehicle.steering * max_steering * lateral_grip_scale;
+        // 4. Steering: lateral force -> angular velocity
+        const steering_input = vehicle.steering * max_steering * authority.steering_scale;
         const speed_factor = 1.0 - (@abs(vehicle.speed) / max_speed) * 0.5;
         vehicle.angular_velocity = steering_input * steering_speed * speed_factor;
-
-        if (vehicle.speed < 0) {
-            vehicle.angular_velocity = -vehicle.angular_velocity;
-        }
-
+        if (vehicle.speed < 0) vehicle.angular_velocity = -vehicle.angular_velocity;
         vehicle.yaw += vehicle.angular_velocity * dt;
 
+        // Lateral force countersteers to resist spin-out
+        const lateral_accel = total_lateral_force / mass_f;
+        vehicle.roll += lateral_accel * 0.0002 * dt;
         if (vehicle.handbrake and @abs(vehicle.speed) > 10) {
             vehicle.roll += vehicle.steering * dt * 2.0;
         }
     } else {
-        vehicle.speed *= std.math.pow(f32, 0.995, dt * 60.0);
+        vehicle.speed *= std.math.pow(f32, 0.999, dt * 60.0);
     }
 }
 fn updateAircraft(vehicle: *VehicleState, dt: f32) void {

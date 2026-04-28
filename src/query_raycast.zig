@@ -438,3 +438,28 @@ test "raycastSingle reports world distance for non-normalized direction" {
     try testing.expectApproxEqAbs(@as(f32, 0.0), hit.position_y, 0.0001);
     try testing.expectApproxEqAbs(@as(f32, 0.0), hit.position_z, 0.0001);
 }
+
+/// Batch raycast query - processes multiple rays and returns first hit for each
+pub fn raycastBatch(world: *const QueryWorldView, rays: []const QueryRay, filter: QueryFilter, out_hits: []QueryHit) u16 {
+    query_types.recordBatchQuery();
+    const limit = @min(rays.len, out_hits.len);
+    var i: usize = 0;
+    while (i < limit) : (i += 1) {
+        out_hits[i] = raycastSingle(world, rays[i], filter);
+    }
+    return @as(u16, @intCast(limit));
+}
+
+/// Query ground below a world point using downward raycast
+pub fn queryGroundBelowPoint(world: *const QueryWorldView, world_x: f32, world_y: f32, world_z: f32, filter: QueryFilter) QueryHit {
+    const ray = QueryRay{
+        .origin_x = world_x,
+        .origin_y = world_y,
+        .origin_z = world_z,
+        .dir_x = 0.0,
+        .dir_y = -1.0,
+        .dir_z = 0.0,
+        .max_distance = 4.0,
+    };
+    return raycastSingle(world, ray, filter);
+}

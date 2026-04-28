@@ -180,6 +180,14 @@ pub fn raycastAll(world: *const QueryWorldView, ray: QueryRay, filter: QueryFilt
     return query_raycast.raycastAll(world, ray, filter, out_hits);
 }
 
+pub fn raycastBatch(world: *const QueryWorldView, rays: []const QueryRay, filter: QueryFilter, out_hits: []QueryHit) u16 {
+    return query_raycast.raycastBatch(world, rays, filter, out_hits);
+}
+
+pub fn queryGroundBelowPoint(world: *const QueryWorldView, world_x: f32, world_y: f32, world_z: f32, filter: QueryFilter) QueryHit {
+    return query_raycast.queryGroundBelowPoint(world, world_x, world_y, world_z, filter);
+}
+
 pub fn sphereCast(world: *const QueryWorldView, center_x: f32, center_y: f32, center_z: f32, radius: f32, dir_x: f32, dir_y: f32, dir_z: f32, max_distance: f32, filter: QueryFilter) QueryHit {
     return query_sweep.sphereCast(world, center_x, center_y, center_z, radius, dir_x, dir_y, dir_z, max_distance, filter);
 }

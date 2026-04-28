@@ -502,23 +502,17 @@ fn getHeightConst(state: *const KCCState) i32 {
     return if (state.crouching) state.crouch_height else state.stand_height;
 }
 
-/// Check if position is grounded using voxel sampling
+/// Check if position is grounded using unified queryGroundBelowPoint API
 pub fn checkGrounded(
     state: *KCCState,
     s1024: *scene1024.Scene1024,
     entities: []entity16.Entity16,
 ) bool {
-    const check_y = @as(i32, @intFromFloat(@floor(state.pos_y))) - 1;
-
-    const radius = state.radius;
-    const half_radius = @divTrunc(radius, 2);
-
     const world_view = query.QueryWorldView{
         .s1024 = s1024,
         .instances = s1024.instances[0..s1024.instance_count],
         .entities = entities,
     };
-
     const filter = query.QueryFilter{
         .include_static = true,
         .include_dynamic = true,
@@ -526,24 +520,17 @@ pub fn checkGrounded(
         .include_sensors = false,
     };
 
-    const base_x = @as(i32, @intFromFloat(@floor(state.pos_x)));
-    const base_z = @as(i32, @intFromFloat(@floor(state.pos_z)));
-
-    if (query.queryAnyVoxel(&world_view, base_x, check_y, base_z, filter).hit) {
-        return true;
-    }
-
-    var dx: i32 = -half_radius;
-    while (dx <= half_radius) : (dx += 2) {
-        var dz: i32 = -half_radius;
-        while (dz <= half_radius) : (dz += 2) {
-            if (query.queryAnyVoxel(&world_view, base_x + dx, check_y, base_z + dz, filter).hit) {
-                return true;
-            }
-        }
-    }
+    const base_x = state.pos_x;
+    const base_z = state.pos_z;
+    const base_y = state.pos_y;
+    if (query.queryGroundBelowPoint(&world_view, base_x, base_y, base_z, filter).hit) return true;
+    if (query.queryGroundBelowPoint(&world_view, @as(f32, @floatFromInt(state.radius)) + base_x, base_y, base_z, filter).hit) return true;
+    if (query.queryGroundBelowPoint(&world_view, base_x - @as(f32, @floatFromInt(state.radius)), base_y, base_z, filter).hit) return true;
+    if (query.queryGroundBelowPoint(&world_view, base_x, base_y, base_z + @as(f32, @floatFromInt(state.radius)), filter).hit) return true;
+    if (query.queryGroundBelowPoint(&world_view, base_x, base_y, base_z - @as(f32, @floatFromInt(state.radius)), filter).hit) return true;
     return false;
 }
+
 
 fn findSupportingKinematicInstance(
     state: *KCCState,
