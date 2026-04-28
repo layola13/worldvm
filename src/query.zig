@@ -22,6 +22,7 @@ pub const ContactClassification = query_types.ContactClassification;
 pub const ContactTelemetry = query_types.ContactTelemetry;
 pub const QueryHit = query_types.QueryHit;
 pub const OverlapResult = query_types.OverlapResult;
+pub const OverlapBatchJob = query_overlap.OverlapBatchJob;
 pub const PenetrationResult = query_types.PenetrationResult;
 pub const QueryStats = query_types.QueryStats;
 pub const QueryWorldView = query_types.QueryWorldView;
