@@ -53,6 +53,7 @@ pub const VehicleState = struct {
     steering: f32,
     ai_vehicle_id: u16 = 0,      // 0=not linked, >0=linked to ai_traffic vehicle ID
     ai_target_speed: f32 = -1,  // -1=no AI control, >=0=AI target speed (m/s)
+    target_vel: f32 = -1,         // autonomy setter: governed target speed from AI traffic (m/s)
     brake: f32,
     handbrake: bool,
     grounded: bool,
@@ -70,10 +71,35 @@ pub const VehicleControlCommand = struct {
 
 
 /// Link a vehicle to an AI traffic vehicle and set initial target speed.
-/// If ai_vehicle_id=0, unlinks and disables AI control.
+/// Writes the vehicle's pose/speed into the AI traffic vehicle so planning
+/// is aware of the vehicle's real state before updateAI() runs.
 pub fn setAIVehicleLink(vehicle: *VehicleState, ai_vehicle_id: u16, initial_target_speed: f32) void {
     vehicle.ai_vehicle_id = ai_vehicle_id;
     vehicle.ai_target_speed = initial_target_speed;
+    vehicle.target_vel = initial_target_speed;
+    if (ai_vehicle_id > 0) {
+        _ = syncVehicleToTraffic(vehicle);
+    }
+}
+
+/// Write a vehicle's current pose and speed into the matching AI traffic vehicle.
+/// This must be called before ai_traffic.updateAI() each tick so that the AI
+/// planner operates on the vehicle's real physics state rather than its internal
+/// ghost state. Returns true if a matching AI traffic vehicle was found.
+pub fn syncVehicleToTraffic(vehicle: *VehicleState) bool {
+    if (vehicle.ai_vehicle_id == 0) return false;
+    const tv_opt = ai_traffic.getTrafficVehicle(vehicle.ai_vehicle_id);
+    if (tv_opt) |tv| {
+        const fwd_x = @sin(vehicle.yaw);
+        const fwd_z = @cos(vehicle.yaw);
+        tv.pos_x = vehicle.pos_x;
+        tv.pos_z = vehicle.pos_z;
+        tv.yaw = vehicle.yaw;
+        tv.vel_x = fwd_x * vehicle.speed;
+        tv.vel_z = fwd_z * vehicle.speed;
+        return true;
+    }
+    return false;
 }
 
 pub const VehicleNetState = struct {
@@ -88,6 +114,7 @@ pub const VehicleNetState = struct {
     throttle: f32,
     steering: f32,
     ai_target_speed: f32,
+    target_vel: f32 = -1,
     ai_vehicle_id: u16 = 0,     // linked AI traffic vehicle ID (0=none)
     brake: f32,
     handbrake: bool,
@@ -508,6 +535,7 @@ pub fn exportNetState(vehicle: *const VehicleState) VehicleNetState {
         .throttle = vehicle.throttle,
         .steering = vehicle.steering,
         .ai_target_speed = vehicle.ai_target_speed,
+        .target_vel = vehicle.target_vel,
         .ai_vehicle_id = vehicle.ai_vehicle_id,
         .brake = vehicle.brake,
         .handbrake = vehicle.handbrake,
@@ -538,6 +566,7 @@ pub fn importNetState(vehicle: *VehicleState, state: VehicleNetState, position_a
     vehicle.vehicle_type = state.vehicle_type;
     vehicle.mass = state.mass;
     vehicle.ai_vehicle_id = state.ai_vehicle_id;
+    vehicle.target_vel = state.target_vel;
 }
 
 /// Get forward direction vector
@@ -956,7 +985,7 @@ pub fn update(
     dt: f32,
 ) void {
     // Sync AI planned target speed from traffic system
-    syncFromAI(vehicle);
+    syncAIVehicleFromTraffic(vehicle);
 
     switch (vehicle.vehicle_type) {
         .car, .truck, .motorcycle => vehicle.grounded = checkGrounded(vehicle, s1024, entities),
@@ -1821,16 +1850,47 @@ test "vehicle hovercraft authority degrades under liquid surface and severe weat
     terrain.init();
 }
 
-/// Sync vehicle AI target speed from AI traffic system.
-/// Reads governed_target_vel from ai_traffic if linked.
+/// Sync ai_target_speed from ai_traffic governed_target_vel.
 /// Must be called after ai_traffic.update() each tick.
-
-/// Sync vehicle AI target speed from AI traffic system.
-/// Reads governed_target_vel from ai_traffic if linked.
-/// Must be called after ai_traffic.update() each tick.
-pub fn syncFromAI(vehicle: *VehicleState) void {
+pub fn syncAIVehicleFromTraffic(vehicle: *VehicleState) void {
     if (vehicle.ai_vehicle_id == 0) return;
     if (ai_traffic.getTrafficVehicle(vehicle.ai_vehicle_id)) |tv| {
         vehicle.ai_target_speed = tv.governed_target_vel;
     }
+}
+
+/// Read governed_target_vel from ai_traffic and write it to vehicle.target_vel.
+/// Returns the read speed, or -1 if vehicle is not linked.
+pub fn getAIVehicleTargetVel(vehicle: *const VehicleState) f32 {
+    if (vehicle.ai_vehicle_id == 0) return -1;
+    const tv = ai_traffic.g_traffic_system.vehicles[vehicle.ai_vehicle_id - 1];
+    if (!tv.active) return -1;
+    const speed = tv.governed_target_vel;
+    return speed;
+}
+
+test "vehicle reads ai governed target vel" {
+    ai_traffic.init();
+    init();
+
+    // Create AI traffic vehicle with a known governed_target_vel
+    const ai_veh = ai_traffic.spawnAIVehicle(0.0, 0.0, 0.0, .normal, 0)
+        orelse return error.TestUnexpectedResult;
+    ai_veh.governed_target_vel = 33.0;
+
+    // Create a vehicle and link it to the AI vehicle
+    const car = createCar(0, 0, 0, 0) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(car.ai_vehicle_id == 0);
+
+    setAIVehicleLink(car, ai_veh.vehicle_id, -1);
+    try std.testing.expect(car.ai_vehicle_id == ai_veh.vehicle_id);
+
+    // getAIVehicleTargetVel reads governed_target_vel and returns it
+    const speed = getAIVehicleTargetVel(car);
+    try std.testing.expectApproxEqAbs(@as(f32, 33.0), speed, 0.0001);
+
+    // unlinked vehicle returns -1
+    const unlinked = createCar(10, 0, 0, 0) orelse return error.TestUnexpectedResult;
+    const unlinked_speed = getAIVehicleTargetVel(unlinked);
+    try std.testing.expect(unlinked_speed < 0);
 }

@@ -538,7 +538,26 @@ pub fn calculateLaneChange(target_lane: i8, current_lane: i8, dt: f32) f32 {
     return sign * steering;
 }
 
+/// Pull pose and speed from every physics VehicleState that is linked to
+/// an AI traffic vehicle, overwriting the ghost state used for planning.
+/// Must be called at the start of each tick before updateAI() so that
+/// the planner sees the vehicle's real physics state.
+pub fn syncTrafficVehiclesFromPhysics() void {
+    // Avoid importing vehicle.zig at file level to prevent circular dependency.
+    // vehicle.zig imports ai_traffic.zig; we call back only via the ABI
+    // that vehicle.zig already exposes for this purpose.
+    const vehicle_mod = @import("vehicle.zig");
+    const v_sys = vehicle_mod.getSystem();
+    for (0..v_sys.count) |i| {
+        const v = &v_sys.vehicles[i];
+        _ = vehicle_mod.syncVehicleToTraffic(v);
+    }
+}
+
 pub fn updateAI(dt: f32) void {
+    // Sync physics vehicle state into AI traffic vehicles before planning.
+    syncTrafficVehiclesFromPhysics();
+
     g_traffic_system.global_time += dt;
 
     for (0..g_traffic_system.light_count) |i| {
@@ -1461,3 +1480,53 @@ test "predictCarFollowing uses projected forward distance by heading" {
     try std.testing.expect(result.should_brake);
     try std.testing.expect(result.recommended_distance > 0.0);
 }
+
+
+test "setAIVehicleLink syncs vehicle pose to AI traffic immediately" {
+    init();
+    vehicle_physics.init();
+
+    // Spawn AI traffic vehicle at a known spawn pose.
+    const ai_car = spawnAIVehicle(0.0, 0.0, 0.0, .normal, 0) orelse return error.TestUnexpectedResult;
+    const ai_id = ai_car.vehicle_id;
+
+    // Create a physics vehicle at a completely different position and link it.
+    // setAIVehicleLink calls syncVehicleToTraffic, so AI car should immediately
+    // reflect the physics vehicle pose after linking.
+    const phys_car = vehicle_physics.createCar(10.0, 0.0, 20.0, 0.5) orelse return error.TestUnexpectedResult;
+    phys_car.speed = 15.0;
+    vehicle_physics.setAIVehicleLink(phys_car, ai_id, 20.0);
+
+    // Verify the AI vehicle matches the physics vehicle immediately after link.
+    try std.testing.expectApproxEqAbs(phys_car.pos_x, ai_car.pos_x, 0.0001);
+    try std.testing.expectApproxEqAbs(phys_car.pos_z, ai_car.pos_z, 0.0001);
+    const fwd_x = @sin(phys_car.yaw);
+    const fwd_z = @cos(phys_car.yaw);
+    try std.testing.expectApproxEqAbs(fwd_x * phys_car.speed, ai_car.vel_x, 0.0001);
+    try std.testing.expectApproxEqAbs(fwd_z * phys_car.speed, ai_car.vel_z, 0.0001);
+}
+
+test "syncVehicleToTraffic only affects linked vehicles" {
+    init();
+    vehicle_physics.init();
+
+    // Spawn AI traffic vehicle at a known pose.
+    const ai_car = spawnAIVehicle(5.0, 0.0, 10.0, .normal, 0) orelse return error.TestUnexpectedResult;
+    const saved_x = ai_car.pos_x;
+    const saved_z = ai_car.pos_z;
+    const saved_vel_x = ai_car.vel_x;
+
+    // Create an unlinked physics vehicle far away.
+    const phys_car = vehicle_physics.createCar(100.0, 0.0, 200.0, 1.0) orelse return error.TestUnexpectedResult;
+    phys_car.speed = 30.0;
+    // ai_vehicle_id is 0 (unlinked) by default.
+
+    // Directly call syncVehicleToTraffic; it should return false and not touch ai_car.
+    const ok = vehicle_physics.syncVehicleToTraffic(phys_car);
+    try std.testing.expect(ok == false);
+    try std.testing.expect(ai_car.pos_x == saved_x);
+    try std.testing.expect(ai_car.pos_z == saved_z);
+    try std.testing.expect(ai_car.vel_x == saved_vel_x);
+}
+
+
