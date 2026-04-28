@@ -163,10 +163,11 @@ pub fn overlapHemisphereWithLayerMask(world: *const QueryWorldView, center_x: f3
 
 pub fn overlapCapsule(world: *const QueryWorldView, center_x: f32, center_y: f32, center_z: f32, radius: f32, half_height: f32, filter: QueryFilter) OverlapResult {
     return query_overlap.overlapCapsule(world, center_x, center_y, center_z, radius, half_height, filter);
+
 }
 
-pub fn raycastSingle(world: *const QueryWorldView, ray: QueryRay, filter: QueryFilter) QueryHit {
-    return query_raycast.raycastSingle(world, ray, filter);
+pub fn overlapBatchAABBs(world: *const QueryWorldView, boxes: []const QueryAABB, filter: QueryFilter, out_results: []OverlapResult) u16 {
+    return query_overlap.overlapBatchAABBs(world, boxes, filter, out_results);
 }
 
 pub fn raycastSingleWithLayerMask(world: *const QueryWorldView, ray: QueryRay, layer_mask: QueryLayerMask) QueryHit {

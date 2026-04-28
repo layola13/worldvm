@@ -402,3 +402,109 @@ test "overlapAABB does not count voxel that only touches exact max face" {
     try std.testing.expect(!result.environment_overlap);
     try std.testing.expectEqual(@as(u16, 0), result.count);
 }
+
+test "OverlapBatchJob incremental batch processes AABBs in steps" {
+    const testing = std.testing;
+    const scene1024 = @import("scene1024.zig");
+    const entity16 = @import("entity16.zig");
+    const address = @import("address.zig");
+
+
+
+    var s1024 = scene1024.Scene1024.init(testing.allocator);
+    defer s1024.deinit();
+
+    // Set up two target voxels
+    try s1024.setVoxelAtGlobal(address.encode(.{ .world = 0, .px = 0, .py = 0, .pz = 0, .lx = 2, .ly = 0, .lz = 0 }), true);
+    try s1024.setVoxelAtGlobal(address.encode(.{ .world = 0, .px = 0, .py = 0, .pz = 0, .lx = 5, .ly = 0, .lz = 0 }), true);
+
+    var entities = [_]entity16.Entity16{};
+    const world = QueryWorldView{
+        .s1024 = &s1024,
+        .instances = s1024.instances[0..s1024.instance_count],
+        .entities = entities[0..],
+    };
+
+    const boxes = [_]QueryAABB{
+        QueryAABB.init(0.1, 0.1, 0.1, 2.9, 0.9, 0.9),
+        QueryAABB.init(4.1, 0.1, 0.1, 5.9, 0.9, 0.9),
+        QueryAABB.init(10.1, 0.1, 0.1, 11.9, 0.9, 0.9),
+    };
+
+    var results: [3]OverlapResult = undefined;
+    var job = OverlapBatchJob.begin(&world, boxes[0..], .{}, results[0..]);
+
+    // Step 1: process first box
+    const step1 = job.step(1);
+    try testing.expectEqual(@as(u16, 1), step1);
+    try testing.expect(!job.done());
+
+    // Step 2: process second box
+    const step2 = job.step(1);
+    try testing.expectEqual(@as(u16, 1), step2);
+    try testing.expect(!job.done());
+
+    // Step 3: process last box
+    const step3 = job.step(1);
+    try testing.expectEqual(@as(u16, 1), step3);
+    try testing.expect(job.done());
+    try testing.expectEqual(@as(u16, 3), job.resultCount());
+
+    // Verify results: first two boxes hit, third misses
+    try testing.expect(results[0].hit);
+    try testing.expect(results[1].hit);
+    try testing.expect(!results[2].hit);
+}
+
+/// Batch overlap query for multiple AABBs
+pub fn overlapBatchAABBs(world: *const QueryWorldView, boxes: []const QueryAABB, filter: QueryFilter, out_results: []OverlapResult) u16 {
+    query_types.recordBatchQuery();
+    const limit = @min(boxes.len, out_results.len);
+    var i: usize = 0;
+    while (i < limit) : (i += 1) {
+        out_results[i] = overlapQueryAABB(world, boxes[i], filter);
+    }
+    return @as(u16, @intCast(limit));
+}
+
+/// Incremental batch overlap state for cooperative execution
+pub const OverlapBatchJob = struct {
+    world: *const QueryWorldView,
+    boxes: []const QueryAABB,
+    filter: QueryFilter,
+    out_results: []OverlapResult,
+    cursor: usize = 0,
+    written: usize = 0,
+
+    pub fn begin(world: *const QueryWorldView, boxes: []const QueryAABB, filter: QueryFilter, out_results: []OverlapResult) OverlapBatchJob {
+        return .{
+            .world = world,
+            .boxes = boxes,
+            .filter = filter,
+            .out_results = out_results,
+        };
+    }
+
+    pub fn step(self: *OverlapBatchJob, budget: usize) u16 {
+        if (self.cursor >= self.boxes.len) return 0;
+        query_types.recordAsyncStep();
+        const end = @min(self.boxes.len, self.cursor + budget);
+        var i = self.cursor;
+        while (i < end) : (i += 1) {
+            self.out_results[i] = overlapQueryAABB(self.world, self.boxes[i], self.filter);
+        }
+        const processed = end - self.cursor;
+        self.cursor = end;
+        self.written = end;
+        return @as(u16, @intCast(processed));
+    }
+
+    pub fn done(self: *const OverlapBatchJob) bool {
+        return self.cursor >= self.boxes.len;
+    }
+
+    pub fn resultCount(self: *const OverlapBatchJob) u16 {
+        return @as(u16, @intCast(self.written));
+    }
+};
+
