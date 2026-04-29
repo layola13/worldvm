@@ -77,8 +77,12 @@ fn cmdRun(allocator: std.mem.Allocator, args: *std.process.ArgIterator) !void {
     
     var t: u32 = 0;
     while (t < ticks and !engine.stable) : (t += 1) {
+        // 1. Step physics (vehicle reads AI target speed, moves)
+        tick_engine.stepPhysicsWorld(&engine, tick_engine.getFixedDT(&engine));
+        // 2. Sync vehicle poses back to AI traffic
+        ai_traffic.syncTrafficVehiclesFromPhysics();
+        // 3. AI plans using actual vehicle state
         ai_traffic.updateAI(tick_engine.getFixedDT(&engine));
-            tick_engine.stepPhysicsWorld(&engine, tick_engine.getFixedDT(&engine));
         if (verbose) {
             try renderer.renderScene(scene, stdout);
             try stdout.print("\n", .{});

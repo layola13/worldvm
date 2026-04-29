@@ -26,6 +26,7 @@ const collision_event = @import("collision_event.zig");
 const sleep_response = @import("sleep_response.zig");
 const physics_kernel = @import("physics_kernel.zig");
 const physics_world = @import("physics_world.zig");
+const crash_defense = @import("crash_defense.zig");
 const query_types = @import("query_types.zig");
 
 pub const Operator = enum(u8) { NOP = 0, FALL = 6, FLOW = 7, MOVE = 3, PUSH = 4, BREAK = 5 };
@@ -1598,6 +1599,9 @@ pub fn stepPhysicsWorldResult(engine: *TickEngine, dt: f32) physics_world.StepRe
     if (engine.trace_async_flush_budget > 0) {
         _ = flushTraceAsyncWrites(engine, @as(u16, engine.trace_async_flush_budget));
     }
+    // Apply crash defense: clamp velocities and validate scene state
+    crash_defense.clampScene(engine.s1024);
+
     return result;
 }
 

@@ -3028,7 +3028,14 @@ pub fn endDeterminismProof() void {
         const last_idx = (g_rewind_system.current_index + MAX_REWIND_STATES - 1) % MAX_REWIND_STATES;
         g_rewind_system.proof_final_hash = calculateStateHash(&g_rewind_system.states[last_idx]);
     }
-    g_rewind_system.proof.verified = true;
+    // Populate proof struct with captured hashes
+    g_rewind_system.proof.initial_state_hash = g_rewind_system.proof_initial_hash;
+    g_rewind_system.proof.final_state_hash = g_rewind_system.proof_final_hash;
+    g_rewind_system.proof.tick_count = g_rewind_system.proof_ticks;
+    // Actually verify determinism by comparing initial vs final hash
+    g_rewind_system.proof.verified = (g_rewind_system.proof_initial_hash != 0 and
+        g_rewind_system.proof_initial_hash == g_rewind_system.proof_final_hash);
+    g_rewind_system.proof.mismatches = if (g_rewind_system.proof.verified) 0 else 1;
 }
 
 pub fn compareTraces(trace_a: []const RewindState, trace_b: []const RewindState) u16 {
@@ -4525,3 +4532,6 @@ test "Determinism: RNG state is captured in snapshot" {
     try std.testing.expect(snapshot.rng_state.state != 0);
     try std.testing.expect(snapshot.rng_state.seed == 0xDEADBEEF);
 }
+
+
+

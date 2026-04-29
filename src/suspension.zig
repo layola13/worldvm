@@ -6,16 +6,16 @@
 const std = @import("std");
 
 pub const SuspensionState = struct {
-    rest_length: f32,
-    current_length: f32,
-    velocity: f32,
-    compression: f32,
-    force: f32,
-    damper_force: f32,
-    spring_force: f32,
-    bump_threshold: f32,
-    rebound_threshold: f32,
-    active: bool,
+    rest_length: f32 = 0.3,
+    current_length: f32 = 0,
+    velocity: f32 = 0,
+    compression: f32 = 0,
+    force: f32 = 0,
+    damper_force: f32 = 0,
+    spring_force: f32 = 0,
+    bump_threshold: f32 = 0,
+    rebound_threshold: f32 = 0,
+    active: bool = false,
 };
 
 pub const SuspensionConfig = struct {

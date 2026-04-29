@@ -4249,6 +4249,11 @@ pub fn updateVehicleSystems(s1024: *scene1024.Scene1024, entities: []entity16.En
         const v = &vehicle_sys.vehicles[i];
         vehicle.update(v, s1024, entities, dt);
     }
+    // Sync vehicle poses back to AI traffic so planning uses real physics state
+    var j: u8 = 0;
+    while (j < vehicle_sys.count) : (j += 1) {
+        _ = vehicle.syncVehicleToTraffic(&vehicle_sys.vehicles[j]);
+    }
 }
 
 pub fn updateRagdollSystems(s1024: *scene1024.Scene1024, entities: []entity16.Entity16, dt: f32) void {

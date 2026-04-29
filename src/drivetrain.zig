@@ -324,3 +324,12 @@ test "drivetrain transmission efficiency changes with selected gear and stays cl
     try std.testing.expect(high_gear_eff >= 0.72 and high_gear_eff <= 0.95);
     try std.testing.expect(high_gear_eff < low_gear_eff);
 }
+
+/// Wrapper that integrates with vehicle updateCar() calling convention (gear, speed, throttle, dt)
+pub fn updateTransmissionGear(gear: i8, speed: f32, throttle: f32, dt: f32) i8 {
+    _ = gear; _ = speed; _ = throttle;
+    _ = speed;
+    _ = throttle;
+    updateTransmission(dt);
+    return g_drivetrain.transmission.current_gear;
+}

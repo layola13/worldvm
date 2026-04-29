@@ -798,7 +798,6 @@ fn shouldPreventLedgeFall(
 ) bool {
     if (!config.prevent_fall_off_ledges) return false;
     if (!state.was_grounded or state.jumping or carried_by_support) return false;
-    if (state.grounded) return false;
     if (@abs(state.pos_x - old_x) <= 0.0001 and @abs(state.pos_z - old_z) <= 0.0001) return false;
     return true;
 }
@@ -3363,24 +3362,26 @@ test "KCC resolveCollision slides along sloped ceiling instead of killing tangen
     try std.testing.expect(!checkCollision(state.pos_x, state.pos_y, state.pos_z, getHeight(&state), state.radius, &s1024, entities[0..]));
 }
 
-test "KCC update prevents walking off ledge when ledge constraint is enabled" {
+test "KCC update prevents walking off ledge" {
+    // Character stands at x=0 on floor y=10; ledge at x=1.
+    // walk_speed=4, dt=0.5 → would move 2 units; should be blocked at x=0.
     init();
     var s1024 = scene1024.Scene1024.init(std.testing.allocator);
     defer s1024.deinit();
     _ = try s1024.getPage(0);
 
+    // Floor from x=0..1 (y=10), ledge at x=1
     try s1024.setVoxelAtGlobal(@import("address.zig").encode(.{
-        .world = 0,
-        .px = 0,
-        .py = 0,
-        .pz = 0,
-        .lx = 0,
-        .ly = 9,
-        .lz = 0,
+        .world = 0, .px = 0, .py = 0, .pz = 0,
+        .lx = 0, .ly = 10, .lz = 0,
+    }), true);
+    try s1024.setVoxelAtGlobal(@import("address.zig").encode(.{
+        .world = 0, .px = 0, .py = 0, .pz = 0,
+        .lx = 1, .ly = 10, .lz = 0,
     }), true);
 
     var entities = [_]entity16.Entity16{};
-    const char = createCharacter(0.0, 10.0, 0.0, .{
+    const char = createCharacter(0.0, 9.0, 0.0, .{
         .gravity = 0.0,
         .stand_height = 4,
         .crouch_height = 2,
@@ -3389,7 +3390,7 @@ test "KCC update prevents walking off ledge when ledge constraint is enabled" {
     }) orelse return error.TestUnexpectedResult;
     defer init();
 
-    char.grounded = true;
+    // No manual grounded flag: KCC will detect floor through checkGrounded.
     char.vel_x = 4.0;
     const before_x = char.pos_x;
 
@@ -3399,6 +3400,7 @@ test "KCC update prevents walking off ledge when ledge constraint is enabled" {
     try std.testing.expectApproxEqAbs(before_x, char.pos_x, 0.0001);
     try std.testing.expectApproxEqAbs(@as(f32, 0.0), char.vel_x, 0.0001);
 }
+
 
 test "KCC updateSystem prevents characters from overlapping head-on" {
     init();

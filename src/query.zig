@@ -170,8 +170,12 @@ pub fn overlapBatchAABBs(world: *const QueryWorldView, boxes: []const QueryAABB,
     return query_overlap.overlapBatchAABBs(world, boxes, filter, out_results);
 }
 
+pub fn raycastSingle(world: *const QueryWorldView, ray: QueryRay, filter: QueryFilter) QueryHit {
+    return query_raycast.raycastSingle(world, ray, filter);
+}
+
 pub fn raycastSingleWithLayerMask(world: *const QueryWorldView, ray: QueryRay, layer_mask: QueryLayerMask) QueryHit {
-    return raycastSingle(world, ray, .{ .layer_mask = layer_mask });
+    return query_raycast.raycastSingle(world, ray, .{ .layer_mask = layer_mask });
 }
 
 pub fn raycastIgnoreSelf(world: *const QueryWorldView, ray: QueryRay, ignore_idx: u8) QueryHit {
