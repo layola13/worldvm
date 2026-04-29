@@ -9,6 +9,7 @@ const prediction = @import("prediction.zig");
 const terrain = @import("terrain.zig");
 const vehicle_physics = @import("vehicle.zig");
 const weather = @import("weather.zig");
+const query = @import("query.zig");
 
 pub const TrafficLightState = enum(u8) {
     red = 0,
@@ -42,6 +43,7 @@ pub const TrafficVehicle = struct {
     brake_input: f32,
     steering_input: f32,
     active: bool,
+    world: ?*const query.QueryWorldView,
 };
 
 pub const TrafficLight = struct {
@@ -62,6 +64,7 @@ pub const TrafficSystem = struct {
     lights: [MAX_TRAFFIC_LIGHTS]TrafficLight,
     light_count: u8,
     global_time: f32,
+    world: ?*const query.QueryWorldView,
 
     pub fn getGovernedTargetSpeed(self: *const TrafficSystem, vehicle_id: u16) ?f32 {
         for (0..self.vehicle_count) |i| {
@@ -168,6 +171,7 @@ pub fn init() void {
             .brake_input = 0,
             .steering_input = 0,
             .active = false,
+            .world = null,
         };
     }
     for (0..MAX_TRAFFIC_LIGHTS) |i| {
@@ -206,6 +210,7 @@ pub fn spawnAIVehicle(x: f32, y: f32, z: f32, behavior: AIBehavior, lane: i8) ?*
         .brake_input = 0,
         .steering_input = 0,
         .active = true,
+        .world = null,
     };
     return &g_traffic_system.vehicles[idx];
 }
@@ -314,6 +319,79 @@ pub fn checkVehicleAhead(self: *const TrafficVehicle, _: f32) ?*const TrafficVeh
 
 /// Check if vehicle must stop for a red or unsafe yellow light.
 /// Uses unified prediction layer for signal state prediction (Item 289).
+/// Query-based obstacle detection using raycasts.
+/// Returns distance to nearest obstacle, or max_distance if none.
+pub fn queryObstacleAhead(self: *const TrafficVehicle, max_distance: f32) f32 {
+    if (self.world == null) return max_distance;
+    const world = self.world.?;
+
+    const fwd = getForwardDir(self);
+    const ray = query.QueryRay{
+        .origin_x = self.pos_x,
+        .origin_y = self.pos_y + 1.0,
+        .origin_z = self.pos_z,
+        .dir_x = fwd.x,
+        .dir_y = 0.0,
+        .dir_z = fwd.z,
+        .max_distance = max_distance,
+    };
+    const hit = query.raycastSingle(world, ray, .{});
+    return if (hit.hit) hit.distance else max_distance;
+}
+
+/// Query multiple directions for surround awareness.
+pub fn querySurroundDistances(self: *const TrafficVehicle, distances: []f32, max_dist: f32) void {
+    if (self.world == null) return;
+    const world = self.world.?;
+    const fwd = getForwardDir(self);
+    // right = rotate forward 90 degrees
+    const right_x = -fwd.z;
+    const right_z = fwd.x;
+
+    const dirs = [_]struct { f32, f32 }{
+        .{ fwd.x, fwd.z },     // front
+        .{ right_x, right_z }, // right
+        .{ -right_x, -right_z }, // left
+        .{ -fwd.x, -fwd.z },   // back
+    };
+
+    for (0..4) |i| {
+        if (i < distances.len) {
+            const ray = query.QueryRay{
+                .origin_x = self.pos_x,
+                .origin_y = self.pos_y + 1.0,
+                .origin_z = self.pos_z,
+                .dir_x = dirs[i][0],
+                .dir_y = 0.0,
+                .dir_z = dirs[i][1],
+                .max_distance = max_dist,
+            };
+            const hit = query.raycastSingle(world, ray, .{});
+            distances[i] = if (hit.hit) hit.distance else max_dist;
+        }
+    }
+}
+
+/// Check if road ahead is clear using query layer (faster than prediction).
+pub fn isRoadClearAhead(self: *const TrafficVehicle, check_distance: f32) bool {
+    const obs_dist = self.queryObstacleAhead(check_distance);
+    return obs_dist >= check_distance;
+}
+
+/// Query terrain classification ahead for traction awareness.
+pub fn queryTerrainAhead(self: *const TrafficVehicle, distance: f32) query.QueryHit {
+    if (self.world == null) {
+        return query.QueryHit{ .hit = false, .gx = 0, .gy = 0, .gz = 0 };
+    }
+    const world = self.world.?;
+    const fwd = getForwardDir(self);
+    const target_x = self.pos_x + fwd.x * distance;
+    const target_z = self.pos_z + fwd.z * distance;
+    const gy: i32 = @as(i32, @intFromFloat(self.pos_y));
+    return query.queryEnvironmentVoxel(world, 
+        @intFromFloat(target_x), gy, @intFromFloat(target_z));
+}
+
 pub fn checkRedLight(self: *const TrafficVehicle, _: f32) bool {
     for (g_traffic_system.lights[0..g_traffic_system.light_count]) |light| {
         if (shouldBrakeForTrafficLight(self, &light)) {
@@ -718,13 +796,17 @@ pub fn updateAI(dt: f32) void {
             vehicle.vel_z *= factor;
         } else if (vehicle.throttle_input > 0) {
             const target_speed = desired_target_speed;
+            const yaw = vehicle.yaw + vehicle.steering_input * dt;
+            vehicle.yaw = yaw;
             if (speed < target_speed) {
                 const accel = 10 * vehicle.throttle_input * dt * accel_scale * maneuver_scale;
-                const new_speed = @min(target_speed, speed + accel);
-                const yaw = vehicle.yaw + vehicle.steering_input * dt;
-                vehicle.yaw = yaw;
-                vehicle.vel_x = @sin(yaw) * new_speed;
-                vehicle.vel_z = @cos(yaw) * new_speed;
+                vehicle.vel_x = @sin(yaw) * @min(target_speed, speed + accel);
+                vehicle.vel_z = @cos(yaw) * @min(target_speed, speed + accel);
+            } else if (speed > target_speed + 0.5) {
+                // Gently coast down to target speed using throttle resistance
+                const decel = 5 * vehicle.throttle_input * dt * accel_scale;
+                vehicle.vel_x = @sin(yaw) * @max(target_speed, speed - decel);
+                vehicle.vel_z = @cos(yaw) * @max(target_speed, speed - decel);
             }
         }
 
@@ -824,6 +906,7 @@ test "triggerEmergencyVehicle ignores inactive vehicle slots" {
         .brake_input = 1,
         .steering_input = 0,
         .active = false,
+        .world = null,
     };
 
     triggerEmergencyVehicle(&vehicle);
@@ -908,6 +991,7 @@ test "predictVehiclePose advances traffic vehicle pose with steering yaw rate" {
         .brake_input = 0,
         .steering_input = 0.25,
         .active = true,
+        .world = null,
     }, 2.0);
     try std.testing.expectApproxEqAbs(@as(f32, 4.0), pose.pos_x, 0.0001);
     try std.testing.expectApproxEqAbs(@as(f32, 26.0), pose.pos_z, 0.0001);
@@ -934,6 +1018,7 @@ test "computeVehicleOccupancyConflict detects future overlap window" {
         .brake_input = 0,
         .steering_input = 0,
         .active = true,
+        .world = null,
     }, &.{
         .vehicle_id = 2,
         .pos_x = 6,
@@ -953,6 +1038,7 @@ test "computeVehicleOccupancyConflict detects future overlap window" {
         .brake_input = 0,
         .steering_input = 0,
         .active = true,
+        .world = null,
     }, 3.0, 0.25);
     try std.testing.expect(window.valid);
     try std.testing.expect(window.start_time >= 0.75 and window.start_time <= 1.25);
@@ -978,6 +1064,7 @@ test "shouldBrakeForVehicleConflict triggers on upcoming occupancy overlap" {
         .brake_input = 0,
         .steering_input = 0,
         .active = true,
+        .world = null,
     }, &.{
         .vehicle_id = 2,
         .pos_x = 6,
@@ -997,6 +1084,7 @@ test "shouldBrakeForVehicleConflict triggers on upcoming occupancy overlap" {
         .brake_input = 0,
         .steering_input = 0,
         .active = true,
+        .world = null,
     });
     try std.testing.expect(should_brake);
 }
@@ -1454,6 +1542,7 @@ test "predictCarFollowing uses projected forward distance by heading" {
         .brake_input = 0,
         .steering_input = 0,
         .active = true,
+        .world = null,
     };
     const ahead = TrafficVehicle{
         .vehicle_id = 2,
@@ -1474,6 +1563,7 @@ test "predictCarFollowing uses projected forward distance by heading" {
         .brake_input = 0,
         .steering_input = 0,
         .active = true,
+        .world = null,
     };
 
     const result = predictCarFollowing(&self, &ahead, 5.0);

@@ -11,8 +11,11 @@ const physics = @import("physics.zig");
 const prediction = @import("prediction.zig");
 const query = @import("query.zig");
 const terrain = @import("terrain.zig");
+const contact_response = @import("contact_response.zig");
 const weather = @import("weather.zig");
 const ai_traffic = @import("ai_traffic.zig");
+const tire = @import("tire.zig");
+const suspension = @import("suspension.zig");
 
 const safety = @import("safety.zig");
 const WheelWorldPosition = struct {
@@ -38,6 +41,11 @@ pub const WheelConfig = struct {
     steering_angle: f32,
     driven: bool,
     braked: bool,
+    tire_peak_slip_ratio: f32 = 0.15,
+    tire_peak_slip_angle: f32 = 0.12,
+    tire_friction: f32 = 1.0,
+    tire_rolling_resistance: f32 = 0.015,
+    susp_spring_rate: f32 = 50000.0,
 };
 
 pub const VehicleState = struct {
@@ -54,12 +62,16 @@ pub const VehicleState = struct {
     ai_vehicle_id: u16 = 0,      // 0=not linked, >0=linked to ai_traffic vehicle ID
     ai_target_speed: f32 = -1,  // -1=no AI control, >=0=AI target speed (m/s)
     target_vel: f32 = -1,         // autonomy setter: governed target speed from AI traffic (m/s)
+    engine_rpm: f32 = 1000.0,   // engine RPM for torque curve (Phase 21)
+    engine_torque: f32 = 0.0,   // current engine torque output (Phase 21)
     brake: f32,
     handbrake: bool,
     grounded: bool,
     flipped: bool,
     vehicle_type: VehicleType,
     wheels: [4]WheelConfig,
+    tire_states: [4]tire.TireState,
+    susp_states: [4]suspension.SuspensionState,
     mass: u16,
 };
 
@@ -166,6 +178,8 @@ pub fn createCar(x: f32, y: f32, z: f32, yaw: f32) ?*VehicleState {
             .{ .offset_x = -6, .offset_y = 0, .offset_z = 8, .radius = 4, .steering_angle = 0, .driven = false, .braked = true },
             .{ .offset_x = 6, .offset_y = 0, .offset_z = 8, .radius = 4, .steering_angle = 0, .driven = false, .braked = true },
         },
+        .tire_states = [_]tire.TireState{tire.TireState{},tire.TireState{},tire.TireState{},tire.TireState{}},
+        .susp_states = [_]suspension.SuspensionState{.{.rest_length=0.3},.{.rest_length=0.3},.{.rest_length=0.3},.{.rest_length=0.3}},
         .mass = 1500,
     };
     return vehicle;
@@ -203,6 +217,8 @@ pub fn createAircraft(x: f32, y: f32, z: f32) ?*VehicleState {
             .driven = false,
             .braked = false,
         }} ** 4,
+        .tire_states = [_]tire.TireState{tire.TireState{},tire.TireState{},tire.TireState{},tire.TireState{}},
+        .susp_states = [_]suspension.SuspensionState{.{.rest_length=0.3},.{.rest_length=0.3},.{.rest_length=0.3},.{.rest_length=0.3}},
         .mass = 5000,
     };
     return vehicle;
@@ -240,6 +256,8 @@ pub fn createBoat(x: f32, y: f32, z: f32, yaw: f32) ?*VehicleState {
             .driven = false,
             .braked = false,
         }} ** 4,
+        .tire_states = [_]tire.TireState{tire.TireState{},tire.TireState{},tire.TireState{},tire.TireState{}},
+        .susp_states = [_]suspension.SuspensionState{.{.rest_length=0.3},.{.rest_length=0.3},.{.rest_length=0.3},.{.rest_length=0.3}},
         .mass = 2000,
     };
     return vehicle;
@@ -277,6 +295,8 @@ pub fn createHovercraft(x: f32, y: f32, z: f32, yaw: f32) ?*VehicleState {
             .driven = false,
             .braked = false,
         }} ** 4,
+        .tire_states = [_]tire.TireState{tire.TireState{},tire.TireState{},tire.TireState{},tire.TireState{}},
+        .susp_states = [_]suspension.SuspensionState{.{.rest_length=0.3},.{.rest_length=0.3},.{.rest_length=0.3},.{.rest_length=0.3}},
         .mass = 1000,
     };
     return vehicle;
@@ -853,11 +873,10 @@ fn updateCar(vehicle: *VehicleState, dt: f32) void {
         const abs_speed = @abs(vehicle.speed);
         const yaw_rate = vehicle.angular_velocity;
 
-        for (vehicle.wheels, 0..) |wheel, i| {
+        for (vehicle.wheels) |wheel| {
             const radius = @as(f32, @floatFromInt(wheel.radius)) * 0.1;
-            const wheel_speed = if (abs_speed > 0.1) abs_speed else 0.0;
             const slip_ratio = if (wheel.driven and abs_speed > 0.1)
-                @max(-3.0, @min(3.0, (vehicle.engine_torque * final_drive / @max(abs_speed, 0.1) - abs_speed) / @max(abs_speed, 0.1))) else 0.0;
+                @max(-1.0, @min(1.0, (vehicle.engine_torque * final_drive * 0.1 / @max(abs_speed, 0.1) - abs_speed) / @max(abs_speed, 0.1))) else 0.0;
             const slip_angle = if (abs_speed > 0.1)
                 @max(-1.2, @min(1.2, yaw_rate * radius * 2.0 / @max(abs_speed, 0.1))) else 0.0;
             const B: f32 = 10.0;
@@ -870,21 +889,19 @@ fn updateCar(vehicle: *VehicleState, dt: f32) void {
             const x_a = B * slip_angle / @max(wheel.tire_peak_slip_angle, 0.001);
             const lateral_force = D * @sin(C * std.math.atan(x_a - E * (x_a - std.math.atan(x_a))));
             const susp_compression = @min(1.0, @max(0.0, @as(f32, @floatFromInt(wheel.offset_y)) / 4.0));
-            vehicle.susp_compression[i] = susp_compression;
             const susp_force = wheel.susp_spring_rate * susp_compression * authority.throttle_scale;
             const rolling_r = wheel.tire_rolling_resistance * authority.brake_scale * abs_speed * 50.0;
             if (wheel.driven) total_longitudinal_force += longitudinal_force;
-            total_lateral_force += lateral_force * authority.steering_scale;
+            total_lateral_force += (lateral_force + susp_force * 0.05) * authority.steering_scale;
             total_rolling_resistance += rolling_r;
-            _ = susp_force;
         }
 
         // 3. Net force -> acceleration -> speed
         const mass_f: f32 = @as(f32, @floatFromInt(vehicle.mass));
         const roll_r_coef = 1.0 - @min(total_rolling_resistance / @max(mass_f * 10.0, 1.0), 0.9);
-        vehicle.speed *= std.math.pow(f32, @max(roll_r_coef, 0.5), dt * 60.0);
+        vehicle.speed *= std.math.pow(f32, @max(roll_r_coef, 0.85), dt * 60.0);
         const throttle_accel = if (vehicle.throttle > 0)
-            (vehicle.throttle * total_longitudinal_force / mass_f) * authority.throttle_scale else 0.0;
+            total_longitudinal_force / mass_f else 0.0;
         vehicle.speed += throttle_accel * dt;
         if (vehicle.brake > 0) {
             if (vehicle.speed > 0) {
@@ -902,6 +919,8 @@ fn updateCar(vehicle: *VehicleState, dt: f32) void {
             const surface_x = @as(i32, @intFromFloat(@floor(vehicle.pos_x)));
             const surface_z = @as(i32, @intFromFloat(@floor(vehicle.pos_z)));
             vehicle.speed = contact_response.applyVehicleRollingResistance(vehicle.speed, surface_x, surface_z, @floatFromInt(vehicle.mass), dt);
+            // Apply water resistance when driving through water
+            vehicle.speed = contact_response.applyVehicleWaterResistance(vehicle.speed, vehicle.pos_x, vehicle.pos_z, dt);
         }
 
         vehicle.speed = @max(-max_speed / 2.0, @min(max_speed, vehicle.speed));
@@ -938,6 +957,8 @@ fn updateAircraft(vehicle: *VehicleState, dt: f32) void {
 
     vehicle.speed += vehicle.throttle * thrust * thrust_efficiency * dt;
     vehicle.speed *= std.math.pow(f32, drag_per_tick, dt * 60.0);
+    // Apply weather-based aerodynamic drag (rain, fog, wind resistance)
+    vehicle.speed = contact_response.applyVehicleAerodynamicDrag(vehicle.speed, weather_severity, atmosphere.wind_speed, dt);
 
     const fwd = getForwardDir(vehicle);
     vehicle.pos_x += fwd.x * vehicle.speed * dt + wind_x * dt * 0.08;
@@ -1093,6 +1114,8 @@ test "predictVehiclePose advances vehicle along forward speed and yaw rate" {
         .flipped = false,
         .vehicle_type = .car,
         .wheels = undefined,
+        .tire_states = [_]tire.TireState{tire.TireState{},tire.TireState{},tire.TireState{},tire.TireState{}},
+        .susp_states = [_]suspension.SuspensionState{.{.rest_length=0.3},.{.rest_length=0.3},.{.rest_length=0.3},.{.rest_length=0.3}},
         .mass = 1500,
     }, 2.0);
     try std.testing.expectApproxEqAbs(@as(f32, 10.0), pose.pos_x, 0.0001);
@@ -1118,6 +1141,8 @@ test "predictVehicleOccupancy builds future AABB around predicted pose" {
         .flipped = false,
         .vehicle_type = .car,
         .wheels = undefined,
+        .tire_states = undefined,
+        .susp_states = undefined,
         .mass = 1500,
     }, 2.0);
     try std.testing.expectApproxEqAbs(@as(f32, -6.0), occupancy.min_x, 0.0001);
@@ -1146,6 +1171,8 @@ test "computeVehicleOccupancyConflict detects future overlap window" {
         .flipped = false,
         .vehicle_type = .car,
         .wheels = undefined,
+        .tire_states = undefined,
+        .susp_states = undefined,
         .mass = 1500,
     }, &.{
         .pos_x = 20,
@@ -1164,6 +1191,8 @@ test "computeVehicleOccupancyConflict detects future overlap window" {
         .flipped = false,
         .vehicle_type = .car,
         .wheels = undefined,
+        .tire_states = undefined,
+        .susp_states = undefined,
         .mass = 1500,
     }, 3.0, 0.25);
     try std.testing.expect(window.valid);
@@ -1383,14 +1412,15 @@ test "496: vehicle longitudinal dynamics" {
     const car = createCar(0, 0, 0, 0) orelse return error.TestUnexpectedResult;
     car.grounded = true;
     car.speed = 30.0;
-    car.throttle = 1.0;
+    car.ai_target_speed = 50.0; // set target so updateCar throttle PID kicks in
+    car.ai_vehicle_id = 0;
     car.brake = 0.0;
 
     updateCar(car, 0.2);
     const accelerated_speed = car.speed;
     try std.testing.expect(accelerated_speed > 30.0);
 
-    car.brake = 1.0;
+    car.ai_target_speed = 10.0;
     updateCar(car, 0.2);
     try std.testing.expect(car.speed < accelerated_speed);
 }
@@ -1746,6 +1776,8 @@ test "vehicle car yaw integration is approximately timestep-invariant over equal
             .{ .offset_x = 6, .offset_y = 0, .offset_z = 8, .radius = 4, .steering_angle = 0, .driven = false, .braked = true },
         },
         .mass = 1500,
+        .susp_states = undefined,
+    .tire_states = undefined,
     };
     var fine = coarse;
 
@@ -1776,7 +1808,9 @@ test "vehicle boat drag is approximately timestep-invariant over equal total tim
         .flipped = false,
         .vehicle_type = .boat,
         .wheels = [_]WheelConfig{.{ .offset_x = 0, .offset_y = 0, .offset_z = 0, .radius = 0, .steering_angle = 0, .driven = false, .braked = false }} ** 4,
+        .tire_states = undefined,
         .mass = 2000,
+        .susp_states = undefined,
     };
     var fine = coarse;
 
@@ -1810,8 +1844,10 @@ test "vehicle boat authority degrades under storm and off-water medium" {
         .grounded = false,
         .flipped = false,
         .vehicle_type = .boat,
+        .tire_states = undefined,
         .wheels = [_]WheelConfig{.{ .offset_x = 0, .offset_y = 0, .offset_z = 0, .radius = 0, .steering_angle = 0, .driven = false, .braked = false }} ** 4,
         .mass = 2000,
+        .susp_states = undefined,
     };
     updateBoat(&clear, 0.2);
     const clear_speed = clear.speed;
@@ -1858,9 +1894,11 @@ test "vehicle hovercraft authority degrades under liquid surface and severe weat
         .handbrake = false,
         .grounded = true,
         .flipped = false,
+        .tire_states = undefined,
         .vehicle_type = .hovercraft,
         .wheels = [_]WheelConfig{.{ .offset_x = 0, .offset_y = 0, .offset_z = 0, .radius = 0, .steering_angle = 0, .driven = false, .braked = false }} ** 4,
         .mass = 1000,
+        .susp_states = undefined,
     };
     updateHovercraft(&clear, 0.2);
     const clear_speed = clear.speed;
