@@ -665,6 +665,44 @@ test "queryAnyVoxel broadphase culls far instance and still finds nearby one" {
     try std.testing.expectEqual(@as(i16, 1), hit.instance_idx);
 }
 
+test "queryAnyVoxel uses instance origin plus Entity16 local voxel coordinates" {
+    var s1024 = scene1024.Scene1024.init(std.testing.allocator);
+    defer s1024.deinit();
+
+    var entity = entity16.initEntity16();
+    entity16.setVoxel(&entity, 5, 5, 5);
+    var entities = [_]entity16.Entity16{entity};
+
+    s1024.instance_count = 1;
+    s1024.instances[0] = .{
+        .entity_id = 0,
+        .pos_x = 160,
+        .pos_y = 224,
+        .pos_z = 96,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .sleep_tick = 0,
+        ._reserved = .{0} ** 2,
+    };
+
+    const world = QueryWorldView{
+        .s1024 = &s1024,
+        .instances = s1024.instances[0..s1024.instance_count],
+        .entities = entities[0..],
+    };
+
+    const local_like_global = queryAnyVoxel(&world, 5, 5, 5, .{});
+    try std.testing.expect(!local_like_global.hit);
+
+    const hit = queryAnyVoxel(&world, 165, 229, 101, .{});
+    try std.testing.expect(hit.hit);
+    try std.testing.expect(!hit.hit_environment);
+    try std.testing.expectEqual(@as(i16, 0), hit.instance_idx);
+    try std.testing.expectEqual(@as(i16, 0), hit.entity_id);
+}
+
 test "queryAnyVoxelBatch returns per-point results in request order" {
     var s1024 = scene1024.Scene1024.init(std.testing.allocator);
     defer s1024.deinit();

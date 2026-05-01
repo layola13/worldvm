@@ -22,7 +22,7 @@ pub fn encode(parts: AddrParts) WorldAddr {
     addr |= @as(u64, parts.world) << 30;
     addr |= @as(u64, parts.px) << 25;
     addr |= @as(u64, parts.py) << 20;
-    addr |= @as(u64, parts.pz) << 15;  // bit[15] = pz[0]
+    addr |= @as(u64, parts.pz) << 15; // bit[15] = pz[0]
     addr |= @as(u64, parts.lx) << 10;
     addr |= @as(u64, parts.ly) << 5;
     addr |= @as(u64, parts.lz);
@@ -52,10 +52,47 @@ pub fn getLocalIdx(addr: WorldAddr) u15 {
 test "encode/decode address" {
     const parts = AddrParts{
         .world = 1,
-        .px = 10, .py = 20, .pz = 30,
-        .lx = 5, .ly = 15, .lz = 25,
+        .px = 10,
+        .py = 20,
+        .pz = 30,
+        .lx = 5,
+        .ly = 15,
+        .lz = 25,
     };
     const addr = encode(parts);
     const decoded = decode(addr);
     try std.testing.expectEqual(parts, decoded);
+}
+
+test "address page id and local index pack xyz components" {
+    const parts = AddrParts{
+        .world = 7,
+        .px = 3,
+        .py = 5,
+        .pz = 9,
+        .lx = 11,
+        .ly = 13,
+        .lz = 17,
+    };
+    const addr = encode(parts);
+
+    try std.testing.expectEqual(@as(u32, 0b00011_00101_01001), getPageId(addr));
+    try std.testing.expectEqual(@as(u15, 0b01011_01101_10001), getLocalIdx(addr));
+}
+
+test "address round trips maximum field values" {
+    const parts = AddrParts{
+        .world = 15,
+        .px = 31,
+        .py = 31,
+        .pz = 31,
+        .lx = 31,
+        .ly = 31,
+        .lz = 31,
+    };
+    const addr = encode(parts);
+
+    try std.testing.expectEqual(parts, decode(addr));
+    try std.testing.expectEqual(@as(u32, 0x7FFF), getPageId(addr));
+    try std.testing.expectEqual(@as(u15, 0x7FFF), getLocalIdx(addr));
 }

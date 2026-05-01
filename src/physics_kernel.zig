@@ -3752,6 +3752,45 @@ pub fn sweepMotionAlongAxis(
     };
 }
 
+pub const StationaryFallResult = struct {
+    changed: bool = false,
+    next_y: i32 = 0,
+    next_state: scene32.InstanceState = .idle,
+    blocked: bool = false,
+    blocker_id: u8 = 0,
+};
+
+pub fn planStationaryDiscreteFall(
+    s1024: *scene1024.Scene1024,
+    inst: *scene32.Instance,
+    entity: *const entity16.Entity16,
+    entities: []entity16.Entity16,
+) StationaryFallResult {
+    const fall = physics.checkFall(s1024, inst, entities);
+    if (fall.can_fall) {
+        return .{
+            .changed = true,
+            .next_y = fall.target_y,
+            .next_state = .falling,
+        };
+    }
+
+    if (fall.blocked) {
+        return .{
+            .changed = true,
+            .next_y = inst.pos_y,
+            .next_state = handleBlockedFallContact(inst, entity, fall.blocker_id, inst.vel_y),
+            .blocked = true,
+            .blocker_id = fall.blocker_id,
+        };
+    }
+
+    return .{
+        .next_y = inst.pos_y,
+        .next_state = inst.state,
+    };
+}
+
 pub fn canOccupyTranslatedPosition(
     s1024: *scene1024.Scene1024,
     inst: *const scene32.Instance,

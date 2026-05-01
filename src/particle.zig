@@ -520,11 +520,26 @@ test "particle restore clamps invalid snapshot cursor" {
 
 test "particle system handles negative dt gracefully" {
     var system = ParticleSystem.init();
-    defer system.deinit();
-    _ = try system.emit(.{ .x = 1, .y = 2, .z = 3, .vel_x = 0, .vel_y = 0, .vel_z = 0, .radius = 0.5, .mass = 1.0, .lifetime = 2.0, .active = true, .age = 0.5 });
-    const stats_before = system.stats;
+    system.particles[0] = .{
+        .active = true,
+        .x = 1.0,
+        .y = 2.0,
+        .z = 3.0,
+        .vx = 1.0,
+        .vy = 1.0,
+        .vz = 1.0,
+        .radius = 0.5,
+        .mass = 1.0,
+        .lifetime = 2.0,
+        .age = 0.5,
+    };
+    const before = system.particles[0];
     _ = system.step(.{ .dt = -1.0 });
-    try std.testing.expectEqual(stats_before.particle_count, system.stats.particle_count);
+    try std.testing.expectEqual(@as(u16, 1), system.stats.active_particles);
+    try std.testing.expectApproxEqAbs(before.x, system.particles[0].x, 0.0001);
+    try std.testing.expectApproxEqAbs(before.y, system.particles[0].y, 0.0001);
+    try std.testing.expectApproxEqAbs(before.z, system.particles[0].z, 0.0001);
+    try std.testing.expectApproxEqAbs(before.age, system.particles[0].age, 0.0001);
     try std.testing.expect(!std.math.isNan(system.stats.average_height));
     _ = system.hash();
 }

@@ -99,8 +99,6 @@ pub fn applyLateralSurfaceFriction(
     }
 }
 
-
-
 /// Apply rolling resistance to vehicle speed based on ground surface.
 /// Uses terrain surface rolling resistance for realistic deceleration.
 pub fn applyVehicleRollingResistance(
@@ -111,13 +109,13 @@ pub fn applyVehicleRollingResistance(
     dt: f32,
 ) f32 {
     if (@abs(speed) < 0.01) return 0.0;
-    
+
     const base_rolling = terrain.getRollingResistanceAt(world_x, world_z);
     // Vehicle mass scale: heavier = more rolling resistance
     const mass_scale = std.math.clamp(mass_kg / 1500.0, 0.5, 2.0);
     // Rolling resistance coefficient per tick at 60fps
     const rolling_coeff = base_rolling * mass_scale;
-    
+
     const ticks = dt * 60.0;
     const damping = std.math.pow(f32, 1.0 - rolling_coeff, ticks);
     const clamped_damping = std.math.clamp(damping, 0.5, 1.0);
@@ -151,7 +149,7 @@ pub fn applyVehicleWaterResistance(
     const water_depth = getVehicleWaterDepth(vehicle_x, vehicle_z);
     if (water_depth <= 0) return speed;
     if (@abs(speed) < 0.1) return 0.0;
-    
+
     const drag_coeff = computeWaterDragCoefficient(@abs(speed), water_depth);
     const ticks = dt * 60.0;
     const damping = std.math.pow(f32, 1.0 - drag_coeff, ticks);
@@ -192,4 +190,73 @@ pub fn applyVehicleAerodynamicDrag(speed: f32, weather_severity: f32, wind_speed
     const ticks = dt * 60.0;
     const damping = std.math.pow(f32, @max(1.0 - drag_coeff, 0.8), ticks);
     return speed * damping;
+}
+
+test "settleGroundContact zeros tiny velocities and marks resting" {
+    var inst = std.mem.zeroes(scene32.Instance);
+    inst.state = .falling;
+    inst.vel_x = GROUND_SETTLE_LATERAL_THRESHOLD;
+    inst.vel_y = -GROUND_SETTLE_VERTICAL_THRESHOLD;
+    inst.vel_z = -GROUND_SETTLE_LATERAL_THRESHOLD;
+    inst.sleep_tick = 0;
+
+    settleGroundContact(&inst);
+
+    try std.testing.expectEqual(@as(i16, 0), inst.vel_x);
+    try std.testing.expectEqual(@as(i16, 0), inst.vel_y);
+    try std.testing.expectEqual(@as(i16, 0), inst.vel_z);
+    try std.testing.expectEqual(scene32.InstanceState.resting, inst.state);
+    try std.testing.expectEqual(SLEEP_TIME_THRESHOLD, inst.sleep_tick);
+}
+
+test "settleGroundContact preserves meaningful rebound velocity" {
+    var inst = std.mem.zeroes(scene32.Instance);
+    inst.state = .falling;
+    inst.vel_y = GROUND_SETTLE_VERTICAL_THRESHOLD + 1;
+
+    settleGroundContact(&inst);
+
+    try std.testing.expectEqual(@as(i16, GROUND_SETTLE_VERTICAL_THRESHOLD + 1), inst.vel_y);
+    try std.testing.expectEqual(scene32.InstanceState.falling, inst.state);
+}
+
+test "applyLateralSurfaceFriction blocks contact axis and damps tangent" {
+    var inst = std.mem.zeroes(scene32.Instance);
+    var entity = entity16.initEntity16();
+    entity.physics.friction = 255;
+    inst.vel_x = 120;
+    inst.vel_z = 80;
+
+    applyLateralSurfaceFriction(&inst, &entity, .asphalt_dry, .x);
+
+    try std.testing.expectEqual(@as(i16, 0), inst.vel_x);
+    try std.testing.expect(@abs(inst.vel_z) < 80);
+}
+
+test "vehicle water drag coefficient clamps dry shallow and fast cases" {
+    try std.testing.expectEqual(@as(f32, 0.0), computeWaterDragCoefficient(100.0, 0.0));
+
+    const shallow = computeWaterDragCoefficient(50.0, 0.5);
+    const deep = computeWaterDragCoefficient(50.0, 10.0);
+    const fast = computeWaterDragCoefficient(300.0, 0.1);
+
+    try std.testing.expect(shallow > deep);
+    try std.testing.expect(fast <= 0.5);
+    try std.testing.expect(deep >= 0.02);
+}
+
+test "vehicle draft and buoyancy clamp physical ranges" {
+    try std.testing.expectEqual(@as(f32, 0.0), computeBuoyancyFraction(0.0, 0.5));
+    try std.testing.expectEqual(@as(f32, 0.95), computeBuoyancyFraction(10.0, 0.5));
+
+    try std.testing.expectEqual(@as(f32, 0.1), computeVehicleDraft(0.0));
+    try std.testing.expectEqual(@as(f32, 1.0), computeVehicleDraft(20_000.0));
+}
+
+test "weather drag increases with severity and wind" {
+    const calm = computeWeatherDragCoefficient(0.0, 0.0);
+    const storm = computeWeatherDragCoefficient(1.0, 60.0);
+
+    try std.testing.expect(storm > calm);
+    try std.testing.expect(applyVehicleAerodynamicDrag(100.0, 1.0, 60.0, 1.0) < applyVehicleAerodynamicDrag(100.0, 0.0, 0.0, 1.0));
 }

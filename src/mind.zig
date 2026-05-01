@@ -16,7 +16,7 @@ pub const AffectBlock = struct {
     arousal: u8,
     certainty: u8,
     control: u8,
-    
+
     pub fn init(v: i8, a: u8, c: u8, ctrl: u8) AffectBlock {
         return .{ .valence = v, .arousal = a, .certainty = c, .control = ctrl };
     }
@@ -78,7 +78,7 @@ pub const AffectSystem = struct {
         while (i < tri_bus.inner.msg_count) : (i += 1) {
             const msg = &tri_bus.inner.messages[i];
             if (msg.handled) continue;
-            
+
             switch (msg.payload) {
                 .collision => |c| {
                     if (c.did_break) {
@@ -170,7 +170,7 @@ pub const ShadowSandbox = struct {
                         .status = .FAIL,
                         .reason_code = 2,
                         .break_frame = t,
-                        .repair_hint = "Entity broken during simulation"
+                        .repair_hint = "Entity broken during simulation",
                     };
                 }
             }
@@ -184,3 +184,76 @@ pub const ShadowSandbox = struct {
         };
     }
 };
+
+test "TriWorldBus collision and affect events enqueue expected messages" {
+    var tri_bus = TriWorldBus.init();
+
+    tri_bus.onCollision(7, 11, -100, 30, true);
+    try std.testing.expectEqual(@as(u16, 2), tri_bus.inner.msg_count);
+    try std.testing.expectEqual(bus.BusMessageType.PHYSICS_EVENT, tri_bus.inner.messages[0].msg_type);
+    try std.testing.expectEqual(WorldType.physical, tri_bus.inner.messages[0].source_world);
+    try std.testing.expectEqual(@as(u16, 7), tri_bus.inner.messages[0].entity_id);
+
+    tri_bus.onAffectChange(7, 12, 5, 6, 7);
+    try std.testing.expectEqual(@as(u16, 3), tri_bus.inner.msg_count);
+    try std.testing.expectEqual(bus.BusMessageType.AFFECT_EVENT, tri_bus.inner.messages[2].msg_type);
+
+    try std.testing.expectEqual(@as(u8, 3), tri_bus.sync());
+    try std.testing.expectEqual(@as(u16, 0), tri_bus.inner.msg_count);
+}
+
+test "AffectSystem applies break and affect deltas with clamping" {
+    var affect_system = AffectSystem.init();
+    var tri_bus = TriWorldBus.init();
+
+    tri_bus.onCollision(1, 1, -100, 30, true);
+    tri_bus.onAffectChange(1, 2, 127, 0, 0);
+    affect_system.update(&tri_bus);
+
+    try std.testing.expectEqual(@as(i8, 87), affect_system.registers.valence);
+    try std.testing.expectEqual(@as(u8, 100), affect_system.registers.arousal);
+    try std.testing.expectEqual(@as(i16, 10), affect_system.getPriorityMod());
+
+    tri_bus.inner.msg_count = 0;
+    tri_bus.onAffectChange(1, 3, 127, 0, 0);
+    affect_system.update(&tri_bus);
+    try std.testing.expectEqual(@as(i8, 127), affect_system.registers.valence);
+}
+
+test "ShadowSandbox copies base world pages and instances" {
+    var base_world = scene1024.Scene1024.init(std.testing.allocator);
+    defer base_world.deinit();
+    const page = try base_world.getPage(0);
+    scene32.setOccupied(page.scene.?, 1, 2, 3);
+
+    var inst = std.mem.zeroes(scene32.Instance);
+    inst.entity_id = 0;
+    inst.pos_x = 10;
+    inst.pos_y = 20;
+    inst.pos_z = 30;
+    _ = try base_world.addInstance(inst);
+
+    var entities = [_]entity16.Entity16{entity16.initEntity16()};
+    var sandbox = try ShadowSandbox.init(std.testing.allocator, &base_world, &entities);
+    defer sandbox.deinit();
+
+    try std.testing.expectEqual(base_world.active_count, sandbox.shadow_world.active_count);
+    try std.testing.expectEqual(base_world.instance_count, sandbox.shadow_world.instance_count);
+    try std.testing.expectEqual(base_world.instances[0], sandbox.shadow_world.instances[0]);
+    try std.testing.expect(scene32.isOccupied(sandbox.shadow_world.pages[0].scene.?, 1, 2, 3));
+
+    scene32.clearOccupied(sandbox.shadow_world.pages[0].scene.?, 1, 2, 3);
+    try std.testing.expect(scene32.isOccupied(base_world.pages[0].scene.?, 1, 2, 3));
+}
+
+test "ShadowSandbox simulate fails cleanly without active page" {
+    var base_world = scene1024.Scene1024.init(std.testing.allocator);
+    defer base_world.deinit();
+    var entities = [_]entity16.Entity16{entity16.initEntity16()};
+    var sandbox = try ShadowSandbox.init(std.testing.allocator, &base_world, &entities);
+    defer sandbox.deinit();
+
+    const result = sandbox.simulate(1);
+    try std.testing.expectEqual(HookStatus.FAIL, result.status);
+    try std.testing.expectEqual(@as(u8, 1), result.reason_code);
+}

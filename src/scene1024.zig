@@ -101,18 +101,18 @@ pub const Scene1024 = struct {
 
         const idx = target_idx.?;
         const entry = &self.pages[idx];
-        
+
         if (entry.scene == null) {
             entry.scene = try self.allocator.create(scene32.Scene32);
         }
-        
+
         entry.page_id = page_id;
         entry.resident = true;
         entry.dirty = false;
         entry.last_tick = self.global_tick;
         entry.scene.?.* = scene32.initScene();
         entry.scene.?.scene_id = page_id;
-        
+
         return entry;
     }
 
@@ -120,11 +120,11 @@ pub const Scene1024 = struct {
         const parts = address.decode(addr_raw);
         const page_id = address.getPageId(addr_raw);
         const entry = try self.getPage(page_id);
-        
+
         const sx: i8 = @intCast(parts.lx);
         const sy: i8 = @intCast(parts.ly);
         const sz: i8 = @intCast(parts.lz);
-        
+
         return scene32.isOccupied(entry.scene.?, sx, sy, sz);
     }
 
@@ -133,11 +133,11 @@ pub const Scene1024 = struct {
         const page_id = address.getPageId(addr_raw);
         const entry = try self.getPage(page_id);
         entry.dirty = true;
-        
+
         const sx: i8 = @intCast(parts.lx);
         const sy: i8 = @intCast(parts.ly);
         const sz: i8 = @intCast(parts.lz);
-        
+
         if (val) {
             scene32.setOccupied(entry.scene.?, sx, sy, sz);
         } else {
@@ -152,15 +152,119 @@ test "Global voxel addressing" {
     defer s1024.deinit();
 
     const addr = address.encode(.{
-        .world = 0, .px = 1, .py = 1, .pz = 1, .lx = 10, .ly = 10, .lz = 10,
+        .world = 0,
+        .px = 1,
+        .py = 1,
+        .pz = 1,
+        .lx = 10,
+        .ly = 10,
+        .lz = 10,
     });
 
     try s1024.setVoxelAtGlobal(addr, true);
     const val = try s1024.getVoxelAtGlobal(addr);
     try std.testing.expect(val == true);
-    
+
     const other_addr = address.encode(.{
-        .world = 0, .px = 1, .py = 1, .pz = 1, .lx = 11, .ly = 11, .lz = 11,
+        .world = 0,
+        .px = 1,
+        .py = 1,
+        .pz = 1,
+        .lx = 11,
+        .ly = 11,
+        .lz = 11,
     });
     try std.testing.expect((try s1024.getVoxelAtGlobal(other_addr)) == false);
+}
+
+test "Scene1024 addInstance stores instances and enforces capacity" {
+    var s1024 = Scene1024.init(std.testing.allocator);
+    defer s1024.deinit();
+
+    var inst = std.mem.zeroes(scene32.Instance);
+    inst.entity_id = 7;
+    inst.pos_x = 10;
+    inst.pos_y = 20;
+    inst.pos_z = 30;
+    inst.state = .moving;
+
+    const first_idx = try s1024.addInstance(inst);
+    try std.testing.expectEqual(@as(u8, 0), first_idx);
+    try std.testing.expectEqual(@as(u8, 1), s1024.instance_count);
+    try std.testing.expectEqual(inst, s1024.instances[first_idx]);
+
+    while (s1024.instance_count < 128) {
+        inst.entity_id = s1024.instance_count;
+        _ = try s1024.addInstance(inst);
+    }
+
+    try std.testing.expectEqual(error.TooManyInstances, s1024.addInstance(inst));
+    try std.testing.expectEqual(@as(u8, 128), s1024.instance_count);
+}
+
+test "Scene1024 rebuildOccupancy preserves static pages and dynamic instances" {
+    var s1024 = Scene1024.init(std.testing.allocator);
+    defer s1024.deinit();
+
+    const addr = address.encode(.{
+        .world = 0,
+        .px = 2,
+        .py = 3,
+        .pz = 4,
+        .lx = 5,
+        .ly = 6,
+        .lz = 7,
+    });
+    try s1024.setVoxelAtGlobal(addr, true);
+
+    var inst = std.mem.zeroes(scene32.Instance);
+    inst.entity_id = 1;
+    inst.pos_x = 42;
+    inst.pos_y = 43;
+    inst.pos_z = 44;
+    _ = try s1024.addInstance(inst);
+
+    const entities = [_]entity16.Entity16{entity16.initEntity16()};
+    try s1024.rebuildOccupancy(&entities);
+
+    try std.testing.expect(try s1024.getVoxelAtGlobal(addr));
+    try std.testing.expectEqual(@as(u8, 1), s1024.instance_count);
+    try std.testing.expectEqual(inst, s1024.instances[0]);
+}
+
+test "Scene1024 getPage reuses resident pages and evicts least recently used slot" {
+    var s1024 = Scene1024.init(std.testing.allocator);
+    defer s1024.deinit();
+
+    for (0..MAX_ACTIVE_PAGES) |page_id| {
+        s1024.global_tick = @intCast(page_id + 1);
+        const page = try s1024.getPage(@intCast(page_id));
+        try std.testing.expectEqual(@as(u32, @intCast(page_id)), page.page_id);
+        try std.testing.expectEqual(@as(u32, @intCast(page_id)), page.scene.?.scene_id);
+    }
+
+    try std.testing.expectEqual(@as(u8, MAX_ACTIVE_PAGES), s1024.active_count);
+
+    s1024.global_tick = 100;
+    const refreshed = try s1024.getPage(0);
+    try std.testing.expectEqual(@as(u32, 100), refreshed.last_tick);
+
+    s1024.global_tick = 101;
+    const loaded = try s1024.getPage(999);
+    try std.testing.expectEqual(@as(u32, 999), loaded.page_id);
+    try std.testing.expectEqual(@as(u32, 999), loaded.scene.?.scene_id);
+    try std.testing.expectEqual(@as(u8, MAX_ACTIVE_PAGES), s1024.active_count);
+
+    var has_page_0 = false;
+    var has_page_1 = false;
+    var has_page_999 = false;
+    for (s1024.pages) |page| {
+        if (!page.resident) continue;
+        has_page_0 = has_page_0 or page.page_id == 0;
+        has_page_1 = has_page_1 or page.page_id == 1;
+        has_page_999 = has_page_999 or page.page_id == 999;
+    }
+    try std.testing.expect(has_page_0);
+    try std.testing.expect(!has_page_1);
+    try std.testing.expect(has_page_999);
 }

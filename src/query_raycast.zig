@@ -34,19 +34,19 @@ pub fn raycastSingle(world: *const QueryWorldView, ray: QueryRay, filter: QueryF
     var tMax_x: f32 = if (ray.dir_x > 0)
         (@as(f32, @floatFromInt(px)) + 1.0 - ray.origin_x) * tDelta_x
     else if (ray.dir_x < 0)
-        (ray.origin_x - @as(f32, @floatFromInt(px))) * tDelta_x
+        @min((ray.origin_x - @as(f32, @floatFromInt(px))) * tDelta_x, std.math.inf(f32))
     else
         std.math.inf(f32);
     var tMax_y: f32 = if (ray.dir_y > 0)
         (@as(f32, @floatFromInt(py)) + 1.0 - ray.origin_y) * tDelta_y
     else if (ray.dir_y < 0)
-        (ray.origin_y - @as(f32, @floatFromInt(py))) * tDelta_y
+        @min((ray.origin_y - @as(f32, @floatFromInt(py))) * tDelta_y, std.math.inf(f32))
     else
         std.math.inf(f32);
     var tMax_z: f32 = if (ray.dir_z > 0)
         (@as(f32, @floatFromInt(pz)) + 1.0 - ray.origin_z) * tDelta_z
     else if (ray.dir_z < 0)
-        (ray.origin_z - @as(f32, @floatFromInt(pz))) * tDelta_z
+        @min((ray.origin_z - @as(f32, @floatFromInt(pz))) * tDelta_z, std.math.inf(f32))
     else
         std.math.inf(f32);
 
@@ -142,19 +142,19 @@ pub fn raycastAll(world: *const QueryWorldView, ray: QueryRay, filter: QueryFilt
     var tMax_x: f32 = if (ray.dir_x > 0)
         (@as(f32, @floatFromInt(px)) + 1.0 - ray.origin_x) * tDelta_x
     else if (ray.dir_x < 0)
-        (ray.origin_x - @as(f32, @floatFromInt(px))) * tDelta_x
+        @min((ray.origin_x - @as(f32, @floatFromInt(px))) * tDelta_x, std.math.inf(f32))
     else
         std.math.inf(f32);
     var tMax_y: f32 = if (ray.dir_y > 0)
         (@as(f32, @floatFromInt(py)) + 1.0 - ray.origin_y) * tDelta_y
     else if (ray.dir_y < 0)
-        (ray.origin_y - @as(f32, @floatFromInt(py))) * tDelta_y
+        @min((ray.origin_y - @as(f32, @floatFromInt(py))) * tDelta_y, std.math.inf(f32))
     else
         std.math.inf(f32);
     var tMax_z: f32 = if (ray.dir_z > 0)
         (@as(f32, @floatFromInt(pz)) + 1.0 - ray.origin_z) * tDelta_z
     else if (ray.dir_z < 0)
-        (ray.origin_z - @as(f32, @floatFromInt(pz))) * tDelta_z
+        @min((ray.origin_z - @as(f32, @floatFromInt(pz))) * tDelta_z, std.math.inf(f32))
     else
         std.math.inf(f32);
 
@@ -437,6 +437,85 @@ test "raycastSingle reports world distance for non-normalized direction" {
     try testing.expectApproxEqAbs(@as(f32, 2.0), hit.position_x, 0.0001);
     try testing.expectApproxEqAbs(@as(f32, 0.0), hit.position_y, 0.0001);
     try testing.expectApproxEqAbs(@as(f32, 0.0), hit.position_z, 0.0001);
+}
+
+test "raycastSingle steps into negative direction from voxel boundary" {
+    const testing = std.testing;
+
+    var s1024 = scene1024.Scene1024.init(testing.allocator);
+    defer s1024.deinit();
+
+    try s1024.setVoxelAtGlobal(address.encode(.{
+        .world = 0,
+        .px = 0,
+        .py = 0,
+        .pz = 0,
+        .lx = 1,
+        .ly = 0,
+        .lz = 0,
+    }), true);
+
+    var entities = [_]entity16.Entity16{};
+    const world = QueryWorldView{
+        .s1024 = &s1024,
+        .instances = s1024.instances[0..s1024.instance_count],
+        .entities = entities[0..],
+    };
+
+    const hit = raycastSingle(&world, .{
+        .origin_x = 2.0,
+        .origin_y = 0.0,
+        .origin_z = 0.0,
+        .dir_x = -1.0,
+        .dir_y = 0.0,
+        .dir_z = 0.0,
+        .max_distance = 2.0,
+    }, .{});
+
+    try testing.expect(hit.hit);
+    try testing.expect(hit.hit_environment);
+    try testing.expectApproxEqAbs(@as(f32, 0.0), hit.distance, 0.0001);
+    try testing.expectApproxEqAbs(@as(f32, 2.0), hit.position_x, 0.0001);
+    try testing.expectApproxEqAbs(@as(f32, 1.0), hit.normal_x, 0.0001);
+}
+
+test "raycastSingle negative direction reaches prior voxel from inside current voxel" {
+    const testing = std.testing;
+
+    var s1024 = scene1024.Scene1024.init(testing.allocator);
+    defer s1024.deinit();
+
+    try s1024.setVoxelAtGlobal(address.encode(.{
+        .world = 0,
+        .px = 0,
+        .py = 0,
+        .pz = 0,
+        .lx = 1,
+        .ly = 0,
+        .lz = 0,
+    }), true);
+
+    var entities = [_]entity16.Entity16{};
+    const world = QueryWorldView{
+        .s1024 = &s1024,
+        .instances = s1024.instances[0..s1024.instance_count],
+        .entities = entities[0..],
+    };
+
+    const hit = raycastSingle(&world, .{
+        .origin_x = 2.25,
+        .origin_y = 0.0,
+        .origin_z = 0.0,
+        .dir_x = -1.0,
+        .dir_y = 0.0,
+        .dir_z = 0.0,
+        .max_distance = 2.0,
+    }, .{});
+
+    try testing.expect(hit.hit);
+    try testing.expectApproxEqAbs(@as(f32, 0.25), hit.distance, 0.0001);
+    try testing.expectApproxEqAbs(@as(f32, 2.0), hit.position_x, 0.0001);
+    try testing.expectApproxEqAbs(@as(f32, 1.0), hit.normal_x, 0.0001);
 }
 
 /// Batch raycast query - processes multiple rays and returns first hit for each

@@ -372,6 +372,68 @@ test "overlapAABB counts environment overlap once across multiple voxels" {
     try std.testing.expectEqual(@as(u16, 1), result.count);
 }
 
+test "overlapAABB separates environment and dynamic layer counts" {
+    const testing = std.testing;
+    const scene1024 = @import("scene1024.zig");
+    const entity16 = @import("entity16.zig");
+    const address = @import("address.zig");
+
+    var s1024 = scene1024.Scene1024.init(testing.allocator);
+    defer s1024.deinit();
+
+    try s1024.setVoxelAtGlobal(address.encode(.{ .world = 0, .px = 0, .py = 0, .pz = 0, .lx = 1, .ly = 1, .lz = 1 }), true);
+    try s1024.setVoxelAtGlobal(address.encode(.{ .world = 0, .px = 0, .py = 0, .pz = 0, .lx = 1, .ly = 1, .lz = 2 }), true);
+
+    var entity = entity16.initEntity16();
+    entity.physics.mass = 10;
+    entity16.setVoxel(&entity, 0, 0, 0);
+    var entities = [_]entity16.Entity16{entity};
+
+    s1024.instance_count = 1;
+    s1024.instances[0] = .{
+        .entity_id = 0,
+        .pos_x = 2,
+        .pos_y = 1,
+        .pos_z = 1,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .sleep_tick = 0,
+        ._reserved = .{0} ** 2,
+    };
+
+    const world = QueryWorldView{
+        .s1024 = &s1024,
+        .instances = s1024.instances[0..s1024.instance_count],
+        .entities = entities[0..],
+    };
+
+    const all_hits = overlapAABB(&world, 0.5, 0.5, 0.5, 3.0, 2.0, 3.0, .{});
+    try testing.expect(all_hits.hit);
+    try testing.expect(all_hits.environment_overlap);
+    try testing.expectEqual(@as(i16, 0), all_hits.first_instance_idx);
+    try testing.expectEqual(@as(u16, 2), all_hits.count);
+
+    const env_only = overlapAABB(&world, 0.5, 0.5, 0.5, 3.0, 2.0, 3.0, .{
+        .layer_mask = query_types.QUERY_LAYER_ENVIRONMENT,
+        .include_dynamic = false,
+    });
+    try testing.expect(env_only.hit);
+    try testing.expect(env_only.environment_overlap);
+    try testing.expectEqual(@as(i16, -1), env_only.first_instance_idx);
+    try testing.expectEqual(@as(u16, 1), env_only.count);
+
+    const dynamic_only = overlapAABB(&world, 0.5, 0.5, 0.5, 3.0, 2.0, 3.0, .{
+        .layer_mask = query_types.QUERY_LAYER_DYNAMIC,
+        .ignore_environment = true,
+    });
+    try testing.expect(dynamic_only.hit);
+    try testing.expect(!dynamic_only.environment_overlap);
+    try testing.expectEqual(@as(i16, 0), dynamic_only.first_instance_idx);
+    try testing.expectEqual(@as(u16, 1), dynamic_only.count);
+}
+
 test "overlapAABB does not count voxel that only touches exact max face" {
     const scene1024 = @import("scene1024.zig");
     const entity16 = @import("entity16.zig");
@@ -408,8 +470,6 @@ test "OverlapBatchJob incremental batch processes AABBs in steps" {
     const scene1024 = @import("scene1024.zig");
     const entity16 = @import("entity16.zig");
     const address = @import("address.zig");
-
-
 
     var s1024 = scene1024.Scene1024.init(testing.allocator);
     defer s1024.deinit();
@@ -507,4 +567,3 @@ pub const OverlapBatchJob = struct {
         return @as(u16, @intCast(self.written));
     }
 };
-

@@ -405,3 +405,51 @@ test "sphereCast zero direction reuses real overlap semantics for edge contact" 
     try std.testing.expect(hit.medium_type == hit.classification.medium_type);
     try std.testing.expect(hit.body_type == hit.classification.body_type);
 }
+
+test "sphereCast negative direction preserves layer filtering" {
+    const scene1024 = @import("scene1024.zig");
+    const entity16 = @import("entity16.zig");
+
+    var s1024 = scene1024.Scene1024.init(std.testing.allocator);
+    defer s1024.deinit();
+
+    var entity = entity16.initEntity16();
+    entity.physics.mass = 10;
+    entity16.setVoxel(&entity, 0, 0, 0);
+    var entities = [_]entity16.Entity16{entity};
+
+    s1024.instance_count = 1;
+    s1024.instances[0] = .{
+        .entity_id = 0,
+        .pos_x = 1,
+        .pos_y = 1,
+        .pos_z = 1,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .sleep_tick = 0,
+        ._reserved = .{0} ** 2,
+    };
+
+    const world = QueryWorldView{
+        .s1024 = &s1024,
+        .instances = s1024.instances[0..s1024.instance_count],
+        .entities = entities[0..],
+    };
+
+    const env_only = sphereCast(&world, 3.0, 1.5, 1.5, 0.1, -1.0, 0.0, 0.0, 2.0, .{
+        .layer_mask = query_types.QUERY_LAYER_ENVIRONMENT,
+        .include_dynamic = false,
+    });
+    try std.testing.expect(!env_only.hit);
+
+    const dynamic_hit = sphereCast(&world, 3.0, 1.5, 1.5, 0.1, -1.0, 0.0, 0.0, 2.0, .{
+        .layer_mask = query_types.QUERY_LAYER_DYNAMIC,
+        .ignore_environment = true,
+    });
+    try std.testing.expect(dynamic_hit.hit);
+    try std.testing.expect(!dynamic_hit.hit_environment);
+    try std.testing.expectEqual(@as(i16, 0), dynamic_hit.instance_idx);
+    try std.testing.expect(dynamic_hit.distance <= 1.1);
+}

@@ -83,3 +83,40 @@ pub const SDFNode = union(SDFOp) {
         }
     }
 };
+
+test "Vec3 helpers compute component operations and length" {
+    const a = Vec3.init(3.0, -4.0, 12.0);
+    const b = Vec3.init(1.0, 2.0, 3.0);
+
+    try std.testing.expectEqual(Vec3.init(4.0, -2.0, 15.0), Vec3.add(a, b));
+    try std.testing.expectEqual(Vec3.init(2.0, -6.0, 9.0), Vec3.sub(a, b));
+    try std.testing.expectEqual(Vec3.init(3.0, 4.0, 12.0), Vec3.abs(a));
+    try std.testing.expectEqual(Vec3.init(3.0, 0.0, 12.0), Vec3.max(a, 0.0));
+    try std.testing.expectApproxEqAbs(@as(f32, 13.0), Vec3.length(a), 0.0001);
+}
+
+test "SDF primitives report signed distances" {
+    const sphere = SDFNode{ .sphere = .{ .radius = 1.0 } };
+    const box = SDFNode{ .box = .{ .size = Vec3.init(1.0, 1.0, 1.0) } };
+    const cylinder = SDFNode{ .cylinder = .{ .radius = 1.0, .height = 2.0 } };
+
+    try std.testing.expect(sphere.evaluate(Vec3.init(0.0, 0.0, 0.0)) < 0.0);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), sphere.evaluate(Vec3.init(1.0, 0.0, 0.0)), 0.0001);
+    try std.testing.expect(sphere.evaluate(Vec3.init(2.0, 0.0, 0.0)) > 0.0);
+    try std.testing.expect(box.evaluate(Vec3.init(0.0, 0.0, 0.0)) < 0.0);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), box.evaluate(Vec3.init(1.0, 0.0, 0.0)), 0.0001);
+    try std.testing.expect(cylinder.evaluate(Vec3.init(2.0, 0.0, 0.0)) > 0.0);
+}
+
+test "SDF boolean operations combine child distances" {
+    const sphere = SDFNode{ .sphere = .{ .radius = 1.0 } };
+    const box = SDFNode{ .box = .{ .size = Vec3.init(0.5, 0.5, 0.5) } };
+    const union_node = SDFNode{ .union_op = .{ .left = &sphere, .right = &box } };
+    const intersect_node = SDFNode{ .intersect_op = .{ .left = &sphere, .right = &box } };
+    const subtract_node = SDFNode{ .subtract_op = .{ .left = &sphere, .right = &box } };
+    const pnt = Vec3.init(0.75, 0.0, 0.0);
+
+    try std.testing.expectApproxEqAbs(@min(sphere.evaluate(pnt), box.evaluate(pnt)), union_node.evaluate(pnt), 0.0001);
+    try std.testing.expectApproxEqAbs(@max(sphere.evaluate(pnt), box.evaluate(pnt)), intersect_node.evaluate(pnt), 0.0001);
+    try std.testing.expectApproxEqAbs(@max(sphere.evaluate(pnt), -box.evaluate(pnt)), subtract_node.evaluate(pnt), 0.0001);
+}

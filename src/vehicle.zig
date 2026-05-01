@@ -59,11 +59,11 @@ pub const VehicleState = struct {
     angular_velocity: f32,
     throttle: f32,
     steering: f32,
-    ai_vehicle_id: u16 = 0,      // 0=not linked, >0=linked to ai_traffic vehicle ID
-    ai_target_speed: f32 = -1,  // -1=no AI control, >=0=AI target speed (m/s)
-    target_vel: f32 = -1,         // autonomy setter: governed target speed from AI traffic (m/s)
-    engine_rpm: f32 = 1000.0,   // engine RPM for torque curve (Phase 21)
-    engine_torque: f32 = 0.0,   // current engine torque output (Phase 21)
+    ai_vehicle_id: u16 = 0, // 0=not linked, >0=linked to ai_traffic vehicle ID
+    ai_target_speed: f32 = -1, // -1=no AI control, >=0=AI target speed (m/s)
+    target_vel: f32 = -1, // autonomy setter: governed target speed from AI traffic (m/s)
+    engine_rpm: f32 = 1000.0, // engine RPM for torque curve (Phase 21)
+    engine_torque: f32 = 0.0, // current engine torque output (Phase 21)
     brake: f32,
     handbrake: bool,
     grounded: bool,
@@ -80,7 +80,6 @@ pub const VehicleControlCommand = struct {
     target_yaw_rate: f32,
     emergency_brake: bool = false,
 };
-
 
 /// Link a vehicle to an AI traffic vehicle and set initial target speed.
 /// Writes the vehicle's pose/speed into the AI traffic vehicle so planning
@@ -127,7 +126,7 @@ pub const VehicleNetState = struct {
     steering: f32,
     ai_target_speed: f32,
     target_vel: f32 = -1,
-    ai_vehicle_id: u16 = 0,     // linked AI traffic vehicle ID (0=none)
+    ai_vehicle_id: u16 = 0, // linked AI traffic vehicle ID (0=none)
     brake: f32,
     handbrake: bool,
     grounded: bool,
@@ -178,8 +177,8 @@ pub fn createCar(x: f32, y: f32, z: f32, yaw: f32) ?*VehicleState {
             .{ .offset_x = -6, .offset_y = 0, .offset_z = 8, .radius = 4, .steering_angle = 0, .driven = false, .braked = true },
             .{ .offset_x = 6, .offset_y = 0, .offset_z = 8, .radius = 4, .steering_angle = 0, .driven = false, .braked = true },
         },
-        .tire_states = [_]tire.TireState{tire.TireState{},tire.TireState{},tire.TireState{},tire.TireState{}},
-        .susp_states = [_]suspension.SuspensionState{.{.rest_length=0.3},.{.rest_length=0.3},.{.rest_length=0.3},.{.rest_length=0.3}},
+        .tire_states = [_]tire.TireState{ tire.TireState{}, tire.TireState{}, tire.TireState{}, tire.TireState{} },
+        .susp_states = [_]suspension.SuspensionState{ .{ .rest_length = 0.3 }, .{ .rest_length = 0.3 }, .{ .rest_length = 0.3 }, .{ .rest_length = 0.3 } },
         .mass = 1500,
     };
     return vehicle;
@@ -217,8 +216,8 @@ pub fn createAircraft(x: f32, y: f32, z: f32) ?*VehicleState {
             .driven = false,
             .braked = false,
         }} ** 4,
-        .tire_states = [_]tire.TireState{tire.TireState{},tire.TireState{},tire.TireState{},tire.TireState{}},
-        .susp_states = [_]suspension.SuspensionState{.{.rest_length=0.3},.{.rest_length=0.3},.{.rest_length=0.3},.{.rest_length=0.3}},
+        .tire_states = [_]tire.TireState{ tire.TireState{}, tire.TireState{}, tire.TireState{}, tire.TireState{} },
+        .susp_states = [_]suspension.SuspensionState{ .{ .rest_length = 0.3 }, .{ .rest_length = 0.3 }, .{ .rest_length = 0.3 }, .{ .rest_length = 0.3 } },
         .mass = 5000,
     };
     return vehicle;
@@ -256,8 +255,8 @@ pub fn createBoat(x: f32, y: f32, z: f32, yaw: f32) ?*VehicleState {
             .driven = false,
             .braked = false,
         }} ** 4,
-        .tire_states = [_]tire.TireState{tire.TireState{},tire.TireState{},tire.TireState{},tire.TireState{}},
-        .susp_states = [_]suspension.SuspensionState{.{.rest_length=0.3},.{.rest_length=0.3},.{.rest_length=0.3},.{.rest_length=0.3}},
+        .tire_states = [_]tire.TireState{ tire.TireState{}, tire.TireState{}, tire.TireState{}, tire.TireState{} },
+        .susp_states = [_]suspension.SuspensionState{ .{ .rest_length = 0.3 }, .{ .rest_length = 0.3 }, .{ .rest_length = 0.3 }, .{ .rest_length = 0.3 } },
         .mass = 2000,
     };
     return vehicle;
@@ -295,8 +294,8 @@ pub fn createHovercraft(x: f32, y: f32, z: f32, yaw: f32) ?*VehicleState {
             .driven = false,
             .braked = false,
         }} ** 4,
-        .tire_states = [_]tire.TireState{tire.TireState{},tire.TireState{},tire.TireState{},tire.TireState{}},
-        .susp_states = [_]suspension.SuspensionState{.{.rest_length=0.3},.{.rest_length=0.3},.{.rest_length=0.3},.{.rest_length=0.3}},
+        .tire_states = [_]tire.TireState{ tire.TireState{}, tire.TireState{}, tire.TireState{}, tire.TireState{} },
+        .susp_states = [_]suspension.SuspensionState{ .{ .rest_length = 0.3 }, .{ .rest_length = 0.3 }, .{ .rest_length = 0.3 }, .{ .rest_length = 0.3 } },
         .mass = 1000,
     };
     return vehicle;
@@ -786,7 +785,6 @@ pub fn checkGrounded(
     return false;
 }
 
-
 /// Check if vehicle is flipped
 pub fn checkFlipped(vehicle: *const VehicleState) bool {
     return @abs(vehicle.pitch) > 1.0 or @abs(vehicle.roll) > 1.0;
@@ -797,7 +795,6 @@ pub fn checkFlipped(vehicle: *const VehicleState) bool {
 /// Phase 21-24: Engine torque, tire Pacejka forces, suspension dynamics
 fn updateCar(vehicle: *VehicleState, dt: f32) void {
     const max_speed: f32 = 500.0;
-    const final_drive: f32 = 3.5;
     const max_steering: f32 = 0.05;
     const steering_speed: f32 = 2.0;
 
@@ -833,8 +830,7 @@ fn updateCar(vehicle: *VehicleState, dt: f32) void {
                     target_spd = tv.governed_target_vel;
                 }
             }
-            const intervention = safety.evaluateSafetyIntervention(
-                vehicle.speed, target_spd, forward_dist, vehicle.pos_x, 3.5);
+            const intervention = safety.evaluateSafetyIntervention(vehicle.speed, target_spd, forward_dist, vehicle.pos_x, 3.5);
             if (intervention.apply_aeb) {
                 vehicle.brake = 1.0;
                 vehicle.throttle = 0.0;
@@ -876,9 +872,13 @@ fn updateCar(vehicle: *VehicleState, dt: f32) void {
         for (vehicle.wheels) |wheel| {
             const radius = @as(f32, @floatFromInt(wheel.radius)) * 0.1;
             const slip_ratio = if (wheel.driven and abs_speed > 0.1)
-                @max(-1.0, @min(1.0, (vehicle.engine_torque * final_drive * 0.1 / @max(abs_speed, 0.1) - abs_speed) / @max(abs_speed, 0.1))) else 0.0;
+                @max(-1.0, @min(1.0, vehicle.throttle * 0.15))
+            else
+                0.0;
             const slip_angle = if (abs_speed > 0.1)
-                @max(-1.2, @min(1.2, yaw_rate * radius * 2.0 / @max(abs_speed, 0.1))) else 0.0;
+                @max(-1.2, @min(1.2, yaw_rate * radius * 2.0 / @max(abs_speed, 0.1)))
+            else
+                0.0;
             const B: f32 = 10.0;
             const C: f32 = 1.9;
             const E: f32 = 0.97;
@@ -890,7 +890,7 @@ fn updateCar(vehicle: *VehicleState, dt: f32) void {
             const lateral_force = D * @sin(C * std.math.atan(x_a - E * (x_a - std.math.atan(x_a))));
             const susp_compression = @min(1.0, @max(0.0, @as(f32, @floatFromInt(wheel.offset_y)) / 4.0));
             const susp_force = wheel.susp_spring_rate * susp_compression * authority.throttle_scale;
-            const rolling_r = wheel.tire_rolling_resistance * authority.brake_scale * abs_speed * 50.0;
+            const rolling_r = wheel.tire_rolling_resistance * authority.brake_scale * (1.0 + abs_speed * 0.01);
             if (wheel.driven) total_longitudinal_force += longitudinal_force;
             total_lateral_force += (lateral_force + susp_force * 0.05) * authority.steering_scale;
             total_rolling_resistance += rolling_r;
@@ -901,7 +901,9 @@ fn updateCar(vehicle: *VehicleState, dt: f32) void {
         const roll_r_coef = 1.0 - @min(total_rolling_resistance / @max(mass_f * 10.0, 1.0), 0.9);
         vehicle.speed *= std.math.pow(f32, @max(roll_r_coef, 0.85), dt * 60.0);
         const throttle_accel = if (vehicle.throttle > 0)
-            total_longitudinal_force / mass_f else 0.0;
+            total_longitudinal_force / mass_f
+        else
+            0.0;
         vehicle.speed += throttle_accel * dt;
         if (vehicle.brake > 0) {
             if (vehicle.speed > 0) {
@@ -1114,8 +1116,8 @@ test "predictVehiclePose advances vehicle along forward speed and yaw rate" {
         .flipped = false,
         .vehicle_type = .car,
         .wheels = undefined,
-        .tire_states = [_]tire.TireState{tire.TireState{},tire.TireState{},tire.TireState{},tire.TireState{}},
-        .susp_states = [_]suspension.SuspensionState{.{.rest_length=0.3},.{.rest_length=0.3},.{.rest_length=0.3},.{.rest_length=0.3}},
+        .tire_states = [_]tire.TireState{ tire.TireState{}, tire.TireState{}, tire.TireState{}, tire.TireState{} },
+        .susp_states = [_]suspension.SuspensionState{ .{ .rest_length = 0.3 }, .{ .rest_length = 0.3 }, .{ .rest_length = 0.3 }, .{ .rest_length = 0.3 } },
         .mass = 1500,
     }, 2.0);
     try std.testing.expectApproxEqAbs(@as(f32, 10.0), pose.pos_x, 0.0001);
@@ -1408,11 +1410,15 @@ test "495: vehicle lateral dynamics - right direction" {
 }
 
 test "496: vehicle longitudinal dynamics" {
+    terrain.init();
+    terrain.init();
+    weather.init();
     init();
     const car = createCar(0, 0, 0, 0) orelse return error.TestUnexpectedResult;
     car.grounded = true;
     car.speed = 30.0;
     car.ai_target_speed = 50.0; // set target so updateCar throttle PID kicks in
+    car.target_vel = 50.0;
     car.ai_vehicle_id = 0;
     car.brake = 0.0;
 
@@ -1421,6 +1427,7 @@ test "496: vehicle longitudinal dynamics" {
     try std.testing.expect(accelerated_speed > 30.0);
 
     car.ai_target_speed = 10.0;
+    car.target_vel = 10.0;
     updateCar(car, 0.2);
     try std.testing.expect(car.speed < accelerated_speed);
 }
@@ -1777,7 +1784,7 @@ test "vehicle car yaw integration is approximately timestep-invariant over equal
         },
         .mass = 1500,
         .susp_states = undefined,
-    .tire_states = undefined,
+        .tire_states = undefined,
     };
     var fine = coarse;
 
@@ -1931,6 +1938,7 @@ pub fn syncAIVehicleFromTraffic(vehicle: *VehicleState) void {
     if (vehicle.ai_vehicle_id == 0) return;
     if (ai_traffic.getTrafficVehicle(vehicle.ai_vehicle_id)) |tv| {
         vehicle.ai_target_speed = tv.governed_target_vel;
+        vehicle.target_vel = tv.governed_target_vel;
     }
 }
 
@@ -1949,8 +1957,7 @@ test "vehicle reads ai governed target vel" {
     init();
 
     // Create AI traffic vehicle with a known governed_target_vel
-    const ai_veh = ai_traffic.spawnAIVehicle(0.0, 0.0, 0.0, .normal, 0)
-        orelse return error.TestUnexpectedResult;
+    const ai_veh = ai_traffic.spawnAIVehicle(0.0, 0.0, 0.0, .normal, 0) orelse return error.TestUnexpectedResult;
     ai_veh.governed_target_vel = 33.0;
 
     // Create a vehicle and link it to the AI vehicle

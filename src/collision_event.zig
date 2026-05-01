@@ -5,6 +5,7 @@ const entity16 = @import("entity16.zig");
 const physics = @import("physics.zig");
 const bus = @import("bus.zig");
 const break_response = @import("break_response.zig");
+const std = @import("std");
 
 pub const PendingCollisionQueue = struct {
     events: [64]bus.CollisionPayload = undefined,
@@ -276,4 +277,88 @@ pub fn broadcastCollisionPair(
     var pending: PendingCollisionQueue = .{};
     pending.enqueuePair(instances, entities, source_inst, impact_velocity, blocker_id);
     pending.publish(event_bus, tick_id);
+}
+
+test "makeCollisionPayload mirrors break classification" {
+    var fragile = entity16.initEntity16();
+    fragile.physics.mass = 100;
+    fragile.physics.material = .fragile;
+    fragile.physics.hardness = 255;
+
+    const payload = makeCollisionPayload(-60, &fragile);
+    try std.testing.expectEqual(@as(i16, -60), payload.impact_velocity);
+    try std.testing.expectEqual(@as(u16, 255), payload.hardness);
+    try std.testing.expect(payload.did_break);
+}
+
+test "PendingCollisionQueue deduplicates identical entity payloads and publishes" {
+    var entity = entity16.initEntity16();
+    entity.physics.mass = 100;
+    entity.physics.material = .solid;
+    entity.physics.hardness = 200;
+
+    var pending = PendingCollisionQueue{};
+    pending.enqueueEntity(7, -10, &entity);
+    pending.enqueueEntity(7, -10, &entity);
+    pending.enqueueEntity(8, -10, &entity);
+    try std.testing.expectEqual(@as(u8, 2), pending.count);
+
+    var event_bus = bus.Bus.init();
+    pending.publish(&event_bus, 99);
+    try std.testing.expectEqual(@as(u8, 0), pending.count);
+    try std.testing.expectEqual(@as(u16, 4), event_bus.msg_count);
+    try std.testing.expectEqual(@as(u16, 7), event_bus.messages[0].entity_id);
+    try std.testing.expectEqual(@as(u32, 99), event_bus.messages[0].tick_id);
+}
+
+test "PendingCollisionQueue enqueuePair ignores invalid blockers" {
+    var entities = [_]entity16.Entity16{ entity16.initEntity16(), entity16.initEntity16() };
+    entities[0].physics.mass = 100;
+    entities[1].physics.mass = 100;
+
+    const instances = [_]scene32.Instance{
+        .{ .entity_id = 0, .pos_x = 0, .pos_y = 0, .pos_z = 0, .rot_yaw = 0, .rot_pitch = 0, .rot_roll = 0, .state = .moving, .sleep_tick = 0, ._reserved = .{0} ** 2 },
+        .{ .entity_id = 1, .pos_x = 1, .pos_y = 0, .pos_z = 0, .rot_yaw = 0, .rot_pitch = 0, .rot_roll = 0, .state = .idle, .sleep_tick = 0, ._reserved = .{0} ** 2 },
+    };
+
+    var pending = PendingCollisionQueue{};
+    pending.enqueuePair(&instances, &entities, &instances[0], -20, 255);
+    try std.testing.expectEqual(@as(u8, 1), pending.count);
+
+    pending.clear();
+    pending.enqueuePair(&instances, &entities, &instances[0], -20, 1);
+    try std.testing.expectEqual(@as(u8, 2), pending.count);
+}
+
+test "pending effect queues filter invalid payloads and deduplicate" {
+    var sound_queue = PendingSoundQueue{};
+    sound_queue.enqueueEntity(1, .{ .sound_type = 0, .volume = 1.0, .pitch = 1.0, .duration = 1.0 });
+    sound_queue.enqueueEntity(1, .{ .sound_type = 2, .volume = 1.0, .pitch = 1.0, .duration = 1.0 });
+    sound_queue.enqueueEntity(1, .{ .sound_type = 2, .volume = 1.0, .pitch = 1.0, .duration = 1.0 });
+    try std.testing.expectEqual(@as(u8, 1), sound_queue.count);
+
+    var particle_queue = PendingParticleQueue{};
+    particle_queue.enqueueEntity(2, .{ .particle_type = 0, .intensity = 1.0, .radius = 1.0, .duration = 1.0 });
+    particle_queue.enqueueEntity(2, .{ .particle_type = 3, .intensity = 0.5, .radius = 1.0, .duration = 1.0 });
+    particle_queue.enqueueEntity(2, .{ .particle_type = 3, .intensity = 0.5, .radius = 1.0, .duration = 1.0 });
+    try std.testing.expectEqual(@as(u8, 1), particle_queue.count);
+
+    var deformation_queue = PendingDeformationQueue{};
+    deformation_queue.enqueueEntity(3, .{ .total_depth = 0.0, .permanent_depth = 0.0, .recovery_fraction = 1.0, .severe = false });
+    deformation_queue.enqueueEntity(3, .{ .total_depth = 1.0, .permanent_depth = 0.5, .recovery_fraction = 0.5, .severe = true });
+    deformation_queue.enqueueEntity(3, .{ .total_depth = 1.0, .permanent_depth = 0.5, .recovery_fraction = 0.5, .severe = true });
+    try std.testing.expectEqual(@as(u8, 1), deformation_queue.count);
+}
+
+test "break queues deduplicate by entity or joint id" {
+    var break_queue = PendingBreakQueue{};
+    break_queue.enqueueEntity(4, .{ .impact_velocity = -100, .hardness = 10, .fragment_count = 3 });
+    break_queue.enqueueEntity(4, .{ .impact_velocity = -100, .hardness = 10, .fragment_count = 3 });
+    break_queue.enqueueEntity(4, .{ .impact_velocity = -101, .hardness = 10, .fragment_count = 3 });
+    try std.testing.expectEqual(@as(u8, 2), break_queue.count);
+
+    var joint_queue = PendingJointBreakQueue{};
+    joint_queue.enqueueJoint(5, .{ .joint_idx = 5, .entity_a = 1, .entity_b = 2, .break_ratio = 1.0 });
+    joint_queue.enqueueJoint(5, .{ .joint_idx = 5, .entity_a = 1, .entity_b = 2, .break_ratio = 0.5 });
+    try std.testing.expectEqual(@as(u8, 1), joint_queue.count);
 }

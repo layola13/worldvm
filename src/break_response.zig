@@ -1,5 +1,6 @@
 //! Shared break/destruction response helpers.
 
+const std = @import("std");
 const scene32 = @import("scene32.zig");
 const entity16 = @import("entity16.zig");
 const physics = @import("physics.zig");
@@ -44,4 +45,66 @@ pub fn applyBreakState(inst: *scene32.Instance, entity: *const entity16.Entity16
     inst.ang_z = 0;
     inst.sleep_tick = 0;
     return true;
+}
+
+test "calcImpactMagnitude uses absolute velocity and saturates" {
+    try std.testing.expectEqual(@as(u16, 0), calcImpactMagnitude(0, 100));
+    try std.testing.expectEqual(@as(u16, 50), calcImpactMagnitude(-50, 100));
+    try std.testing.expectEqual(@as(u16, 50), calcImpactMagnitude(50, 100));
+    try std.testing.expectEqual(@as(u16, 65535), calcImpactMagnitude(-32768, 65535));
+}
+
+test "applyBreakState breaks fragile instance and clears motion" {
+    destruction.initDebris();
+
+    var entity = entity16.initEntity16();
+    entity.physics.mass = 100;
+    entity.physics.material = .fragile;
+    entity.physics.hardness = 255;
+
+    var inst = std.mem.zeroes(scene32.Instance);
+    inst.entity_id = 0;
+    inst.pos_x = 1;
+    inst.pos_y = 2;
+    inst.pos_z = 3;
+    inst.state = .falling;
+    inst.vel_x = 10;
+    inst.vel_y = -60;
+    inst.vel_z = 5;
+    inst.ang_x = 1;
+    inst.ang_y = 2;
+    inst.ang_z = 3;
+    inst.sleep_tick = 7;
+
+    try std.testing.expect(applyBreakState(&inst, &entity, -60, 1.0));
+    try std.testing.expectEqual(scene32.InstanceState.broken, inst.state);
+    try std.testing.expectEqual(@as(i16, 0), inst.vel_x);
+    try std.testing.expectEqual(@as(i16, 0), inst.vel_y);
+    try std.testing.expectEqual(@as(i16, 0), inst.vel_z);
+    try std.testing.expectEqual(@as(i8, 0), inst.ang_x);
+    try std.testing.expectEqual(@as(i8, 0), inst.ang_y);
+    try std.testing.expectEqual(@as(i8, 0), inst.ang_z);
+    try std.testing.expectEqual(@as(u8, 0), inst.sleep_tick);
+    try std.testing.expectEqual(@as(u16, 1), destruction.getDebrisSystem().count);
+
+    try std.testing.expect(!applyBreakState(&inst, &entity, -60, 1.0));
+    try std.testing.expectEqual(@as(u16, 1), destruction.getDebrisSystem().count);
+}
+
+test "applyBreakState leaves insufficient impact unchanged" {
+    destruction.initDebris();
+
+    var entity = entity16.initEntity16();
+    entity.physics.mass = 10;
+    entity.physics.material = .solid;
+    entity.physics.hardness = 500;
+
+    var inst = std.mem.zeroes(scene32.Instance);
+    inst.state = .falling;
+    inst.vel_y = -10;
+
+    try std.testing.expect(!applyBreakState(&inst, &entity, -10, 1.0));
+    try std.testing.expectEqual(scene32.InstanceState.falling, inst.state);
+    try std.testing.expectEqual(@as(i16, -10), inst.vel_y);
+    try std.testing.expectEqual(@as(u16, 0), destruction.getDebrisSystem().count);
 }

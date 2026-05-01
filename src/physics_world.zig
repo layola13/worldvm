@@ -36,6 +36,7 @@ pub const StepConfig = struct {
     time_scale: f32 = 1.0,
     run_pre_motion_constraint: bool = true,
     apply_continuous_physics: bool = false,
+    finish_world_step: bool = true,
     authority: StepAuthority = .physics_world_compat,
 };
 
@@ -192,6 +193,7 @@ fn processVerticalIntegrateMotion(
     next_state: *scene32.InstanceState,
     broke_this_tick: *bool,
     topology_changed: *bool,
+    allow_discrete_stationary_fall: bool,
 ) void {
     if (inst.vel_y < 0) {
         const fall = physics.checkContinuousFall(world.s1024, inst, world.entities);
@@ -203,6 +205,18 @@ fn processVerticalIntegrateMotion(
             const impact_velocity = inst.vel_y;
             next_state.* = physics_kernel.handleBlockedFallContact(inst, entity, fall.blocker_id, impact_velocity);
             processBlockedIntegrateSweep(world, instance_idx, inst, impact_velocity, fall.blocker_id, broke_this_tick, topology_changed);
+        }
+        return;
+    }
+
+    if (allow_discrete_stationary_fall and inst.vel_y == 0) {
+        const fall = physics_kernel.planStationaryDiscreteFall(world.s1024, inst, entity, world.entities);
+        if (fall.changed) {
+            next_y.* = fall.next_y;
+            next_state.* = fall.next_state;
+        }
+        if (fall.blocked) {
+            processBlockedIntegrateSweep(world, instance_idx, inst, inst.vel_y, fall.blocker_id, broke_this_tick, topology_changed);
         }
         return;
     }
@@ -234,6 +248,7 @@ fn integrateDynamicInstance(
     instance_idx: u8,
     moved: *bool,
     topology_changed: *bool,
+    allow_discrete_stationary_fall: bool,
 ) void {
     const inst = &world.s1024.instances[instance_idx];
     if (!physics_kernel.canProcessDynamicInstance(inst, world.entities)) {
@@ -251,7 +266,7 @@ fn integrateDynamicInstance(
     var inst_moved = false;
     var broke_this_tick = false;
 
-    processVerticalIntegrateMotion(world, instance_idx, inst, entity, &next_y, &next_state, &broke_this_tick, topology_changed);
+    processVerticalIntegrateMotion(world, instance_idx, inst, entity, &next_y, &next_state, &broke_this_tick, topology_changed, allow_discrete_stationary_fall);
 
     processPlanarIntegrateSweep(world, instance_idx, inst, entity, .x, inst.pos_x, next_y, inst.pos_z, inst.vel_x, &next_x, &next_state, &broke_this_tick, topology_changed);
     processPlanarIntegrateSweep(world, instance_idx, inst, entity, .z, next_x, next_y, inst.pos_z, inst.vel_z, &next_z, &next_state, &broke_this_tick, topology_changed);
@@ -332,7 +347,7 @@ pub const IntegrateResult = struct {
     topology_changed: bool,
 };
 
-pub fn integrate(world: *PhysicsWorld) IntegrateResult {
+fn integrateConfigured(world: *PhysicsWorld, allow_discrete_stationary_fall: bool) IntegrateResult {
     physics_kernel.clearPendingCollisions(&world.pending_collisions);
     physics_kernel.clearPendingSounds(&world.pending_sounds);
     physics_kernel.clearPendingParticles(&world.pending_particles);
@@ -342,7 +357,7 @@ pub fn integrate(world: *PhysicsWorld) IntegrateResult {
     var topology_changed = false;
     var i: u8 = 0;
     while (i < world.s1024.instance_count) : (i += 1) {
-        integrateDynamicInstance(world, i, &moved, &topology_changed);
+        integrateDynamicInstance(world, i, &moved, &topology_changed, allow_discrete_stationary_fall);
     }
 
     physics_kernel.rebuildOccupancyIfNeeded(world.s1024, world.entities, moved or topology_changed);
@@ -350,6 +365,10 @@ pub fn integrate(world: *PhysicsWorld) IntegrateResult {
         .moved = moved,
         .topology_changed = topology_changed,
     };
+}
+
+pub fn integrate(world: *PhysicsWorld) IntegrateResult {
+    return integrateConfigured(world, false);
 }
 
 /// Handle events: collision callbacks, triggers
@@ -370,6 +389,16 @@ pub fn recordSnapshot(world: *PhysicsWorld) void {
 fn runStep(world: *PhysicsWorld, cfg: StepConfig) StepResult {
     physics_kernel.beginWorldStep(&world.tick, world.s1024);
 
+    if (cfg.apply_continuous_physics and !cfg.run_pre_motion_constraint) {
+        physics_kernel.runPreStepSystems(
+            world.s1024,
+            world.entities,
+            cfg.time_scale,
+            SLEEP_TIME_THRESHOLD,
+            cfg.dt,
+        );
+    }
+
     var pre_changed = false;
     var observed_pair_count: usize = world.broadphase_pair_count;
     if (cfg.run_pre_motion_constraint) {
@@ -386,17 +415,9 @@ fn runStep(world: *PhysicsWorld, cfg: StepConfig) StepResult {
         world.broadphase_pair_count = pre_constraint.pair_count;
         observed_pair_count = pre_constraint.pair_count;
         pre_changed = pre_constraint.changed;
-    } else if (cfg.apply_continuous_physics) {
-        physics_kernel.runPreStepSystems(
-            world.s1024,
-            world.entities,
-            cfg.time_scale,
-            SLEEP_TIME_THRESHOLD,
-            cfg.dt,
-        );
     }
 
-    const integrate_result = integrate(world);
+    const integrate_result = integrateConfigured(world, cfg.authority == .tick_engine and cfg.apply_continuous_physics);
     const constraint_result = physics_kernel.runPostMotionConstraintStage(
         world.s1024,
         world.entities,
@@ -409,11 +430,17 @@ fn runStep(world: *PhysicsWorld, cfg: StepConfig) StepResult {
         constraint_result.pair_count,
     );
     const event_count = world.pending_collisions.count + world.pending_sounds.count + world.pending_particles.count + world.pending_deformations.count + world.pending_breaks.count + world.pending_joint_breaks.count;
-    physics_kernel.finishWorldStep(&world.pending_collisions, &world.pending_sounds, &world.pending_particles, &world.pending_deformations, &world.pending_breaks, &world.pending_joint_breaks, world.world_bus, world.tick, world.s1024, world.entities, cfg.dt);
+    if (cfg.finish_world_step) {
+        physics_kernel.finishWorldStep(&world.pending_collisions, &world.pending_sounds, &world.pending_particles, &world.pending_deformations, &world.pending_breaks, &world.pending_joint_breaks, world.world_bus, world.tick, world.s1024, world.entities, cfg.dt);
+    }
     const snapshot = rewind.getWorldSnapshotAtTick(world.tick);
     const determinism_flags = if (snapshot) |s| rewind.computeWorldDeterminismFlags(s) else 0;
+    const changed = if (cfg.authority == .tick_engine and cfg.apply_continuous_physics)
+        integrate_result.moved or integrate_result.topology_changed
+    else
+        pre_changed or integrate_result.moved or integrate_result.topology_changed or constraint_result.changed;
     return .{
-        .changed = pre_changed or integrate_result.moved or integrate_result.topology_changed or constraint_result.changed,
+        .changed = changed,
         .pair_count = world.broadphase_pair_count,
         .event_count = event_count,
         .snapshot_tick = world.tick,

@@ -148,6 +148,12 @@ fn weatherSpeedModifier(behavior: AIBehavior) f32 {
 }
 
 pub fn init() void {
+    const vehicle_system = vehicle_physics.getSystem();
+    for (vehicle_system.vehicles[0..vehicle_system.count]) |*vehicle| {
+        vehicle.ai_vehicle_id = 0;
+        vehicle.ai_target_speed = 0;
+    }
+
     g_traffic_system.vehicle_count = 0;
     g_traffic_system.light_count = 0;
     g_traffic_system.global_time = 0;
@@ -349,10 +355,10 @@ pub fn querySurroundDistances(self: *const TrafficVehicle, distances: []f32, max
     const right_z = fwd.x;
 
     const dirs = [_]struct { f32, f32 }{
-        .{ fwd.x, fwd.z },     // front
+        .{ fwd.x, fwd.z }, // front
         .{ right_x, right_z }, // right
         .{ -right_x, -right_z }, // left
-        .{ -fwd.x, -fwd.z },   // back
+        .{ -fwd.x, -fwd.z }, // back
     };
 
     for (0..4) |i| {
@@ -388,8 +394,7 @@ pub fn queryTerrainAhead(self: *const TrafficVehicle, distance: f32) query.Query
     const target_x = self.pos_x + fwd.x * distance;
     const target_z = self.pos_z + fwd.z * distance;
     const gy: i32 = @as(i32, @intFromFloat(self.pos_y));
-    return query.queryEnvironmentVoxel(world, 
-        @intFromFloat(target_x), gy, @intFromFloat(target_z));
+    return query.queryEnvironmentVoxel(world, @intFromFloat(target_x), gy, @intFromFloat(target_z));
 }
 
 pub fn checkRedLight(self: *const TrafficVehicle, _: f32) bool {
@@ -795,18 +800,17 @@ pub fn updateAI(dt: f32) void {
             vehicle.vel_x *= factor;
             vehicle.vel_z *= factor;
         } else if (vehicle.throttle_input > 0) {
-            const target_speed = desired_target_speed;
             const yaw = vehicle.yaw + vehicle.steering_input * dt;
             vehicle.yaw = yaw;
-            if (speed < target_speed) {
+            if (speed < desired_target_speed) {
                 const accel = 10 * vehicle.throttle_input * dt * accel_scale * maneuver_scale;
-                vehicle.vel_x = @sin(yaw) * @min(target_speed, speed + accel);
-                vehicle.vel_z = @cos(yaw) * @min(target_speed, speed + accel);
-            } else if (speed > target_speed + 0.5) {
+                vehicle.vel_x = @sin(yaw) * @min(desired_target_speed, speed + accel);
+                vehicle.vel_z = @cos(yaw) * @min(desired_target_speed, speed + accel);
+            } else if (speed > desired_target_speed + 0.5) {
                 // Gently coast down to target speed using throttle resistance
                 const decel = 5 * vehicle.throttle_input * dt * accel_scale;
-                vehicle.vel_x = @sin(yaw) * @max(target_speed, speed - decel);
-                vehicle.vel_z = @cos(yaw) * @max(target_speed, speed - decel);
+                vehicle.vel_x = @sin(yaw) * @max(desired_target_speed, speed - decel);
+                vehicle.vel_z = @cos(yaw) * @max(desired_target_speed, speed - decel);
             }
         }
 
@@ -1571,7 +1575,6 @@ test "predictCarFollowing uses projected forward distance by heading" {
     try std.testing.expect(result.recommended_distance > 0.0);
 }
 
-
 test "setAIVehicleLink syncs vehicle pose to AI traffic immediately" {
     init();
     vehicle_physics.init();
@@ -1618,5 +1621,3 @@ test "syncVehicleToTraffic only affects linked vehicles" {
     try std.testing.expect(ai_car.pos_z == saved_z);
     try std.testing.expect(ai_car.vel_x == saved_vel_x);
 }
-
-

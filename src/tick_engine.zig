@@ -334,6 +334,95 @@ pub fn init(engine: *TickEngine, s1024: *scene1024.Scene1024, entities: []entity
     physics_kernel.initCoreSubsystems();
 }
 
+pub fn makePhysicsWorldView(engine: *const TickEngine) physics_world.PhysicsWorld {
+    return .{
+        .s1024 = engine.s1024,
+        .entities = engine.entities,
+        .joints = engine.joints,
+        .joint_count = @min(engine.joint_count, engine.joints.len),
+        .tick = engine.tick_id,
+        .world_bus = engine.world_bus,
+        .pending_collisions = engine.pending_collisions,
+        .pending_sounds = engine.pending_sounds,
+        .pending_particles = engine.pending_particles,
+        .pending_deformations = engine.pending_deformations,
+        .pending_breaks = engine.pending_breaks,
+        .pending_joint_breaks = engine.pending_joint_breaks,
+        .broadphase_pairs = engine.broadphase_pairs,
+        .broadphase_pair_count = engine.broadphase_pair_count,
+    };
+}
+
+pub fn makePhysicsWorldStepConfig(engine: *const TickEngine, apply_continuous_physics: bool) physics_world.StepConfig {
+    return .{
+        .dt = engine.fixed_dt,
+        .time_scale = engine.time_scale,
+        .run_pre_motion_constraint = !apply_continuous_physics,
+        .apply_continuous_physics = apply_continuous_physics,
+        .finish_world_step = false,
+        .authority = .tick_engine,
+    };
+}
+
+pub fn stepViaPhysicsWorldCompat(engine: *TickEngine, apply_continuous_physics: bool) physics_world.StepResult {
+    var world = makePhysicsWorldView(engine);
+    const cfg = makePhysicsWorldStepConfig(engine, apply_continuous_physics);
+    const before_instance_count = engine.s1024.instance_count;
+    var before_instances: [scene32.MAX_INSTANCES]scene32.Instance = undefined;
+    @memcpy(before_instances[0..before_instance_count], engine.s1024.instances[0..before_instance_count]);
+    var result = physics_world.stepPhysicsConfigured(&world, cfg);
+
+    engine.tick_id = world.tick;
+    engine.s1024.global_tick = world.s1024.global_tick;
+    engine.pending_collisions = world.pending_collisions;
+    engine.pending_sounds = world.pending_sounds;
+    engine.pending_particles = world.pending_particles;
+    engine.pending_deformations = world.pending_deformations;
+    engine.pending_breaks = world.pending_breaks;
+    engine.pending_joint_breaks = world.pending_joint_breaks;
+    engine.broadphase_pairs = world.broadphase_pairs;
+    engine.broadphase_pair_count = world.broadphase_pair_count;
+    result.changed = apply_continuous_physics and before_instance_count != world.s1024.instance_count;
+    var instance_idx: usize = 0;
+    while (apply_continuous_physics and !result.changed and instance_idx < before_instance_count) : (instance_idx += 1) {
+        const before = before_instances[instance_idx];
+        const after = world.s1024.instances[instance_idx];
+        if (before.state == .resting and after.state != .broken) continue;
+        if (before.state == .falling and before.vel_y < 0 and after.pos_y == before.pos_y and after.state != .broken) continue;
+        result.changed = before.pos_x != after.pos_x or before.pos_y != after.pos_y or before.pos_z != after.pos_z or after.state == .broken;
+    }
+    engine.last_step_result = result;
+    engine.stable = !result.changed;
+    clearFixedTickOutput(engine);
+    collectFixedTickTraceAndTelemetryFromPending(engine);
+    physics_kernel.finishWorldStep(
+        &engine.pending_collisions,
+        &engine.pending_sounds,
+        &engine.pending_particles,
+        &engine.pending_deformations,
+        &engine.pending_breaks,
+        &engine.pending_joint_breaks,
+        engine.world_bus,
+        engine.tick_id,
+        engine.s1024,
+        engine.entities,
+        engine.fixed_dt,
+    );
+    result.state_hash = worldHashForTick(engine.tick_id);
+    result.determinism_flags = worldDeterminismFlagsForTick(engine.tick_id);
+    engine.last_step_result = result;
+    finalizeFixedTickSnapshotAndHash(engine, result);
+    buildCompressedTraceOutput(engine);
+    if (engine.last_tick_output.compressed_trace_count > 0) {
+        enqueueCompressedTraceFrame(engine);
+    }
+    if (engine.trace_async_flush_budget > 0) {
+        _ = flushTraceAsyncWrites(engine, @as(u16, engine.trace_async_flush_budget));
+    }
+
+    return result;
+}
+
 /// Compatibility wrapper for existing callers.
 pub fn shouldSleep(inst: *scene32.Instance) bool {
     return physics_kernel.shouldSleep(inst);
@@ -1690,6 +1779,826 @@ test "TickEngine stepPhysicsWorld builds broadphase pairs for swept collision ca
     try std.testing.expect(result.state_hash != 0);
     try std.testing.expectEqual(result.state_hash, engine.last_step_result.state_hash);
     try std.testing.expectEqual(physics_world.StepAuthority.tick_engine, result.authority);
+}
+
+test "TickEngine PhysicsWorld bridge mirrors runtime context without stepping" {
+    var s1024 = scene1024.Scene1024.init(std.testing.allocator);
+    defer s1024.deinit();
+    var entities = [_]entity16.Entity16{entity16.initEntity16()};
+
+    var engine: TickEngine = undefined;
+    init(&engine, &s1024, &entities);
+    var event_bus = bus.Bus.init();
+    engine.world_bus = &event_bus;
+    engine.tick_id = 17;
+    engine.time_scale = 0.5;
+    engine.fixed_dt = 0.25;
+    engine.joint_count = 99;
+    engine.broadphase_pair_count = 1;
+    engine.broadphase_pairs[0] = .{ .a = 1, .b = 2 };
+    engine.pending_collisions.count = 1;
+
+    var world = makePhysicsWorldView(&engine);
+    const cfg = makePhysicsWorldStepConfig(&engine, true);
+
+    try std.testing.expect(world.s1024 == engine.s1024);
+    try std.testing.expectEqual(engine.entities.ptr, world.entities.ptr);
+    try std.testing.expectEqual(@as(usize, 0), world.joint_count);
+    try std.testing.expectEqual(@as(u32, 17), world.tick);
+    try std.testing.expect(world.world_bus.? == &event_bus);
+    try std.testing.expectEqual(@as(u8, 1), world.pending_collisions.count);
+    try std.testing.expectEqual(@as(usize, 1), world.broadphase_pair_count);
+    try std.testing.expectEqual(BroadPhasePair{ .a = 1, .b = 2 }, world.broadphase_pairs[0]);
+
+    try std.testing.expectEqual(@as(f32, 0.25), cfg.dt);
+    try std.testing.expectEqual(@as(f32, 0.5), cfg.time_scale);
+    try std.testing.expect(!cfg.run_pre_motion_constraint);
+    try std.testing.expect(cfg.apply_continuous_physics);
+    try std.testing.expect(!cfg.finish_world_step);
+    try std.testing.expectEqual(physics_world.StepAuthority.tick_engine, cfg.authority);
+
+    var inst = std.mem.zeroes(scene32.Instance);
+    inst.entity_id = 0;
+    _ = try world.s1024.addInstance(inst);
+    try std.testing.expectEqual(@as(u8, 1), engine.s1024.instance_count);
+}
+
+fn expectCompatStepResultMatches(tick_result: physics_world.StepResult, compat_result: physics_world.StepResult) !void {
+    try std.testing.expectEqual(tick_result.changed, compat_result.changed);
+    try std.testing.expectEqual(tick_result.pair_count, compat_result.pair_count);
+    try std.testing.expectEqual(tick_result.event_count, compat_result.event_count);
+    try std.testing.expectEqual(tick_result.snapshot_tick, compat_result.snapshot_tick);
+    try std.testing.expectEqual(tick_result.authority, compat_result.authority);
+}
+
+fn expectCompatEngineStableMatches(tick_engine_instance: *const TickEngine, compat_engine: *const TickEngine) !void {
+    try std.testing.expectEqual(tick_engine_instance.stable, compat_engine.stable);
+}
+
+fn expectCompatInstanceKinematicsMatch(tick_scene: *const scene1024.Scene1024, compat_scene: *const scene1024.Scene1024, instance_idx: usize) !void {
+    try std.testing.expectEqual(tick_scene.instances[instance_idx].pos_x, compat_scene.instances[instance_idx].pos_x);
+    try std.testing.expectEqual(tick_scene.instances[instance_idx].pos_y, compat_scene.instances[instance_idx].pos_y);
+    try std.testing.expectEqual(tick_scene.instances[instance_idx].pos_z, compat_scene.instances[instance_idx].pos_z);
+    try std.testing.expectEqual(tick_scene.instances[instance_idx].vel_x, compat_scene.instances[instance_idx].vel_x);
+    try std.testing.expectEqual(tick_scene.instances[instance_idx].vel_y, compat_scene.instances[instance_idx].vel_y);
+    try std.testing.expectEqual(tick_scene.instances[instance_idx].vel_z, compat_scene.instances[instance_idx].vel_z);
+}
+
+fn expectCompatSnapshotAndHashMatch(tick_engine_instance: *const TickEngine, compat_engine: *const TickEngine) !void {
+    try std.testing.expectEqual(tick_engine_instance.last_tick_output.snapshot.tick, compat_engine.last_tick_output.snapshot.tick);
+    try std.testing.expectEqual(tick_engine_instance.last_tick_output.snapshot.instance_count, compat_engine.last_tick_output.snapshot.instance_count);
+    try std.testing.expectEqual(tick_engine_instance.last_tick_output.snapshot.world_hash, compat_engine.last_tick_output.snapshot.world_hash);
+    try std.testing.expectEqual(tick_engine_instance.last_tick_output.hash.tick, compat_engine.last_tick_output.hash.tick);
+    try std.testing.expectEqual(tick_engine_instance.last_tick_output.hash.value, compat_engine.last_tick_output.hash.value);
+    try std.testing.expectEqual(tick_engine_instance.last_tick_output.hash.determinism_flags, compat_engine.last_tick_output.hash.determinism_flags);
+}
+
+fn expectCompatTraceAndTelemetryMatch(tick_engine_instance: *const TickEngine, compat_engine: *const TickEngine) !void {
+    try std.testing.expectEqual(tick_engine_instance.last_tick_output.trace_count, compat_engine.last_tick_output.trace_count);
+    var trace_idx: usize = 0;
+    while (trace_idx < tick_engine_instance.last_tick_output.trace_count) : (trace_idx += 1) {
+        const tick_trace = tick_engine_instance.last_tick_output.trace_events[trace_idx];
+        const compat_trace = compat_engine.last_tick_output.trace_events[trace_idx];
+        try std.testing.expectEqual(tick_trace.tick_id, compat_trace.tick_id);
+        try std.testing.expectEqual(tick_trace.event_type, compat_trace.event_type);
+        try std.testing.expectEqual(tick_trace.subject_id, compat_trace.subject_id);
+        try std.testing.expectApproxEqAbs(tick_trace.value_a, compat_trace.value_a, 0.0001);
+        try std.testing.expectApproxEqAbs(tick_trace.value_b, compat_trace.value_b, 0.0001);
+        try std.testing.expectApproxEqAbs(tick_trace.value_c, compat_trace.value_c, 0.0001);
+    }
+
+    try std.testing.expectEqual(tick_engine_instance.last_tick_output.contact_telemetry_count, compat_engine.last_tick_output.contact_telemetry_count);
+    var contact_idx: usize = 0;
+    while (contact_idx < tick_engine_instance.last_tick_output.contact_telemetry_count) : (contact_idx += 1) {
+        const tick_contact = tick_engine_instance.last_tick_output.contact_telemetry[contact_idx];
+        const compat_contact = compat_engine.last_tick_output.contact_telemetry[contact_idx];
+        try std.testing.expectEqual(tick_contact.tick_id, compat_contact.tick_id);
+        try std.testing.expectEqual(tick_contact.entity_id, compat_contact.entity_id);
+        try std.testing.expectApproxEqAbs(tick_contact.telemetry.damage_modifier, compat_contact.telemetry.damage_modifier, 0.0001);
+        try std.testing.expectApproxEqAbs(tick_contact.telemetry.penetration_resistance, compat_contact.telemetry.penetration_resistance, 0.0001);
+    }
+}
+
+test "TickEngine PhysicsWorld compat step matches empty-world tick result" {
+    var compat_scene = scene1024.Scene1024.init(std.testing.allocator);
+    defer compat_scene.deinit();
+    var compat_entities = [_]entity16.Entity16{entity16.initEntity16()};
+    var compat_engine: TickEngine = undefined;
+    init(&compat_engine, &compat_scene, &compat_entities);
+    const compat_result = stepViaPhysicsWorldCompat(&compat_engine, false);
+
+    var tick_scene = scene1024.Scene1024.init(std.testing.allocator);
+    defer tick_scene.deinit();
+    var tick_entities = [_]entity16.Entity16{entity16.initEntity16()};
+    var tick_engine_instance: TickEngine = undefined;
+    init(&tick_engine_instance, &tick_scene, &tick_entities);
+    const tick_result = stepTickResult(&tick_engine_instance);
+
+    try std.testing.expectEqual(@as(u32, 1), compat_engine.tick_id);
+    try std.testing.expectEqual(@as(u32, 1), compat_engine.s1024.global_tick);
+    try expectCompatStepResultMatches(tick_result, compat_result);
+    try expectCompatEngineStableMatches(&tick_engine_instance, &compat_engine);
+    try expectCompatSnapshotAndHashMatch(&tick_engine_instance, &compat_engine);
+    try expectCompatSnapshotAndHashMatch(&tick_engine_instance, &compat_engine);
+}
+
+test "TickEngine PhysicsWorld compat step matches static non-empty tick result" {
+    var compat_scene = scene1024.Scene1024.init(std.testing.allocator);
+    defer compat_scene.deinit();
+    var tick_scene = scene1024.Scene1024.init(std.testing.allocator);
+    defer tick_scene.deinit();
+
+    var static_body = entity16.initEntity16();
+    static_body.physics.mass = 0;
+    static_body.physics.material = .solid;
+    static_body.physics.flags |= 0x01;
+    entity16.setVoxel(&static_body, 0, 0, 0);
+
+    var compat_entities = [_]entity16.Entity16{static_body};
+    var tick_entities = [_]entity16.Entity16{static_body};
+    const instance = scene32.Instance{
+        .entity_id = 0,
+        .pos_x = 4,
+        .pos_y = 2,
+        .pos_z = 6,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .resting,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    compat_scene.instance_count = 1;
+    compat_scene.instances[0] = instance;
+    tick_scene.instance_count = 1;
+    tick_scene.instances[0] = instance;
+
+    var compat_engine: TickEngine = undefined;
+    init(&compat_engine, &compat_scene, &compat_entities);
+    const compat_result = stepViaPhysicsWorldCompat(&compat_engine, false);
+
+    var tick_engine_instance: TickEngine = undefined;
+    init(&tick_engine_instance, &tick_scene, &tick_entities);
+    const tick_result = stepTickResult(&tick_engine_instance);
+
+    try std.testing.expectEqual(tick_scene.instances[0].pos_x, compat_scene.instances[0].pos_x);
+    try std.testing.expectEqual(tick_scene.instances[0].pos_y, compat_scene.instances[0].pos_y);
+    try std.testing.expectEqual(tick_scene.instances[0].pos_z, compat_scene.instances[0].pos_z);
+    try std.testing.expectEqual(tick_scene.instances[0].vel_x, compat_scene.instances[0].vel_x);
+    try std.testing.expectEqual(tick_scene.instances[0].vel_y, compat_scene.instances[0].vel_y);
+    try std.testing.expectEqual(tick_scene.instances[0].vel_z, compat_scene.instances[0].vel_z);
+    try expectCompatStepResultMatches(tick_result, compat_result);
+    try expectCompatEngineStableMatches(&tick_engine_instance, &compat_engine);
+    try expectCompatSnapshotAndHashMatch(&tick_engine_instance, &compat_engine);
+    try expectCompatSnapshotAndHashMatch(&tick_engine_instance, &compat_engine);
+}
+
+test "TickEngine PhysicsWorld compat step matches single lateral mover tick result" {
+    var compat_scene = scene1024.Scene1024.init(std.testing.allocator);
+    defer compat_scene.deinit();
+    _ = try compat_scene.getPage(0);
+    var tick_scene = scene1024.Scene1024.init(std.testing.allocator);
+    defer tick_scene.deinit();
+    _ = try tick_scene.getPage(0);
+
+    var mover = entity16.initEntity16();
+    mover.physics.mass = 20;
+    mover.physics.material = .solid;
+    mover.physics.hardness = 40;
+    entity16.setVoxel(&mover, 0, 0, 0);
+
+    var compat_entities = [_]entity16.Entity16{mover};
+    var tick_entities = [_]entity16.Entity16{mover};
+    const instance = scene32.Instance{
+        .entity_id = 0,
+        .pos_x = 0,
+        .pos_y = 10,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .moving,
+        .sleep_tick = 0,
+        .vel_x = 2,
+        .vel_y = 0,
+        .vel_z = 3,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    compat_scene.instance_count = 1;
+    compat_scene.instances[0] = instance;
+    tick_scene.instance_count = 1;
+    tick_scene.instances[0] = instance;
+
+    var compat_engine: TickEngine = undefined;
+    init(&compat_engine, &compat_scene, &compat_entities);
+    compat_engine.time_scale = 0.0;
+    var compat_bus = bus.Bus.init();
+    compat_engine.world_bus = &compat_bus;
+    const compat_result = stepViaPhysicsWorldCompat(&compat_engine, true);
+
+    var tick_engine_instance: TickEngine = undefined;
+    init(&tick_engine_instance, &tick_scene, &tick_entities);
+    tick_engine_instance.time_scale = 0.0;
+    var tick_bus = bus.Bus.init();
+    tick_engine_instance.world_bus = &tick_bus;
+    const tick_result = stepTickResult(&tick_engine_instance);
+
+    try std.testing.expectEqual(tick_scene.instances[0].pos_x, compat_scene.instances[0].pos_x);
+    try std.testing.expectEqual(tick_scene.instances[0].pos_y, compat_scene.instances[0].pos_y);
+    try std.testing.expectEqual(tick_scene.instances[0].pos_z, compat_scene.instances[0].pos_z);
+    try std.testing.expectEqual(tick_scene.instances[0].vel_x, compat_scene.instances[0].vel_x);
+    try std.testing.expectEqual(tick_scene.instances[0].vel_z, compat_scene.instances[0].vel_z);
+    try expectCompatStepResultMatches(tick_result, compat_result);
+    try expectCompatEngineStableMatches(&tick_engine_instance, &compat_engine);
+    try expectCompatSnapshotAndHashMatch(&tick_engine_instance, &compat_engine);
+    try expectCompatSnapshotAndHashMatch(&tick_engine_instance, &compat_engine);
+}
+
+
+test "TickEngine PhysicsWorld compat step matches falling body blocked by floor" {
+    var compat_scene = scene1024.Scene1024.init(std.testing.allocator);
+    defer compat_scene.deinit();
+    _ = try compat_scene.getPage(0);
+    var tick_scene = scene1024.Scene1024.init(std.testing.allocator);
+    defer tick_scene.deinit();
+    _ = try tick_scene.getPage(0);
+
+    var falling = entity16.initEntity16();
+    falling.physics.mass = 20;
+    falling.physics.material = .solid;
+    falling.physics.hardness = 40;
+    entity16.setVoxel(&falling, 0, 0, 0);
+
+    var floor = entity16.initEntity16();
+    floor.physics.flags = 0x01;
+    entity16.setVoxel(&floor, 0, 0, 0);
+
+    var compat_entities = [_]entity16.Entity16{ falling, floor };
+    var tick_entities = [_]entity16.Entity16{ falling, floor };
+    const body = scene32.Instance{
+        .entity_id = 0,
+        .pos_x = 0,
+        .pos_y = 1,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .moving,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    const ground = scene32.Instance{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .resting,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    compat_scene.instance_count = 2;
+    compat_scene.instances[0] = body;
+    compat_scene.instances[1] = ground;
+    tick_scene.instance_count = 2;
+    tick_scene.instances[0] = body;
+    tick_scene.instances[1] = ground;
+
+    var compat_engine: TickEngine = undefined;
+    init(&compat_engine, &compat_scene, &compat_entities);
+    compat_engine.time_scale = 0.0;
+    var compat_bus = bus.Bus.init();
+    compat_engine.world_bus = &compat_bus;
+    const compat_result = stepViaPhysicsWorldCompat(&compat_engine, true);
+
+    var tick_engine_instance: TickEngine = undefined;
+    init(&tick_engine_instance, &tick_scene, &tick_entities);
+    tick_engine_instance.time_scale = 0.0;
+    var tick_bus = bus.Bus.init();
+    tick_engine_instance.world_bus = &tick_bus;
+    const tick_result = stepTickResult(&tick_engine_instance);
+
+    try std.testing.expectEqual(tick_scene.instances[0].pos_x, compat_scene.instances[0].pos_x);
+    try std.testing.expectEqual(tick_scene.instances[0].pos_y, compat_scene.instances[0].pos_y);
+    try std.testing.expectEqual(tick_scene.instances[0].pos_z, compat_scene.instances[0].pos_z);
+    try std.testing.expectEqual(tick_scene.instances[0].vel_x, compat_scene.instances[0].vel_x);
+    try std.testing.expectEqual(tick_scene.instances[0].vel_y, compat_scene.instances[0].vel_y);
+    try std.testing.expectEqual(tick_scene.instances[0].vel_z, compat_scene.instances[0].vel_z);
+    try expectCompatStepResultMatches(tick_result, compat_result);
+    try expectCompatEngineStableMatches(&tick_engine_instance, &compat_engine);
+    try expectCompatSnapshotAndHashMatch(&tick_engine_instance, &compat_engine);
+}
+
+test "TickEngine PhysicsWorld compat step matches lateral wall block" {
+    var compat_scene = scene1024.Scene1024.init(std.testing.allocator);
+    defer compat_scene.deinit();
+    var tick_scene = scene1024.Scene1024.init(std.testing.allocator);
+    defer tick_scene.deinit();
+
+    var mover = entity16.initEntity16();
+    mover.physics.mass = 20;
+    mover.physics.material = .solid;
+    mover.physics.hardness = 40;
+    entity16.setVoxel(&mover, 0, 0, 0);
+
+    var floor = entity16.initEntity16();
+    floor.physics.flags = 0x01;
+    entity16.setVoxel(&floor, 0, 0, 0);
+
+    var wall = entity16.initEntity16();
+    wall.physics.flags = 0x01;
+    entity16.setVoxel(&wall, 0, 0, 0);
+
+    var compat_entities = [_]entity16.Entity16{ mover, floor, wall };
+    var tick_entities = [_]entity16.Entity16{ mover, floor, wall };
+    const body = scene32.Instance{
+        .entity_id = 0,
+        .pos_x = 0,
+        .pos_y = 1,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .moving,
+        .sleep_tick = 0,
+        .vel_x = 16,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    const ground = scene32.Instance{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .resting,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    const barrier = scene32.Instance{
+        .entity_id = 2,
+        .pos_x = 4,
+        .pos_y = 1,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .resting,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    compat_scene.instance_count = 3;
+    compat_scene.instances[0] = body;
+    compat_scene.instances[1] = ground;
+    compat_scene.instances[2] = barrier;
+    tick_scene.instance_count = 3;
+    tick_scene.instances[0] = body;
+    tick_scene.instances[1] = ground;
+    tick_scene.instances[2] = barrier;
+
+    var compat_engine: TickEngine = undefined;
+    init(&compat_engine, &compat_scene, &compat_entities);
+    compat_engine.time_scale = 0.0;
+    var compat_bus = bus.Bus.init();
+    compat_engine.world_bus = &compat_bus;
+    const compat_result = stepViaPhysicsWorldCompat(&compat_engine, true);
+
+    var tick_engine_instance: TickEngine = undefined;
+    init(&tick_engine_instance, &tick_scene, &tick_entities);
+    tick_engine_instance.time_scale = 0.0;
+    var tick_bus = bus.Bus.init();
+    tick_engine_instance.world_bus = &tick_bus;
+    const tick_result = stepTickResult(&tick_engine_instance);
+
+    try std.testing.expectEqual(tick_scene.instances[0].pos_x, compat_scene.instances[0].pos_x);
+    try std.testing.expectEqual(tick_scene.instances[0].pos_y, compat_scene.instances[0].pos_y);
+    try std.testing.expectEqual(tick_scene.instances[0].pos_z, compat_scene.instances[0].pos_z);
+    try std.testing.expectEqual(tick_scene.instances[0].vel_x, compat_scene.instances[0].vel_x);
+    try std.testing.expectEqual(tick_scene.instances[0].vel_y, compat_scene.instances[0].vel_y);
+    try std.testing.expectEqual(tick_scene.instances[0].vel_z, compat_scene.instances[0].vel_z);
+    try expectCompatStepResultMatches(tick_result, compat_result);
+    try expectCompatEngineStableMatches(&tick_engine_instance, &compat_engine);
+    try expectCompatSnapshotAndHashMatch(&tick_engine_instance, &compat_engine);
+}
+
+
+test "TickEngine PhysicsWorld compat step matches upward ceiling block" {
+    var compat_scene = scene1024.Scene1024.init(std.testing.allocator);
+    defer compat_scene.deinit();
+    try compat_scene.setVoxelAtGlobal(address.encode(.{
+        .world = 0,
+        .px = 0,
+        .py = 0,
+        .pz = 0,
+        .lx = 0,
+        .ly = 6,
+        .lz = 0,
+    }), true);
+    var tick_scene = scene1024.Scene1024.init(std.testing.allocator);
+    defer tick_scene.deinit();
+    try tick_scene.setVoxelAtGlobal(address.encode(.{
+        .world = 0,
+        .px = 0,
+        .py = 0,
+        .pz = 0,
+        .lx = 0,
+        .ly = 6,
+        .lz = 0,
+    }), true);
+
+    var mover = entity16.initEntity16();
+    mover.physics.mass = 20;
+    mover.physics.material = .solid;
+    mover.physics.hardness = 40;
+    entity16.setVoxel(&mover, 0, 0, 0);
+
+    var compat_entities = [_]entity16.Entity16{mover};
+    var tick_entities = [_]entity16.Entity16{mover};
+    const body = scene32.Instance{
+        .entity_id = 0,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .moving,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 16,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    compat_scene.instance_count = 1;
+    compat_scene.instances[0] = body;
+    tick_scene.instance_count = 1;
+    tick_scene.instances[0] = body;
+
+    var compat_engine: TickEngine = undefined;
+    init(&compat_engine, &compat_scene, &compat_entities);
+    compat_engine.time_scale = 0.0;
+    const compat_result = stepViaPhysicsWorldCompat(&compat_engine, true);
+
+    var tick_engine_instance: TickEngine = undefined;
+    init(&tick_engine_instance, &tick_scene, &tick_entities);
+    tick_engine_instance.time_scale = 0.0;
+    const tick_result = stepTickResult(&tick_engine_instance);
+
+    try std.testing.expectEqual(tick_scene.instances[0].pos_x, compat_scene.instances[0].pos_x);
+    try std.testing.expectEqual(tick_scene.instances[0].pos_y, compat_scene.instances[0].pos_y);
+    try std.testing.expectEqual(tick_scene.instances[0].pos_z, compat_scene.instances[0].pos_z);
+    try std.testing.expectEqual(tick_scene.instances[0].vel_x, compat_scene.instances[0].vel_x);
+    try std.testing.expectEqual(tick_scene.instances[0].vel_y, compat_scene.instances[0].vel_y);
+    try std.testing.expectEqual(tick_scene.instances[0].vel_z, compat_scene.instances[0].vel_z);
+    try expectCompatStepResultMatches(tick_result, compat_result);
+    try expectCompatEngineStableMatches(&tick_engine_instance, &compat_engine);
+    try expectCompatSnapshotAndHashMatch(&tick_engine_instance, &compat_engine);
+}
+
+
+test "TickEngine PhysicsWorld compat step matches blocked fall collision events" {
+    terrain.init();
+    defer terrain.init();
+
+    var compat_scene = scene1024.Scene1024.init(std.testing.allocator);
+    defer compat_scene.deinit();
+    _ = try compat_scene.getPage(0);
+    var tick_scene = scene1024.Scene1024.init(std.testing.allocator);
+    defer tick_scene.deinit();
+    _ = try tick_scene.getPage(0);
+
+    var mover = entity16.initEntity16();
+    mover.physics.mass = 20;
+    mover.physics.material = .solid;
+    mover.physics.hardness = 40;
+    entity16.setVoxel(&mover, 0, 0, 0);
+
+    var target = entity16.initEntity16();
+    target.physics.mass = 20;
+    target.physics.material = .solid;
+    target.physics.hardness = 30;
+    entity16.setVoxel(&target, 0, 0, 0);
+
+    var compat_entities = [_]entity16.Entity16{ mover, target };
+    var tick_entities = [_]entity16.Entity16{ mover, target };
+    const body = scene32.Instance{
+        .entity_id = 0,
+        .pos_x = 0,
+        .pos_y = 1,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .falling,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = -10,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    const target_inst = scene32.Instance{
+        .entity_id = 1,
+        .pos_x = 0,
+        .pos_y = 0,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .resting,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    compat_scene.instance_count = 2;
+    compat_scene.instances[0] = body;
+    compat_scene.instances[1] = target_inst;
+    tick_scene.instance_count = 2;
+    tick_scene.instances[0] = body;
+    tick_scene.instances[1] = target_inst;
+
+    var compat_engine: TickEngine = undefined;
+    init(&compat_engine, &compat_scene, &compat_entities);
+    var compat_bus = bus.Bus.init();
+    compat_engine.world_bus = &compat_bus;
+    const compat_result = stepViaPhysicsWorldCompat(&compat_engine, true);
+
+    var tick_engine_instance: TickEngine = undefined;
+    init(&tick_engine_instance, &tick_scene, &tick_entities);
+    var tick_bus = bus.Bus.init();
+    tick_engine_instance.world_bus = &tick_bus;
+    const tick_result = stepTickResult(&tick_engine_instance);
+
+    try std.testing.expectEqual(tick_scene.instances[0].pos_y, compat_scene.instances[0].pos_y);
+    try std.testing.expectEqual(tick_scene.instances[0].vel_y, compat_scene.instances[0].vel_y);
+    try std.testing.expectEqual(tick_result.changed, compat_result.changed);
+    try std.testing.expectEqual(tick_result.event_count, compat_result.event_count);
+    try std.testing.expectEqual(tick_bus.msg_count, compat_bus.msg_count);
+    try expectCompatTraceAndTelemetryMatch(&tick_engine_instance, &compat_engine);
+
+    var tick_mover_hits: u8 = 0;
+    var tick_target_hits: u8 = 0;
+    var compat_mover_hits: u8 = 0;
+    var compat_target_hits: u8 = 0;
+    var msg_idx: u16 = 0;
+    while (msg_idx < tick_bus.msg_count) : (msg_idx += 1) {
+        const tick_entity_id = tick_bus.messages[msg_idx].entity_id;
+        const compat_entity_id = compat_bus.messages[msg_idx].entity_id;
+        if (tick_entity_id == 0) tick_mover_hits += 1;
+        if (tick_entity_id == 1) tick_target_hits += 1;
+        if (compat_entity_id == 0) compat_mover_hits += 1;
+        if (compat_entity_id == 1) compat_target_hits += 1;
+        try std.testing.expectEqual(tick_bus.messages[msg_idx].msg_type, compat_bus.messages[msg_idx].msg_type);
+    }
+    try std.testing.expectEqual(tick_mover_hits, compat_mover_hits);
+    try std.testing.expectEqual(tick_target_hits, compat_target_hits);
+}
+
+
+test "TickEngine PhysicsWorld compat step matches fragile lateral break" {
+    var compat_scene = scene1024.Scene1024.init(std.testing.allocator);
+    defer compat_scene.deinit();
+    _ = try compat_scene.getPage(0);
+    var tick_scene = scene1024.Scene1024.init(std.testing.allocator);
+    defer tick_scene.deinit();
+    _ = try tick_scene.getPage(0);
+
+    var fragile = entity16.initEntity16();
+    fragile.physics.mass = 500;
+    fragile.physics.material = .fragile;
+    fragile.physics.hardness = 10;
+    entity16.setVoxel(&fragile, 0, 0, 0);
+
+    var wall = entity16.initEntity16();
+    wall.physics.mass = 0;
+    wall.physics.material = .solid;
+    wall.physics.flags |= 0x01;
+    entity16.setVoxel(&wall, 0, 0, 0);
+
+    var compat_entities = [_]entity16.Entity16{ fragile, wall };
+    var tick_entities = [_]entity16.Entity16{ fragile, wall };
+    const body = scene32.Instance{
+        .entity_id = 0,
+        .pos_x = 0,
+        .pos_y = 10,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .moving,
+        .sleep_tick = 0,
+        .vel_x = 16,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    const barrier = scene32.Instance{
+        .entity_id = 1,
+        .pos_x = 8,
+        .pos_y = 10,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .resting,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    compat_scene.instance_count = 2;
+    compat_scene.instances[0] = body;
+    compat_scene.instances[1] = barrier;
+    tick_scene.instance_count = 2;
+    tick_scene.instances[0] = body;
+    tick_scene.instances[1] = barrier;
+
+    var compat_engine: TickEngine = undefined;
+    init(&compat_engine, &compat_scene, &compat_entities);
+    compat_engine.time_scale = 0.0;
+    var compat_bus = bus.Bus.init();
+    compat_engine.world_bus = &compat_bus;
+    const compat_result = stepViaPhysicsWorldCompat(&compat_engine, true);
+
+    var tick_engine_instance: TickEngine = undefined;
+    init(&tick_engine_instance, &tick_scene, &tick_entities);
+    tick_engine_instance.time_scale = 0.0;
+    var tick_bus = bus.Bus.init();
+    tick_engine_instance.world_bus = &tick_bus;
+    const tick_result = stepTickResult(&tick_engine_instance);
+
+    try std.testing.expectEqual(tick_scene.instances[0].state, compat_scene.instances[0].state);
+    try std.testing.expectEqual(tick_scene.instances[0].pos_x, compat_scene.instances[0].pos_x);
+    try std.testing.expectEqual(tick_scene.instances[0].vel_x, compat_scene.instances[0].vel_x);
+    try std.testing.expectEqual(tick_result.changed, compat_result.changed);
+    try std.testing.expectEqual(tick_result.event_count, compat_result.event_count);
+    try std.testing.expectEqual(tick_bus.msg_count, compat_bus.msg_count);
+    try expectCompatTraceAndTelemetryMatch(&tick_engine_instance, &compat_engine);
+    try expectCompatSnapshotAndHashMatch(&tick_engine_instance, &compat_engine);
+}
+
+
+test "TickEngine PhysicsWorld compat step matches joint break event" {
+    var compat_scene = scene1024.Scene1024.init(std.testing.allocator);
+    defer compat_scene.deinit();
+    _ = try compat_scene.getPage(0);
+    var tick_scene = scene1024.Scene1024.init(std.testing.allocator);
+    defer tick_scene.deinit();
+    _ = try tick_scene.getPage(0);
+
+    var body_a = entity16.initEntity16();
+    body_a.physics.mass = 10;
+    body_a.physics.material = .solid;
+    entity16.setVoxel(&body_a, 0, 0, 0);
+
+    var body_b = entity16.initEntity16();
+    body_b.physics.mass = 10;
+    body_b.physics.material = .solid;
+    entity16.setVoxel(&body_b, 0, 0, 0);
+
+    var compat_entities = [_]entity16.Entity16{ body_a, body_b };
+    var tick_entities = [_]entity16.Entity16{ body_a, body_b };
+    const inst_a = scene32.Instance{
+        .entity_id = 0,
+        .pos_x = 0,
+        .pos_y = 10,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .moving,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    const inst_b = scene32.Instance{
+        .entity_id = 1,
+        .pos_x = 8,
+        .pos_y = 10,
+        .pos_z = 0,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .moving,
+        .sleep_tick = 0,
+        .vel_x = 0,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        ._reserved = .{0} ** 2,
+    };
+    compat_scene.instance_count = 2;
+    compat_scene.instances[0] = inst_a;
+    compat_scene.instances[1] = inst_b;
+    tick_scene.instance_count = 2;
+    tick_scene.instances[0] = inst_a;
+    tick_scene.instances[1] = inst_b;
+
+    const weak_joint = joint.Joint{
+        .joint_type = .fixed,
+        .entity_a = 0,
+        .entity_b = 1,
+        .anchor_a_x = 0,
+        .anchor_a_y = 0,
+        .anchor_a_z = 0,
+        .anchor_b_x = 0,
+        .anchor_b_y = 0,
+        .anchor_b_z = 0,
+        .breaking_force = 1.0,
+        .stiffness = 1000,
+        .damping = 100,
+    };
+
+    var compat_engine: TickEngine = undefined;
+    init(&compat_engine, &compat_scene, &compat_entities);
+    var compat_joints = [_]joint.Joint{weak_joint};
+    compat_engine.joints = compat_joints[0..];
+    compat_engine.joint_count = compat_joints.len;
+    var compat_bus = bus.Bus.init();
+    compat_engine.world_bus = &compat_bus;
+    const compat_result = stepViaPhysicsWorldCompat(&compat_engine, false);
+
+    var tick_engine_instance: TickEngine = undefined;
+    init(&tick_engine_instance, &tick_scene, &tick_entities);
+    var tick_joints = [_]joint.Joint{weak_joint};
+    tick_engine_instance.joints = tick_joints[0..];
+    tick_engine_instance.joint_count = tick_joints.len;
+    var tick_bus = bus.Bus.init();
+    tick_engine_instance.world_bus = &tick_bus;
+    const tick_result = stepTickResult(&tick_engine_instance);
+
+    try std.testing.expectEqual(tick_engine_instance.joints[0].enabled, compat_engine.joints[0].enabled);
+    try std.testing.expectEqual(tick_engine_instance.pending_joint_breaks.count, compat_engine.pending_joint_breaks.count);
+    try std.testing.expectEqual(tick_result.event_count, compat_result.event_count);
+    try std.testing.expectEqual(tick_result.changed, compat_result.changed);
+    try std.testing.expectEqual(tick_bus.msg_count, compat_bus.msg_count);
+    try expectCompatTraceAndTelemetryMatch(&tick_engine_instance, &compat_engine);
+    try expectCompatSnapshotAndHashMatch(&tick_engine_instance, &compat_engine);
 }
 
 test "ground settle clamps tiny post-contact bounce to rest" {

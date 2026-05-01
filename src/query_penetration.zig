@@ -766,6 +766,65 @@ test "computePenetrationAABB aggregates manifold across coplanar support voxels"
     try std.testing.expectApproxEqAbs(@as(f32, 1.8), result.manifold_points[2].y, 0.0001);
 }
 
+test "computePenetrationAABB preserves layer filtering between environment and dynamic instance" {
+    const scene1024 = @import("scene1024.zig");
+    const entity16 = @import("entity16.zig");
+    const address = @import("address.zig");
+
+    var s1024 = scene1024.Scene1024.init(std.testing.allocator);
+    defer s1024.deinit();
+
+    try s1024.setVoxelAtGlobal(address.encode(.{ .world = 0, .px = 0, .py = 0, .pz = 0, .lx = 1, .ly = 1, .lz = 1 }), true);
+
+    var entity = entity16.initEntity16();
+    entity.physics.mass = 10;
+    entity16.setVoxel(&entity, 0, 0, 0);
+    var entities = [_]entity16.Entity16{entity};
+
+    s1024.instance_count = 1;
+    s1024.instances[0] = .{
+        .entity_id = 0,
+        .pos_x = 3,
+        .pos_y = 1,
+        .pos_z = 1,
+        .rot_yaw = 0,
+        .rot_pitch = 0,
+        .rot_roll = 0,
+        .state = .idle,
+        .sleep_tick = 0,
+        ._reserved = .{0} ** 2,
+    };
+
+    const world = QueryWorldView{
+        .s1024 = &s1024,
+        .instances = s1024.instances[0..s1024.instance_count],
+        .entities = entities[0..],
+    };
+
+    const env_result = computePenetrationAABB(&world, 0.75, 0.75, 0.75, 1.75, 1.75, 1.75, .{
+        .layer_mask = query_types.QUERY_LAYER_ENVIRONMENT,
+        .include_dynamic = false,
+    });
+    try std.testing.expect(env_result.overlapping);
+    try std.testing.expect(env_result.hit_environment);
+    try std.testing.expectEqual(@as(i16, -1), env_result.instance_idx);
+
+    const dynamic_missed_by_env_filter = computePenetrationAABB(&world, 2.75, 0.75, 0.75, 3.75, 1.75, 1.75, .{
+        .layer_mask = query_types.QUERY_LAYER_ENVIRONMENT,
+        .include_dynamic = false,
+    });
+    try std.testing.expect(!dynamic_missed_by_env_filter.overlapping);
+
+    const dynamic_result = computePenetrationAABB(&world, 2.75, 0.75, 0.75, 3.75, 1.75, 1.75, .{
+        .layer_mask = query_types.QUERY_LAYER_DYNAMIC,
+        .ignore_environment = true,
+    });
+    try std.testing.expect(dynamic_result.overlapping);
+    try std.testing.expect(!dynamic_result.hit_environment);
+    try std.testing.expectEqual(@as(i16, 0), dynamic_result.instance_idx);
+    try std.testing.expectEqual(@as(i16, 0), dynamic_result.entity_id);
+}
+
 /// Compute penetration of capsule into world
 pub fn computePenetrationCapsule(world: *const QueryWorldView, center_x: f32, center_y: f32, center_z: f32, radius: f32, half_height: f32, filter: QueryFilter) PenetrationResult {
     var result: PenetrationResult = .{};

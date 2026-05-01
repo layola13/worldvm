@@ -131,3 +131,45 @@ pub fn assertApproxEqI32(actual: i32, expected: i32, tolerance: i32) !void {
 pub fn skipUnsupported(reason: []const u8) !void {
     return std.testing.skip(reason);
 }
+
+test "makeInstance fills deterministic default transform fields" {
+    const inst = makeInstance(3, 10, 20, 30, .moving);
+
+    try std.testing.expectEqual(@as(u16, 3), inst.entity_id);
+    try std.testing.expectEqual(@as(i32, 10), inst.pos_x);
+    try std.testing.expectEqual(@as(i32, 20), inst.pos_y);
+    try std.testing.expectEqual(@as(i32, 30), inst.pos_z);
+    try std.testing.expectEqual(scene32.InstanceState.moving, inst.state);
+    try std.testing.expectEqual(@as(u8, 0), inst.rot_yaw);
+    try std.testing.expectEqual(@as(u8, 0), inst.sleep_tick);
+}
+
+test "SceneSnapshot instance helper and assertions read captured state" {
+    var snapshot = SceneSnapshot{
+        .test_id = 1,
+        .name = "unit",
+        .ticks_run = 2,
+        .stable = true,
+        .instance_count = 1,
+        .instances = undefined,
+    };
+    snapshot.instances[0] = .{
+        .entity_id = 1,
+        .pos_x = 4,
+        .pos_y = 5,
+        .pos_z = 6,
+        .vel_x = 1,
+        .vel_y = 0,
+        .vel_z = 0,
+        .ang_x = 0,
+        .ang_y = 0,
+        .ang_z = 0,
+        .state = .resting,
+    };
+
+    try std.testing.expectEqual(@as(u16, 1), snapshot.instance(0).entity_id);
+    try assertMoved(&snapshot, 0, 4, 5, 5);
+    try assertVelocityChanged(&snapshot, 0);
+    try assertStateEq(&snapshot, 0, .resting);
+    try assertApproxEqI32(12, 10, 2);
+}
