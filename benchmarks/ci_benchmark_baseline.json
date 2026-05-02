@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "description": "Coarse CI smoke thresholds for WorldVM CLI scenarios. Tighten after collecting stable hosted-runner samples.",
+  "scenarios": {
+    "apple_table": {
+      "max_elapsed_ms": 10000,
+      "max_average_ms": 10000,
+      "require_stable": true
+    }
+  }
+}

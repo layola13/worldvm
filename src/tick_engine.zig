@@ -1673,7 +1673,7 @@ pub fn stepPhysicsWorldResult(engine: *TickEngine, dt: f32) physics_world.StepRe
         .dt = dt,
         .time_scale = engine.time_scale,
         .run_pre_motion_constraint = true,
-        .apply_continuous_physics = false,
+        .apply_continuous_physics = true,
         .authority = .tick_engine,
     });
     _ = syncFromPhysicsWorld(engine, &world, result.changed);
@@ -1688,7 +1688,6 @@ pub fn stepPhysicsWorldResult(engine: *TickEngine, dt: f32) physics_world.StepRe
     if (engine.trace_async_flush_budget > 0) {
         _ = flushTraceAsyncWrites(engine, @as(u16, engine.trace_async_flush_budget));
     }
-    // Apply crash defense: clamp velocities and validate scene state
     crash_defense.clampScene(engine.s1024);
 
     return result;

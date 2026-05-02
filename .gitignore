@@ -1,6 +1,10 @@
 .*/
+!.github/
+!.github/workflows/
+!.github/workflows/*.yml
 tmp/
 bin/
+dist/
 *.o
 *.o.o
 *.pyc

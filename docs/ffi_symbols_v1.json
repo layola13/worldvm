@@ -1,0 +1,6640 @@
+{
+  "abi_version": 1,
+  "description": "WorldVM public FFI symbols exported from src/vm_hook.zig.",
+  "source": "src/vm_hook.zig",
+  "symbol_count": 297,
+  "symbols": [
+    {
+      "name": "add_joint_ball_socket",
+      "parameters": [
+        {
+          "name": "entity_a",
+          "type": "u8"
+        },
+        {
+          "name": "entity_b",
+          "type": "u8"
+        },
+        {
+          "name": "anchor_x",
+          "type": "i32"
+        },
+        {
+          "name": "anchor_y",
+          "type": "i32"
+        },
+        {
+          "name": "anchor_z",
+          "type": "i32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "add_joint_ball_socket(entity_a: u8, entity_b: u8, anchor_x: i32, anchor_y: i32, anchor_z: i32) c_int",
+      "source_line": 598
+    },
+    {
+      "name": "add_joint_fixed",
+      "parameters": [
+        {
+          "name": "entity_a",
+          "type": "u8"
+        },
+        {
+          "name": "entity_b",
+          "type": "u8"
+        },
+        {
+          "name": "anchor_x",
+          "type": "i32"
+        },
+        {
+          "name": "anchor_y",
+          "type": "i32"
+        },
+        {
+          "name": "anchor_z",
+          "type": "i32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "add_joint_fixed(entity_a: u8, entity_b: u8, anchor_x: i32, anchor_y: i32, anchor_z: i32) c_int",
+      "source_line": 529
+    },
+    {
+      "name": "add_joint_hinge",
+      "parameters": [
+        {
+          "name": "entity_a",
+          "type": "u8"
+        },
+        {
+          "name": "entity_b",
+          "type": "u8"
+        },
+        {
+          "name": "anchor_x",
+          "type": "i32"
+        },
+        {
+          "name": "anchor_y",
+          "type": "i32"
+        },
+        {
+          "name": "anchor_z",
+          "type": "i32"
+        },
+        {
+          "name": "axis_x",
+          "type": "i32"
+        },
+        {
+          "name": "axis_y",
+          "type": "i32"
+        },
+        {
+          "name": "axis_z",
+          "type": "i32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "add_joint_hinge(entity_a: u8, entity_b: u8, anchor_x: i32, anchor_y: i32, anchor_z: i32, axis_x: i32, axis_y: i32, axis_z: i32) c_int",
+      "source_line": 547
+    },
+    {
+      "name": "add_joint_pulley",
+      "parameters": [
+        {
+          "name": "entity_a",
+          "type": "u8"
+        },
+        {
+          "name": "entity_b",
+          "type": "u8"
+        },
+        {
+          "name": "anchor_x",
+          "type": "i32"
+        },
+        {
+          "name": "anchor_y",
+          "type": "i32"
+        },
+        {
+          "name": "anchor_z",
+          "type": "i32"
+        },
+        {
+          "name": "axis_x",
+          "type": "i32"
+        },
+        {
+          "name": "axis_y",
+          "type": "i32"
+        },
+        {
+          "name": "axis_z",
+          "type": "i32"
+        },
+        {
+          "name": "ratio",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "add_joint_pulley(entity_a: u8, entity_b: u8, anchor_x: i32, anchor_y: i32, anchor_z: i32, axis_x: i32, axis_y: i32, axis_z: i32, ratio: f32) c_int",
+      "source_line": 640
+    },
+    {
+      "name": "add_joint_spring",
+      "parameters": [
+        {
+          "name": "entity_a",
+          "type": "u8"
+        },
+        {
+          "name": "entity_b",
+          "type": "u8"
+        },
+        {
+          "name": "anchor_x",
+          "type": "i32"
+        },
+        {
+          "name": "anchor_y",
+          "type": "i32"
+        },
+        {
+          "name": "anchor_z",
+          "type": "i32"
+        },
+        {
+          "name": "stiffness",
+          "type": "f32"
+        },
+        {
+          "name": "damping",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "add_joint_spring(entity_a: u8, entity_b: u8, anchor_x: i32, anchor_y: i32, anchor_z: i32, stiffness: f32, damping: f32) c_int",
+      "source_line": 568
+    },
+    {
+      "name": "aerodynamics_calculate_downforce",
+      "parameters": [
+        {
+          "name": "velocity_x",
+          "type": "f32"
+        },
+        {
+          "name": "velocity_z",
+          "type": "f32"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "aerodynamics_calculate_downforce(velocity_x: f32, velocity_z: f32) f32",
+      "source_line": 3661
+    },
+    {
+      "name": "aerodynamics_calculate_drag_force",
+      "parameters": [
+        {
+          "name": "velocity_x",
+          "type": "f32"
+        },
+        {
+          "name": "velocity_z",
+          "type": "f32"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "aerodynamics_calculate_drag_force(velocity_x: f32, velocity_z: f32) f32",
+      "source_line": 3649
+    },
+    {
+      "name": "aerodynamics_get_drag_coefficient",
+      "parameters": [],
+      "return_type": "f32",
+      "signature": "aerodynamics_get_drag_coefficient() f32",
+      "source_line": 3673
+    },
+    {
+      "name": "aerodynamics_init",
+      "parameters": [],
+      "return_type": "void",
+      "signature": "aerodynamics_init() void",
+      "source_line": 3645
+    },
+    {
+      "name": "ai_traffic_add_traffic_light",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "f32"
+        },
+        {
+          "name": "z",
+          "type": "f32"
+        },
+        {
+          "name": "cycle_duration",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "ai_traffic_add_traffic_light(x: f32, z: f32, cycle_duration: f32) c_int",
+      "source_line": 4294
+    },
+    {
+      "name": "ai_traffic_estimate_safe_pass",
+      "parameters": [
+        {
+          "name": "vehicle_idx",
+          "type": "u8"
+        },
+        {
+          "name": "light_idx",
+          "type": "u8"
+        },
+        {
+          "name": "vehicle_length",
+          "type": "f32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "ai_traffic_estimate_safe_pass(vehicle_idx: u8, light_idx: u8, vehicle_length: f32, result_out: [*]f32) c_int",
+      "source_line": 4340
+    },
+    {
+      "name": "ai_traffic_get_light_count",
+      "parameters": [],
+      "return_type": "u8",
+      "signature": "ai_traffic_get_light_count() u8",
+      "source_line": 4303
+    },
+    {
+      "name": "ai_traffic_get_vehicle_count",
+      "parameters": [],
+      "return_type": "u8",
+      "signature": "ai_traffic_get_vehicle_count() u8",
+      "source_line": 4299
+    },
+    {
+      "name": "ai_traffic_get_vehicle_governed_speed_by_id",
+      "parameters": [
+        {
+          "name": "vehicle_id",
+          "type": "u16"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "ai_traffic_get_vehicle_governed_speed_by_id(vehicle_id: u16) f32",
+      "source_line": 4355
+    },
+    {
+      "name": "ai_traffic_get_vehicle_governed_target_speed",
+      "parameters": [
+        {
+          "name": "vehicle_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "ai_traffic_get_vehicle_governed_target_speed(vehicle_idx: u8) f32",
+      "source_line": 4327
+    },
+    {
+      "name": "ai_traffic_get_vehicle_target_speed",
+      "parameters": [
+        {
+          "name": "vehicle_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "ai_traffic_get_vehicle_target_speed(vehicle_idx: u8) f32",
+      "source_line": 4321
+    },
+    {
+      "name": "ai_traffic_get_vehicle_target_speed_by_id",
+      "parameters": [
+        {
+          "name": "vehicle_id",
+          "type": "u16"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "ai_traffic_get_vehicle_target_speed_by_id(vehicle_id: u16) f32",
+      "source_line": 4351
+    },
+    {
+      "name": "ai_traffic_init",
+      "parameters": [],
+      "return_type": "void",
+      "signature": "ai_traffic_init() void",
+      "source_line": 4284
+    },
+    {
+      "name": "ai_traffic_set_vehicle_target_speed",
+      "parameters": [
+        {
+          "name": "vehicle_idx",
+          "type": "u8"
+        },
+        {
+          "name": "target_speed",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "ai_traffic_set_vehicle_target_speed(vehicle_idx: u8, target_speed: f32) c_int",
+      "source_line": 4313
+    },
+    {
+      "name": "ai_traffic_spawn_vehicle",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "f32"
+        },
+        {
+          "name": "y",
+          "type": "f32"
+        },
+        {
+          "name": "z",
+          "type": "f32"
+        },
+        {
+          "name": "behavior",
+          "type": "u8"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "ai_traffic_spawn_vehicle(x: f32, y: f32, z: f32, behavior: u8) c_int",
+      "source_line": 4288
+    },
+    {
+      "name": "ai_traffic_trigger_emergency",
+      "parameters": [
+        {
+          "name": "vehicle_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "void",
+      "signature": "ai_traffic_trigger_emergency(vehicle_idx: u8) void",
+      "source_line": 4333
+    },
+    {
+      "name": "ai_traffic_update",
+      "parameters": [
+        {
+          "name": "dt",
+          "type": "f32"
+        }
+      ],
+      "return_type": "void",
+      "signature": "ai_traffic_update(dt: f32) void",
+      "source_line": 4307
+    },
+    {
+      "name": "apply_buoyancy",
+      "parameters": [
+        {
+          "name": "inst_idx",
+          "type": "u8"
+        },
+        {
+          "name": "fluid_density",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "apply_buoyancy(inst_idx: u8, fluid_density: f32) c_int",
+      "source_line": 427
+    },
+    {
+      "name": "apply_directional_force_field",
+      "parameters": [
+        {
+          "name": "center_x",
+          "type": "f32"
+        },
+        {
+          "name": "center_y",
+          "type": "f32"
+        },
+        {
+          "name": "center_z",
+          "type": "f32"
+        },
+        {
+          "name": "radius",
+          "type": "f32"
+        },
+        {
+          "name": "dir_x",
+          "type": "f32"
+        },
+        {
+          "name": "dir_y",
+          "type": "f32"
+        },
+        {
+          "name": "dir_z",
+          "type": "f32"
+        },
+        {
+          "name": "strength",
+          "type": "f32"
+        }
+      ],
+      "return_type": "u32",
+      "signature": "apply_directional_force_field(center_x: f32, center_y: f32, center_z: f32, radius: f32, dir_x: f32, dir_y: f32, dir_z: f32, strength: f32) u32",
+      "source_line": 413
+    },
+    {
+      "name": "apply_explosion",
+      "parameters": [
+        {
+          "name": "pos_x",
+          "type": "f32"
+        },
+        {
+          "name": "pos_y",
+          "type": "f32"
+        },
+        {
+          "name": "pos_z",
+          "type": "f32"
+        },
+        {
+          "name": "radius",
+          "type": "f32"
+        },
+        {
+          "name": "force",
+          "type": "f32"
+        }
+      ],
+      "return_type": "void",
+      "signature": "apply_explosion(pos_x: f32, pos_y: f32, pos_z: f32, radius: f32, force: f32) void",
+      "source_line": 400
+    },
+    {
+      "name": "apply_force",
+      "parameters": [
+        {
+          "name": "inst_idx",
+          "type": "u8"
+        },
+        {
+          "name": "force_x",
+          "type": "f32"
+        },
+        {
+          "name": "force_y",
+          "type": "f32"
+        },
+        {
+          "name": "force_z",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "apply_force(inst_idx: u8, force_x: f32, force_y: f32, force_z: f32) c_int",
+      "source_line": 382
+    },
+    {
+      "name": "apply_impulse",
+      "parameters": [
+        {
+          "name": "inst_idx",
+          "type": "u8"
+        },
+        {
+          "name": "impulse_x",
+          "type": "f32"
+        },
+        {
+          "name": "impulse_y",
+          "type": "f32"
+        },
+        {
+          "name": "impulse_z",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "apply_impulse(inst_idx: u8, impulse_x: f32, impulse_y: f32, impulse_z: f32) c_int",
+      "source_line": 374
+    },
+    {
+      "name": "apply_point_explosion_field",
+      "parameters": [
+        {
+          "name": "pos_x",
+          "type": "f32"
+        },
+        {
+          "name": "pos_y",
+          "type": "f32"
+        },
+        {
+          "name": "pos_z",
+          "type": "f32"
+        },
+        {
+          "name": "radius",
+          "type": "f32"
+        },
+        {
+          "name": "strength",
+          "type": "f32"
+        }
+      ],
+      "return_type": "u32",
+      "signature": "apply_point_explosion_field(pos_x: f32, pos_y: f32, pos_z: f32, radius: f32, strength: f32) u32",
+      "source_line": 406
+    },
+    {
+      "name": "apply_torque",
+      "parameters": [
+        {
+          "name": "inst_idx",
+          "type": "u8"
+        },
+        {
+          "name": "torque_x",
+          "type": "f32"
+        },
+        {
+          "name": "torque_y",
+          "type": "f32"
+        },
+        {
+          "name": "torque_z",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "apply_torque(inst_idx: u8, torque_x: f32, torque_y: f32, torque_z: f32) c_int",
+      "source_line": 391
+    },
+    {
+      "name": "apply_vortex_force_field",
+      "parameters": [
+        {
+          "name": "center_x",
+          "type": "f32"
+        },
+        {
+          "name": "center_y",
+          "type": "f32"
+        },
+        {
+          "name": "center_z",
+          "type": "f32"
+        },
+        {
+          "name": "radius",
+          "type": "f32"
+        },
+        {
+          "name": "strength",
+          "type": "f32"
+        }
+      ],
+      "return_type": "u32",
+      "signature": "apply_vortex_force_field(center_x: f32, center_y: f32, center_z: f32, radius: f32, strength: f32) u32",
+      "source_line": 420
+    },
+    {
+      "name": "ballistics_calculate_deflection",
+      "parameters": [
+        {
+          "name": "vel_x",
+          "type": "f32"
+        },
+        {
+          "name": "vel_y",
+          "type": "f32"
+        },
+        {
+          "name": "vel_z",
+          "type": "f32"
+        },
+        {
+          "name": "normal_x",
+          "type": "f32"
+        },
+        {
+          "name": "normal_y",
+          "type": "f32"
+        },
+        {
+          "name": "normal_z",
+          "type": "f32"
+        },
+        {
+          "name": "restitution",
+          "type": "f32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "void",
+      "signature": "ballistics_calculate_deflection(vel_x: f32, vel_y: f32, vel_z: f32, normal_x: f32, normal_y: f32, normal_z: f32, restitution: f32, result_out: [*]f32) void",
+      "source_line": 2017
+    },
+    {
+      "name": "ballistics_generate_fragments",
+      "parameters": [
+        {
+          "name": "pos_x",
+          "type": "f32"
+        },
+        {
+          "name": "pos_y",
+          "type": "f32"
+        },
+        {
+          "name": "pos_z",
+          "type": "f32"
+        },
+        {
+          "name": "count",
+          "type": "u8"
+        },
+        {
+          "name": "force",
+          "type": "f32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "void",
+      "signature": "ballistics_generate_fragments(pos_x: f32, pos_y: f32, pos_z: f32, count: u8, force: f32, result_out: [*]f32) void",
+      "source_line": 2024
+    },
+    {
+      "name": "ballistics_get_kinetic_energy",
+      "parameters": [
+        {
+          "name": "proj_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "ballistics_get_kinetic_energy(proj_idx: u8) f32",
+      "source_line": 2011
+    },
+    {
+      "name": "ballistics_get_speed",
+      "parameters": [
+        {
+          "name": "proj_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "ballistics_get_speed(proj_idx: u8) f32",
+      "source_line": 2005
+    },
+    {
+      "name": "ballistics_init",
+      "parameters": [],
+      "return_type": "void",
+      "signature": "ballistics_init() void",
+      "source_line": 1996
+    },
+    {
+      "name": "ballistics_spawn_projectile",
+      "parameters": [
+        {
+          "name": "pos_x",
+          "type": "f32"
+        },
+        {
+          "name": "pos_y",
+          "type": "f32"
+        },
+        {
+          "name": "pos_z",
+          "type": "f32"
+        },
+        {
+          "name": "vel_x",
+          "type": "f32"
+        },
+        {
+          "name": "vel_y",
+          "type": "f32"
+        },
+        {
+          "name": "vel_z",
+          "type": "f32"
+        },
+        {
+          "name": "mass",
+          "type": "f32"
+        },
+        {
+          "name": "caliber",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "ballistics_spawn_projectile(pos_x: f32, pos_y: f32, pos_z: f32, vel_x: f32, vel_y: f32, vel_z: f32, mass: f32, caliber: f32) c_int",
+      "source_line": 2000
+    },
+    {
+      "name": "box_cast",
+      "parameters": [
+        {
+          "name": "min_x",
+          "type": "f32"
+        },
+        {
+          "name": "min_y",
+          "type": "f32"
+        },
+        {
+          "name": "min_z",
+          "type": "f32"
+        },
+        {
+          "name": "max_x",
+          "type": "f32"
+        },
+        {
+          "name": "max_y",
+          "type": "f32"
+        },
+        {
+          "name": "max_z",
+          "type": "f32"
+        },
+        {
+          "name": "dir_x",
+          "type": "f32"
+        },
+        {
+          "name": "dir_y",
+          "type": "f32"
+        },
+        {
+          "name": "dir_z",
+          "type": "f32"
+        },
+        {
+          "name": "max_dist",
+          "type": "f32"
+        },
+        {
+          "name": "hit_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "box_cast(min_x: f32, min_y: f32, min_z: f32, max_x: f32, max_y: f32, max_z: f32, dir_x: f32, dir_y: f32, dir_z: f32, max_dist: f32, hit_out: [*]f32) c_int",
+      "source_line": 1240
+    },
+    {
+      "name": "box_cast_with_layer_mask",
+      "parameters": [
+        {
+          "name": "min_x",
+          "type": "f32"
+        },
+        {
+          "name": "min_y",
+          "type": "f32"
+        },
+        {
+          "name": "min_z",
+          "type": "f32"
+        },
+        {
+          "name": "max_x",
+          "type": "f32"
+        },
+        {
+          "name": "max_y",
+          "type": "f32"
+        },
+        {
+          "name": "max_z",
+          "type": "f32"
+        },
+        {
+          "name": "dir_x",
+          "type": "f32"
+        },
+        {
+          "name": "dir_y",
+          "type": "f32"
+        },
+        {
+          "name": "dir_z",
+          "type": "f32"
+        },
+        {
+          "name": "max_dist",
+          "type": "f32"
+        },
+        {
+          "name": "layer_mask",
+          "type": "u32"
+        },
+        {
+          "name": "hit_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "box_cast_with_layer_mask(min_x: f32, min_y: f32, min_z: f32, max_x: f32, max_y: f32, max_z: f32, dir_x: f32, dir_y: f32, dir_z: f32, max_dist: f32, layer_mask: u32, hit_out: [*]f32) c_int",
+      "source_line": 1290
+    },
+    {
+      "name": "braking_apply_brake",
+      "parameters": [
+        {
+          "name": "pedal_position",
+          "type": "f32"
+        }
+      ],
+      "return_type": "void",
+      "signature": "braking_apply_brake(pedal_position: f32) void",
+      "source_line": 3685
+    },
+    {
+      "name": "braking_apply_handbrake",
+      "parameters": [
+        {
+          "name": "active",
+          "type": "bool"
+        }
+      ],
+      "return_type": "void",
+      "signature": "braking_apply_handbrake(active: bool) void",
+      "source_line": 3689
+    },
+    {
+      "name": "braking_get_pedal_position",
+      "parameters": [],
+      "return_type": "f32",
+      "signature": "braking_get_pedal_position() f32",
+      "source_line": 3693
+    },
+    {
+      "name": "braking_init",
+      "parameters": [],
+      "return_type": "void",
+      "signature": "braking_init() void",
+      "source_line": 3681
+    },
+    {
+      "name": "braking_is_abs_active",
+      "parameters": [
+        {
+          "name": "wheel_index",
+          "type": "u8"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "braking_is_abs_active(wheel_index: u8) c_int",
+      "source_line": 3697
+    },
+    {
+      "name": "braking_is_handbrake_active",
+      "parameters": [],
+      "return_type": "c_int",
+      "signature": "braking_is_handbrake_active() c_int",
+      "source_line": 3701
+    },
+    {
+      "name": "clear_joint_fatigue",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "clear_joint_fatigue(joint_idx: u8) c_int",
+      "source_line": 1075
+    },
+    {
+      "name": "clear_joint_temperature",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "clear_joint_temperature(joint_idx: u8) c_int",
+      "source_line": 1110
+    },
+    {
+      "name": "clear_joints",
+      "parameters": [],
+      "return_type": "void",
+      "signature": "clear_joints() void",
+      "source_line": 931
+    },
+    {
+      "name": "collision_calculate_impact_energy",
+      "parameters": [
+        {
+          "name": "mass1",
+          "type": "f32"
+        },
+        {
+          "name": "mass2",
+          "type": "f32"
+        },
+        {
+          "name": "relative_velocity",
+          "type": "f32"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "collision_calculate_impact_energy(mass1: f32, mass2: f32, relative_velocity: f32) f32",
+      "source_line": 3786
+    },
+    {
+      "name": "collision_check_structural_failure",
+      "parameters": [],
+      "return_type": "c_int",
+      "signature": "collision_check_structural_failure() c_int",
+      "source_line": 3790
+    },
+    {
+      "name": "collision_get_structural_integrity",
+      "parameters": [],
+      "return_type": "f32",
+      "signature": "collision_get_structural_integrity() f32",
+      "source_line": 3794
+    },
+    {
+      "name": "collision_init",
+      "parameters": [],
+      "return_type": "void",
+      "signature": "collision_init() void",
+      "source_line": 3782
+    },
+    {
+      "name": "compact_broken_instances",
+      "parameters": [],
+      "return_type": "u8",
+      "signature": "compact_broken_instances() u8",
+      "source_line": 184
+    },
+    {
+      "name": "compute_angular_velocity_ccd",
+      "parameters": [
+        {
+          "name": "center_ax",
+          "type": "f32"
+        },
+        {
+          "name": "center_ay",
+          "type": "f32"
+        },
+        {
+          "name": "center_az",
+          "type": "f32"
+        },
+        {
+          "name": "half_ax",
+          "type": "f32"
+        },
+        {
+          "name": "half_ay",
+          "type": "f32"
+        },
+        {
+          "name": "half_az",
+          "type": "f32"
+        },
+        {
+          "name": "yaw_a",
+          "type": "f32"
+        },
+        {
+          "name": "angular_velocity_a",
+          "type": "f32"
+        },
+        {
+          "name": "vel_ax",
+          "type": "f32"
+        },
+        {
+          "name": "vel_ay",
+          "type": "f32"
+        },
+        {
+          "name": "vel_az",
+          "type": "f32"
+        },
+        {
+          "name": "center_bx",
+          "type": "f32"
+        },
+        {
+          "name": "center_by",
+          "type": "f32"
+        },
+        {
+          "name": "center_bz",
+          "type": "f32"
+        },
+        {
+          "name": "half_bx",
+          "type": "f32"
+        },
+        {
+          "name": "half_by",
+          "type": "f32"
+        },
+        {
+          "name": "half_bz",
+          "type": "f32"
+        },
+        {
+          "name": "yaw_b",
+          "type": "f32"
+        },
+        {
+          "name": "angular_velocity_b",
+          "type": "f32"
+        },
+        {
+          "name": "vel_bx",
+          "type": "f32"
+        },
+        {
+          "name": "vel_by",
+          "type": "f32"
+        },
+        {
+          "name": "vel_bz",
+          "type": "f32"
+        },
+        {
+          "name": "time_delta",
+          "type": "f32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "compute_angular_velocity_ccd(center_ax: f32, center_ay: f32, center_az: f32, half_ax: f32, half_ay: f32, half_az: f32, yaw_a: f32, angular_velocity_a: f32, vel_ax: f32, vel_ay: f32, vel_az: f32, center_bx: f32, center_by: f32, center_bz: f32, half_bx: f32, half_by: f32, half_bz: f32, yaw_b: f32, angular_velocity_b: f32, vel_bx: f32, vel_by: f32, vel_bz: f32, time_delta: f32, result_out: [*]f32) c_int",
+      "source_line": 1613
+    },
+    {
+      "name": "compute_box_ccd",
+      "parameters": [
+        {
+          "name": "a_min_x",
+          "type": "f32"
+        },
+        {
+          "name": "a_min_y",
+          "type": "f32"
+        },
+        {
+          "name": "a_min_z",
+          "type": "f32"
+        },
+        {
+          "name": "a_max_x",
+          "type": "f32"
+        },
+        {
+          "name": "a_max_y",
+          "type": "f32"
+        },
+        {
+          "name": "a_max_z",
+          "type": "f32"
+        },
+        {
+          "name": "va_x",
+          "type": "f32"
+        },
+        {
+          "name": "va_y",
+          "type": "f32"
+        },
+        {
+          "name": "va_z",
+          "type": "f32"
+        },
+        {
+          "name": "b_min_x",
+          "type": "f32"
+        },
+        {
+          "name": "b_min_y",
+          "type": "f32"
+        },
+        {
+          "name": "b_min_z",
+          "type": "f32"
+        },
+        {
+          "name": "b_max_x",
+          "type": "f32"
+        },
+        {
+          "name": "b_max_y",
+          "type": "f32"
+        },
+        {
+          "name": "b_max_z",
+          "type": "f32"
+        },
+        {
+          "name": "vb_x",
+          "type": "f32"
+        },
+        {
+          "name": "vb_y",
+          "type": "f32"
+        },
+        {
+          "name": "vb_z",
+          "type": "f32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "compute_box_ccd(a_min_x: f32, a_min_y: f32, a_min_z: f32, a_max_x: f32, a_max_y: f32, a_max_z: f32, va_x: f32, va_y: f32, va_z: f32, b_min_x: f32, b_min_y: f32, b_min_z: f32, b_max_x: f32, b_max_y: f32, b_max_z: f32, vb_x: f32, vb_y: f32, vb_z: f32, result_out: [*]f32) c_int",
+      "source_line": 1465
+    },
+    {
+      "name": "compute_capsule_ccd",
+      "parameters": [
+        {
+          "name": "center_ax",
+          "type": "f32"
+        },
+        {
+          "name": "center_ay",
+          "type": "f32"
+        },
+        {
+          "name": "center_az",
+          "type": "f32"
+        },
+        {
+          "name": "radius_a",
+          "type": "f32"
+        },
+        {
+          "name": "half_height_a",
+          "type": "f32"
+        },
+        {
+          "name": "vel_ax",
+          "type": "f32"
+        },
+        {
+          "name": "vel_ay",
+          "type": "f32"
+        },
+        {
+          "name": "vel_az",
+          "type": "f32"
+        },
+        {
+          "name": "center_bx",
+          "type": "f32"
+        },
+        {
+          "name": "center_by",
+          "type": "f32"
+        },
+        {
+          "name": "center_bz",
+          "type": "f32"
+        },
+        {
+          "name": "radius_b",
+          "type": "f32"
+        },
+        {
+          "name": "half_height_b",
+          "type": "f32"
+        },
+        {
+          "name": "vel_bx",
+          "type": "f32"
+        },
+        {
+          "name": "vel_by",
+          "type": "f32"
+        },
+        {
+          "name": "vel_bz",
+          "type": "f32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "compute_capsule_ccd(center_ax: f32, center_ay: f32, center_az: f32, radius_a: f32, half_height_a: f32, vel_ax: f32, vel_ay: f32, vel_az: f32, center_bx: f32, center_by: f32, center_bz: f32, radius_b: f32, half_height_b: f32, vel_bx: f32, vel_by: f32, vel_bz: f32, result_out: [*]f32) c_int",
+      "source_line": 1905
+    },
+    {
+      "name": "compute_ccd_island_parallel_plan",
+      "parameters": [
+        {
+          "name": "island_count",
+          "type": "u32"
+        },
+        {
+          "name": "ccd_island_count",
+          "type": "u32"
+        },
+        {
+          "name": "candidate_count_per_island",
+          "type": "u32"
+        },
+        {
+          "name": "max_candidates_per_island",
+          "type": "u32"
+        },
+        {
+          "name": "requested_iterations",
+          "type": "u32"
+        },
+        {
+          "name": "hard_iteration_limit",
+          "type": "u32"
+        },
+        {
+          "name": "requested_workers",
+          "type": "u32"
+        },
+        {
+          "name": "max_parallel_islands",
+          "type": "u32"
+        },
+        {
+          "name": "cross_island_pair_count",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "compute_ccd_island_parallel_plan(island_count: u32, ccd_island_count: u32, candidate_count_per_island: u32, max_candidates_per_island: u32, requested_iterations: u32, hard_iteration_limit: u32, requested_workers: u32, max_parallel_islands: u32, cross_island_pair_count: u32, result_out: [*]f32) c_int",
+      "source_line": 1755
+    },
+    {
+      "name": "compute_ccd_iteration_limit",
+      "parameters": [
+        {
+          "name": "requested_iterations",
+          "type": "u32"
+        },
+        {
+          "name": "tolerance",
+          "type": "f32"
+        },
+        {
+          "name": "initial_interval",
+          "type": "f32"
+        },
+        {
+          "name": "hard_limit",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "compute_ccd_iteration_limit(requested_iterations: u32, tolerance: f32, initial_interval: f32, hard_limit: u32, result_out: [*]f32) c_int",
+      "source_line": 1432
+    },
+    {
+      "name": "compute_ccd_performance_plan",
+      "parameters": [
+        {
+          "name": "motion_x",
+          "type": "f32"
+        },
+        {
+          "name": "motion_y",
+          "type": "f32"
+        },
+        {
+          "name": "motion_z",
+          "type": "f32"
+        },
+        {
+          "name": "angular_motion",
+          "type": "f32"
+        },
+        {
+          "name": "min_feature_size",
+          "type": "f32"
+        },
+        {
+          "name": "sweep_radius",
+          "type": "f32"
+        },
+        {
+          "name": "candidate_count",
+          "type": "u32"
+        },
+        {
+          "name": "max_candidates",
+          "type": "u32"
+        },
+        {
+          "name": "requested_iterations",
+          "type": "u32"
+        },
+        {
+          "name": "hard_iteration_limit",
+          "type": "u32"
+        },
+        {
+          "name": "skip_motion_ratio",
+          "type": "f32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "compute_ccd_performance_plan(motion_x: f32, motion_y: f32, motion_z: f32, angular_motion: f32, min_feature_size: f32, sweep_radius: f32, candidate_count: u32, max_candidates: u32, requested_iterations: u32, hard_iteration_limit: u32, skip_motion_ratio: f32, result_out: [*]f32) c_int",
+      "source_line": 1668
+    },
+    {
+      "name": "compute_ccd_precision_plan",
+      "parameters": [
+        {
+          "name": "motion_x",
+          "type": "f32"
+        },
+        {
+          "name": "motion_y",
+          "type": "f32"
+        },
+        {
+          "name": "motion_z",
+          "type": "f32"
+        },
+        {
+          "name": "angular_motion",
+          "type": "f32"
+        },
+        {
+          "name": "min_feature_size",
+          "type": "f32"
+        },
+        {
+          "name": "sweep_radius",
+          "type": "f32"
+        },
+        {
+          "name": "base_tolerance",
+          "type": "f32"
+        },
+        {
+          "name": "base_contact_slop",
+          "type": "f32"
+        },
+        {
+          "name": "requested_iterations",
+          "type": "u32"
+        },
+        {
+          "name": "hard_iteration_limit",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "compute_ccd_precision_plan(motion_x: f32, motion_y: f32, motion_z: f32, angular_motion: f32, min_feature_size: f32, sweep_radius: f32, base_tolerance: f32, base_contact_slop: f32, requested_iterations: u32, hard_iteration_limit: u32, result_out: [*]f32) c_int",
+      "source_line": 1695
+    },
+    {
+      "name": "compute_ccd_progress_watchdog",
+      "parameters": [
+        {
+          "name": "previous_time",
+          "type": "f32"
+        },
+        {
+          "name": "current_time",
+          "type": "f32"
+        },
+        {
+          "name": "min_progress",
+          "type": "f32"
+        },
+        {
+          "name": "stagnant_iterations",
+          "type": "u32"
+        },
+        {
+          "name": "max_stagnant_iterations",
+          "type": "u32"
+        },
+        {
+          "name": "iteration",
+          "type": "u32"
+        },
+        {
+          "name": "effective_iterations",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "compute_ccd_progress_watchdog(previous_time: f32, current_time: f32, min_progress: f32, stagnant_iterations: u32, max_stagnant_iterations: u32, iteration: u32, effective_iterations: u32, result_out: [*]f32) c_int",
+      "source_line": 1444
+    },
+    {
+      "name": "compute_ccd_sleep_interaction",
+      "parameters": [
+        {
+          "name": "is_sleeping",
+          "type": "c_int"
+        },
+        {
+          "name": "sleep_tick",
+          "type": "u32"
+        },
+        {
+          "name": "sleep_tick_threshold",
+          "type": "u32"
+        },
+        {
+          "name": "motion_x",
+          "type": "f32"
+        },
+        {
+          "name": "motion_y",
+          "type": "f32"
+        },
+        {
+          "name": "motion_z",
+          "type": "f32"
+        },
+        {
+          "name": "angular_motion",
+          "type": "f32"
+        },
+        {
+          "name": "min_feature_size",
+          "type": "f32"
+        },
+        {
+          "name": "sweep_radius",
+          "type": "f32"
+        },
+        {
+          "name": "time_to_impact",
+          "type": "f32"
+        },
+        {
+          "name": "ccd_required",
+          "type": "c_int"
+        },
+        {
+          "name": "trigger_only",
+          "type": "c_int"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "compute_ccd_sleep_interaction(is_sleeping: c_int, sleep_tick: u32, sleep_tick_threshold: u32, motion_x: f32, motion_y: f32, motion_z: f32, angular_motion: f32, min_feature_size: f32, sweep_radius: f32, time_to_impact: f32, ccd_required: c_int, trigger_only: c_int, result_out: [*]f32) c_int",
+      "source_line": 1806
+    },
+    {
+      "name": "compute_ccd_stability_validation",
+      "parameters": [
+        {
+          "name": "entry_time",
+          "type": "f32"
+        },
+        {
+          "name": "exit_time",
+          "type": "f32"
+        },
+        {
+          "name": "solved_time",
+          "type": "f32"
+        },
+        {
+          "name": "previous_time",
+          "type": "f32"
+        },
+        {
+          "name": "current_time",
+          "type": "f32"
+        },
+        {
+          "name": "motion_x",
+          "type": "f32"
+        },
+        {
+          "name": "motion_y",
+          "type": "f32"
+        },
+        {
+          "name": "motion_z",
+          "type": "f32"
+        },
+        {
+          "name": "angular_motion",
+          "type": "f32"
+        },
+        {
+          "name": "min_feature_size",
+          "type": "f32"
+        },
+        {
+          "name": "sweep_radius",
+          "type": "f32"
+        },
+        {
+          "name": "base_tolerance",
+          "type": "f32"
+        },
+        {
+          "name": "base_contact_slop",
+          "type": "f32"
+        },
+        {
+          "name": "requested_iterations",
+          "type": "u32"
+        },
+        {
+          "name": "hard_iteration_limit",
+          "type": "u32"
+        },
+        {
+          "name": "max_substeps",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "compute_ccd_stability_validation(entry_time: f32, exit_time: f32, solved_time: f32, previous_time: f32, current_time: f32, motion_x: f32, motion_y: f32, motion_z: f32, angular_motion: f32, min_feature_size: f32, sweep_radius: f32, base_tolerance: f32, base_contact_slop: f32, requested_iterations: u32, hard_iteration_limit: u32, max_substeps: u32, result_out: [*]f32) c_int",
+      "source_line": 1722
+    },
+    {
+      "name": "compute_ccd_substep_plan",
+      "parameters": [
+        {
+          "name": "motion_x",
+          "type": "f32"
+        },
+        {
+          "name": "motion_y",
+          "type": "f32"
+        },
+        {
+          "name": "motion_z",
+          "type": "f32"
+        },
+        {
+          "name": "angular_motion",
+          "type": "f32"
+        },
+        {
+          "name": "min_feature_size",
+          "type": "f32"
+        },
+        {
+          "name": "sweep_radius",
+          "type": "f32"
+        },
+        {
+          "name": "safety_factor",
+          "type": "f32"
+        },
+        {
+          "name": "max_step_fraction",
+          "type": "f32"
+        },
+        {
+          "name": "max_substeps",
+          "type": "u32"
+        },
+        {
+          "name": "current_substep",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "compute_ccd_substep_plan(motion_x: f32, motion_y: f32, motion_z: f32, angular_motion: f32, min_feature_size: f32, sweep_radius: f32, safety_factor: f32, max_step_fraction: f32, max_substeps: u32, current_substep: u32, result_out: [*]f32) c_int",
+      "source_line": 1835
+    },
+    {
+      "name": "compute_ccd_thin_wall_penetration",
+      "parameters": [
+        {
+          "name": "a_min_x",
+          "type": "f32"
+        },
+        {
+          "name": "a_min_y",
+          "type": "f32"
+        },
+        {
+          "name": "a_min_z",
+          "type": "f32"
+        },
+        {
+          "name": "a_max_x",
+          "type": "f32"
+        },
+        {
+          "name": "a_max_y",
+          "type": "f32"
+        },
+        {
+          "name": "a_max_z",
+          "type": "f32"
+        },
+        {
+          "name": "va_x",
+          "type": "f32"
+        },
+        {
+          "name": "va_y",
+          "type": "f32"
+        },
+        {
+          "name": "va_z",
+          "type": "f32"
+        },
+        {
+          "name": "wall_min_x",
+          "type": "f32"
+        },
+        {
+          "name": "wall_min_y",
+          "type": "f32"
+        },
+        {
+          "name": "wall_min_z",
+          "type": "f32"
+        },
+        {
+          "name": "wall_max_x",
+          "type": "f32"
+        },
+        {
+          "name": "wall_max_y",
+          "type": "f32"
+        },
+        {
+          "name": "wall_max_z",
+          "type": "f32"
+        },
+        {
+          "name": "wall_vel_x",
+          "type": "f32"
+        },
+        {
+          "name": "wall_vel_y",
+          "type": "f32"
+        },
+        {
+          "name": "wall_vel_z",
+          "type": "f32"
+        },
+        {
+          "name": "max_thin_thickness",
+          "type": "f32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "compute_ccd_thin_wall_penetration(a_min_x: f32, a_min_y: f32, a_min_z: f32, a_max_x: f32, a_max_y: f32, a_max_z: f32, va_x: f32, va_y: f32, va_z: f32, wall_min_x: f32, wall_min_y: f32, wall_min_z: f32, wall_max_x: f32, wall_max_y: f32, wall_max_z: f32, wall_vel_x: f32, wall_vel_y: f32, wall_vel_z: f32, max_thin_thickness: f32, result_out: [*]f32) c_int",
+      "source_line": 1509
+    },
+    {
+      "name": "compute_ccd_thread_determinism_validation",
+      "parameters": [
+        {
+          "name": "island_count",
+          "type": "u32"
+        },
+        {
+          "name": "ccd_island_count",
+          "type": "u32"
+        },
+        {
+          "name": "candidate_count_per_island",
+          "type": "u32"
+        },
+        {
+          "name": "max_candidates_per_island",
+          "type": "u32"
+        },
+        {
+          "name": "requested_iterations",
+          "type": "u32"
+        },
+        {
+          "name": "hard_iteration_limit",
+          "type": "u32"
+        },
+        {
+          "name": "max_workers_to_check",
+          "type": "u32"
+        },
+        {
+          "name": "max_parallel_islands",
+          "type": "u32"
+        },
+        {
+          "name": "cross_island_pair_count",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "compute_ccd_thread_determinism_validation(island_count: u32, ccd_island_count: u32, candidate_count_per_island: u32, max_candidates_per_island: u32, requested_iterations: u32, hard_iteration_limit: u32, max_workers_to_check: u32, max_parallel_islands: u32, cross_island_pair_count: u32, result_out: [*]f32) c_int",
+      "source_line": 1781
+    },
+    {
+      "name": "compute_ccd_trigger_aabb",
+      "parameters": [
+        {
+          "name": "a_min_x",
+          "type": "f32"
+        },
+        {
+          "name": "a_min_y",
+          "type": "f32"
+        },
+        {
+          "name": "a_min_z",
+          "type": "f32"
+        },
+        {
+          "name": "a_max_x",
+          "type": "f32"
+        },
+        {
+          "name": "a_max_y",
+          "type": "f32"
+        },
+        {
+          "name": "a_max_z",
+          "type": "f32"
+        },
+        {
+          "name": "va_x",
+          "type": "f32"
+        },
+        {
+          "name": "va_y",
+          "type": "f32"
+        },
+        {
+          "name": "va_z",
+          "type": "f32"
+        },
+        {
+          "name": "trigger_min_x",
+          "type": "f32"
+        },
+        {
+          "name": "trigger_min_y",
+          "type": "f32"
+        },
+        {
+          "name": "trigger_min_z",
+          "type": "f32"
+        },
+        {
+          "name": "trigger_max_x",
+          "type": "f32"
+        },
+        {
+          "name": "trigger_max_y",
+          "type": "f32"
+        },
+        {
+          "name": "trigger_max_z",
+          "type": "f32"
+        },
+        {
+          "name": "trigger_vel_x",
+          "type": "f32"
+        },
+        {
+          "name": "trigger_vel_y",
+          "type": "f32"
+        },
+        {
+          "name": "trigger_vel_z",
+          "type": "f32"
+        },
+        {
+          "name": "trigger_id",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "compute_ccd_trigger_aabb(a_min_x: f32, a_min_y: f32, a_min_z: f32, a_max_x: f32, a_max_y: f32, a_max_z: f32, va_x: f32, va_y: f32, va_z: f32, trigger_min_x: f32, trigger_min_y: f32, trigger_min_z: f32, trigger_max_x: f32, trigger_max_y: f32, trigger_max_z: f32, trigger_vel_x: f32, trigger_vel_y: f32, trigger_vel_z: f32, trigger_id: u32, result_out: [*]f32) c_int",
+      "source_line": 1475
+    },
+    {
+      "name": "compute_ccd_tunnel_suppression",
+      "parameters": [
+        {
+          "name": "a_min_x",
+          "type": "f32"
+        },
+        {
+          "name": "a_min_y",
+          "type": "f32"
+        },
+        {
+          "name": "a_min_z",
+          "type": "f32"
+        },
+        {
+          "name": "a_max_x",
+          "type": "f32"
+        },
+        {
+          "name": "a_max_y",
+          "type": "f32"
+        },
+        {
+          "name": "a_max_z",
+          "type": "f32"
+        },
+        {
+          "name": "va_x",
+          "type": "f32"
+        },
+        {
+          "name": "va_y",
+          "type": "f32"
+        },
+        {
+          "name": "va_z",
+          "type": "f32"
+        },
+        {
+          "name": "wall_min_x",
+          "type": "f32"
+        },
+        {
+          "name": "wall_min_y",
+          "type": "f32"
+        },
+        {
+          "name": "wall_min_z",
+          "type": "f32"
+        },
+        {
+          "name": "wall_max_x",
+          "type": "f32"
+        },
+        {
+          "name": "wall_max_y",
+          "type": "f32"
+        },
+        {
+          "name": "wall_max_z",
+          "type": "f32"
+        },
+        {
+          "name": "wall_vel_x",
+          "type": "f32"
+        },
+        {
+          "name": "wall_vel_y",
+          "type": "f32"
+        },
+        {
+          "name": "wall_vel_z",
+          "type": "f32"
+        },
+        {
+          "name": "max_thin_thickness",
+          "type": "f32"
+        },
+        {
+          "name": "safety_fraction",
+          "type": "f32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "compute_ccd_tunnel_suppression(a_min_x: f32, a_min_y: f32, a_min_z: f32, a_max_x: f32, a_max_y: f32, a_max_z: f32, va_x: f32, va_y: f32, va_z: f32, wall_min_x: f32, wall_min_y: f32, wall_min_z: f32, wall_max_x: f32, wall_max_y: f32, wall_max_z: f32, wall_vel_x: f32, wall_vel_y: f32, wall_vel_z: f32, max_thin_thickness: f32, safety_fraction: f32, result_out: [*]f32) c_int",
+      "source_line": 1543
+    },
+    {
+      "name": "compute_conservative_step",
+      "parameters": [
+        {
+          "name": "motion_x",
+          "type": "f32"
+        },
+        {
+          "name": "motion_y",
+          "type": "f32"
+        },
+        {
+          "name": "motion_z",
+          "type": "f32"
+        },
+        {
+          "name": "angular_motion",
+          "type": "f32"
+        },
+        {
+          "name": "min_feature_size",
+          "type": "f32"
+        },
+        {
+          "name": "sweep_radius",
+          "type": "f32"
+        },
+        {
+          "name": "safety_factor",
+          "type": "f32"
+        },
+        {
+          "name": "max_step_fraction",
+          "type": "f32"
+        },
+        {
+          "name": "max_substeps",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "compute_conservative_step(motion_x: f32, motion_y: f32, motion_z: f32, angular_motion: f32, min_feature_size: f32, sweep_radius: f32, safety_factor: f32, max_step_fraction: f32, max_substeps: u32, result_out: [*]f32) c_int",
+      "source_line": 1647
+    },
+    {
+      "name": "compute_polygon_ccd",
+      "parameters": [
+        {
+          "name": "moving_points",
+          "type": "[*]const f32"
+        },
+        {
+          "name": "moving_count",
+          "type": "u32"
+        },
+        {
+          "name": "vel_x",
+          "type": "f32"
+        },
+        {
+          "name": "vel_y",
+          "type": "f32"
+        },
+        {
+          "name": "target_points",
+          "type": "[*]const f32"
+        },
+        {
+          "name": "target_count",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "compute_polygon_ccd(moving_points: [*]const f32, moving_count: u32, vel_x: f32, vel_y: f32, target_points: [*]const f32, target_count: u32, result_out: [*]f32) c_int",
+      "source_line": 1860
+    },
+    {
+      "name": "compute_rotating_box_ccd",
+      "parameters": [
+        {
+          "name": "center_ax",
+          "type": "f32"
+        },
+        {
+          "name": "center_ay",
+          "type": "f32"
+        },
+        {
+          "name": "center_az",
+          "type": "f32"
+        },
+        {
+          "name": "half_ax",
+          "type": "f32"
+        },
+        {
+          "name": "half_ay",
+          "type": "f32"
+        },
+        {
+          "name": "half_az",
+          "type": "f32"
+        },
+        {
+          "name": "yaw_start_a",
+          "type": "f32"
+        },
+        {
+          "name": "yaw_end_a",
+          "type": "f32"
+        },
+        {
+          "name": "vel_ax",
+          "type": "f32"
+        },
+        {
+          "name": "vel_ay",
+          "type": "f32"
+        },
+        {
+          "name": "vel_az",
+          "type": "f32"
+        },
+        {
+          "name": "center_bx",
+          "type": "f32"
+        },
+        {
+          "name": "center_by",
+          "type": "f32"
+        },
+        {
+          "name": "center_bz",
+          "type": "f32"
+        },
+        {
+          "name": "half_bx",
+          "type": "f32"
+        },
+        {
+          "name": "half_by",
+          "type": "f32"
+        },
+        {
+          "name": "half_bz",
+          "type": "f32"
+        },
+        {
+          "name": "yaw_start_b",
+          "type": "f32"
+        },
+        {
+          "name": "yaw_end_b",
+          "type": "f32"
+        },
+        {
+          "name": "vel_bx",
+          "type": "f32"
+        },
+        {
+          "name": "vel_by",
+          "type": "f32"
+        },
+        {
+          "name": "vel_bz",
+          "type": "f32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "compute_rotating_box_ccd(center_ax: f32, center_ay: f32, center_az: f32, half_ax: f32, half_ay: f32, half_az: f32, yaw_start_a: f32, yaw_end_a: f32, vel_ax: f32, vel_ay: f32, vel_az: f32, center_bx: f32, center_by: f32, center_bz: f32, half_bx: f32, half_by: f32, half_bz: f32, yaw_start_b: f32, yaw_end_b: f32, vel_bx: f32, vel_by: f32, vel_bz: f32, result_out: [*]f32) c_int",
+      "source_line": 1580
+    },
+    {
+      "name": "compute_sphere_ccd",
+      "parameters": [
+        {
+          "name": "center_ax",
+          "type": "f32"
+        },
+        {
+          "name": "center_ay",
+          "type": "f32"
+        },
+        {
+          "name": "center_az",
+          "type": "f32"
+        },
+        {
+          "name": "radius_a",
+          "type": "f32"
+        },
+        {
+          "name": "vel_ax",
+          "type": "f32"
+        },
+        {
+          "name": "vel_ay",
+          "type": "f32"
+        },
+        {
+          "name": "vel_az",
+          "type": "f32"
+        },
+        {
+          "name": "center_bx",
+          "type": "f32"
+        },
+        {
+          "name": "center_by",
+          "type": "f32"
+        },
+        {
+          "name": "center_bz",
+          "type": "f32"
+        },
+        {
+          "name": "radius_b",
+          "type": "f32"
+        },
+        {
+          "name": "vel_bx",
+          "type": "f32"
+        },
+        {
+          "name": "vel_by",
+          "type": "f32"
+        },
+        {
+          "name": "vel_bz",
+          "type": "f32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "compute_sphere_ccd(center_ax: f32, center_ay: f32, center_az: f32, radius_a: f32, vel_ax: f32, vel_ay: f32, vel_az: f32, center_bx: f32, center_by: f32, center_bz: f32, radius_b: f32, vel_bx: f32, vel_by: f32, vel_bz: f32, result_out: [*]f32) c_int",
+      "source_line": 1880
+    },
+    {
+      "name": "compute_time_of_entry",
+      "parameters": [
+        {
+          "name": "a_min_x",
+          "type": "f32"
+        },
+        {
+          "name": "a_min_y",
+          "type": "f32"
+        },
+        {
+          "name": "a_min_z",
+          "type": "f32"
+        },
+        {
+          "name": "a_max_x",
+          "type": "f32"
+        },
+        {
+          "name": "a_max_y",
+          "type": "f32"
+        },
+        {
+          "name": "a_max_z",
+          "type": "f32"
+        },
+        {
+          "name": "va_x",
+          "type": "f32"
+        },
+        {
+          "name": "va_y",
+          "type": "f32"
+        },
+        {
+          "name": "va_z",
+          "type": "f32"
+        },
+        {
+          "name": "b_min_x",
+          "type": "f32"
+        },
+        {
+          "name": "b_min_y",
+          "type": "f32"
+        },
+        {
+          "name": "b_min_z",
+          "type": "f32"
+        },
+        {
+          "name": "b_max_x",
+          "type": "f32"
+        },
+        {
+          "name": "b_max_y",
+          "type": "f32"
+        },
+        {
+          "name": "b_max_z",
+          "type": "f32"
+        },
+        {
+          "name": "vb_x",
+          "type": "f32"
+        },
+        {
+          "name": "vb_y",
+          "type": "f32"
+        },
+        {
+          "name": "vb_z",
+          "type": "f32"
+        },
+        {
+          "name": "toe_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "compute_time_of_entry(a_min_x: f32, a_min_y: f32, a_min_z: f32, a_max_x: f32, a_max_y: f32, a_max_z: f32, va_x: f32, va_y: f32, va_z: f32, b_min_x: f32, b_min_y: f32, b_min_z: f32, b_max_x: f32, b_max_y: f32, b_max_z: f32, vb_x: f32, vb_y: f32, vb_z: f32, toe_out: [*]f32) c_int",
+      "source_line": 1411
+    },
+    {
+      "name": "compute_toi",
+      "parameters": [
+        {
+          "name": "a_min_x",
+          "type": "f32"
+        },
+        {
+          "name": "a_min_y",
+          "type": "f32"
+        },
+        {
+          "name": "a_min_z",
+          "type": "f32"
+        },
+        {
+          "name": "a_max_x",
+          "type": "f32"
+        },
+        {
+          "name": "a_max_y",
+          "type": "f32"
+        },
+        {
+          "name": "a_max_z",
+          "type": "f32"
+        },
+        {
+          "name": "va_x",
+          "type": "f32"
+        },
+        {
+          "name": "va_y",
+          "type": "f32"
+        },
+        {
+          "name": "va_z",
+          "type": "f32"
+        },
+        {
+          "name": "b_min_x",
+          "type": "f32"
+        },
+        {
+          "name": "b_min_y",
+          "type": "f32"
+        },
+        {
+          "name": "b_min_z",
+          "type": "f32"
+        },
+        {
+          "name": "b_max_x",
+          "type": "f32"
+        },
+        {
+          "name": "b_max_y",
+          "type": "f32"
+        },
+        {
+          "name": "b_max_z",
+          "type": "f32"
+        },
+        {
+          "name": "vb_x",
+          "type": "f32"
+        },
+        {
+          "name": "vb_y",
+          "type": "f32"
+        },
+        {
+          "name": "vb_z",
+          "type": "f32"
+        },
+        {
+          "name": "toi_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "compute_toi(a_min_x: f32, a_min_y: f32, a_min_z: f32, a_max_x: f32, a_max_y: f32, a_max_z: f32, va_x: f32, va_y: f32, va_z: f32, b_min_x: f32, b_min_y: f32, b_min_z: f32, b_max_x: f32, b_max_y: f32, b_max_z: f32, vb_x: f32, vb_y: f32, vb_z: f32, toi_out: [*]f32) c_int",
+      "source_line": 1401
+    },
+    {
+      "name": "compute_toi_iterative",
+      "parameters": [
+        {
+          "name": "a_min_x",
+          "type": "f32"
+        },
+        {
+          "name": "a_min_y",
+          "type": "f32"
+        },
+        {
+          "name": "a_min_z",
+          "type": "f32"
+        },
+        {
+          "name": "a_max_x",
+          "type": "f32"
+        },
+        {
+          "name": "a_max_y",
+          "type": "f32"
+        },
+        {
+          "name": "a_max_z",
+          "type": "f32"
+        },
+        {
+          "name": "va_x",
+          "type": "f32"
+        },
+        {
+          "name": "va_y",
+          "type": "f32"
+        },
+        {
+          "name": "va_z",
+          "type": "f32"
+        },
+        {
+          "name": "b_min_x",
+          "type": "f32"
+        },
+        {
+          "name": "b_min_y",
+          "type": "f32"
+        },
+        {
+          "name": "b_min_z",
+          "type": "f32"
+        },
+        {
+          "name": "b_max_x",
+          "type": "f32"
+        },
+        {
+          "name": "b_max_y",
+          "type": "f32"
+        },
+        {
+          "name": "b_max_z",
+          "type": "f32"
+        },
+        {
+          "name": "vb_x",
+          "type": "f32"
+        },
+        {
+          "name": "vb_y",
+          "type": "f32"
+        },
+        {
+          "name": "vb_z",
+          "type": "f32"
+        },
+        {
+          "name": "max_iterations",
+          "type": "u32"
+        },
+        {
+          "name": "tolerance",
+          "type": "f32"
+        },
+        {
+          "name": "toi_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "compute_toi_iterative(a_min_x: f32, a_min_y: f32, a_min_z: f32, a_max_x: f32, a_max_y: f32, a_max_z: f32, va_x: f32, va_y: f32, va_z: f32, b_min_x: f32, b_min_y: f32, b_min_z: f32, b_max_x: f32, b_max_y: f32, b_max_z: f32, vb_x: f32, vb_y: f32, vb_z: f32, max_iterations: u32, tolerance: f32, toi_out: [*]f32) c_int",
+      "source_line": 1421
+    },
+    {
+      "name": "configure_joint_fatigue",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        },
+        {
+          "name": "fatigue_limit",
+          "type": "f32"
+        },
+        {
+          "name": "fatigue_rate",
+          "type": "f32"
+        },
+        {
+          "name": "fatigue_recovery",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "configure_joint_fatigue(joint_idx: u8, fatigue_limit: f32, fatigue_rate: f32, fatigue_recovery: f32) c_int",
+      "source_line": 1060
+    },
+    {
+      "name": "configure_joint_motor",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        },
+        {
+          "name": "target",
+          "type": "f32"
+        },
+        {
+          "name": "speed",
+          "type": "f32"
+        },
+        {
+          "name": "max_torque",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "configure_joint_motor(joint_idx: u8, target: f32, speed: f32, max_torque: f32) c_int",
+      "source_line": 1144
+    },
+    {
+      "name": "configure_joint_temperature",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        },
+        {
+          "name": "temperature_limit",
+          "type": "f32"
+        },
+        {
+          "name": "temperature_rate",
+          "type": "f32"
+        },
+        {
+          "name": "temperature_cooling",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "configure_joint_temperature(joint_idx: u8, temperature_limit: f32, temperature_rate: f32, temperature_cooling: f32) c_int",
+      "source_line": 1095
+    },
+    {
+      "name": "crash_defense_clear_diagnostics",
+      "parameters": [],
+      "return_type": "void",
+      "signature": "crash_defense_clear_diagnostics() void",
+      "source_line": 2728
+    },
+    {
+      "name": "crash_defense_clear_error_logs",
+      "parameters": [],
+      "return_type": "void",
+      "signature": "crash_defense_clear_error_logs() void",
+      "source_line": 2688
+    },
+    {
+      "name": "crash_defense_collect_diagnostics",
+      "parameters": [
+        {
+          "name": "current_tick",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "crash_defense_collect_diagnostics(current_tick: u32, result_out: [*]f32) c_int",
+      "source_line": 2706
+    },
+    {
+      "name": "crash_defense_compute_bounds_correction",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "f32"
+        },
+        {
+          "name": "y",
+          "type": "f32"
+        },
+        {
+          "name": "z",
+          "type": "f32"
+        },
+        {
+          "name": "position_min",
+          "type": "f32"
+        },
+        {
+          "name": "position_max",
+          "type": "f32"
+        },
+        {
+          "name": "max_correction_distance",
+          "type": "f32"
+        },
+        {
+          "name": "emergency_on_escape",
+          "type": "c_int"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "crash_defense_compute_bounds_correction(x: f32, y: f32, z: f32, position_min: f32, position_max: f32, max_correction_distance: f32, emergency_on_escape: c_int, result_out: [*]f32) c_int",
+      "source_line": 2429
+    },
+    {
+      "name": "crash_defense_compute_emergency_stop",
+      "parameters": [
+        {
+          "name": "manual_trigger",
+          "type": "c_int"
+        },
+        {
+          "name": "critical_fault",
+          "type": "c_int"
+        },
+        {
+          "name": "repeated_fault_count",
+          "type": "u32"
+        },
+        {
+          "name": "repeated_fault_threshold",
+          "type": "u32"
+        },
+        {
+          "name": "has_snapshot",
+          "type": "c_int"
+        },
+        {
+          "name": "cooldown_ticks",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "crash_defense_compute_emergency_stop(manual_trigger: c_int, critical_fault: c_int, repeated_fault_count: u32, repeated_fault_threshold: u32, has_snapshot: c_int, cooldown_ticks: u32, result_out: [*]f32) c_int",
+      "source_line": 2621
+    },
+    {
+      "name": "crash_defense_compute_energy_limit",
+      "parameters": [
+        {
+          "name": "current_energy",
+          "type": "f32"
+        },
+        {
+          "name": "reference_energy",
+          "type": "f32"
+        },
+        {
+          "name": "allowed_energy",
+          "type": "f32"
+        },
+        {
+          "name": "relative_tolerance",
+          "type": "f32"
+        },
+        {
+          "name": "hard_limit_scale",
+          "type": "f32"
+        },
+        {
+          "name": "emergency_on_violation",
+          "type": "c_int"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "crash_defense_compute_energy_limit(current_energy: f32, reference_energy: f32, allowed_energy: f32, relative_tolerance: f32, hard_limit_scale: f32, emergency_on_violation: c_int, result_out: [*]f32) c_int",
+      "source_line": 2453
+    },
+    {
+      "name": "crash_defense_compute_infinity_handling",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "f32"
+        },
+        {
+          "name": "y",
+          "type": "f32"
+        },
+        {
+          "name": "z",
+          "type": "f32"
+        },
+        {
+          "name": "clamp_abs",
+          "type": "f32"
+        },
+        {
+          "name": "max_infinite_components",
+          "type": "u32"
+        },
+        {
+          "name": "emergency_on_infinity",
+          "type": "c_int"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "crash_defense_compute_infinity_handling(x: f32, y: f32, z: f32, clamp_abs: f32, max_infinite_components: u32, emergency_on_infinity: c_int, result_out: [*]f32) c_int",
+      "source_line": 2406
+    },
+    {
+      "name": "crash_defense_compute_iteration_timeout",
+      "parameters": [
+        {
+          "name": "elapsed_ms",
+          "type": "f32"
+        },
+        {
+          "name": "budget_ms",
+          "type": "f32"
+        },
+        {
+          "name": "iteration_count",
+          "type": "u32"
+        },
+        {
+          "name": "max_iterations",
+          "type": "u32"
+        },
+        {
+          "name": "hard_timeout_scale",
+          "type": "f32"
+        },
+        {
+          "name": "emergency_on_timeout",
+          "type": "c_int"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "crash_defense_compute_iteration_timeout(elapsed_ms: f32, budget_ms: f32, iteration_count: u32, max_iterations: u32, hard_timeout_scale: f32, emergency_on_timeout: c_int, result_out: [*]f32) c_int",
+      "source_line": 2574
+    },
+    {
+      "name": "crash_defense_compute_nan_handling",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "f32"
+        },
+        {
+          "name": "y",
+          "type": "f32"
+        },
+        {
+          "name": "z",
+          "type": "f32"
+        },
+        {
+          "name": "fallback_value",
+          "type": "f32"
+        },
+        {
+          "name": "max_nan_components",
+          "type": "u32"
+        },
+        {
+          "name": "emergency_on_nan",
+          "type": "c_int"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "crash_defense_compute_nan_handling(x: f32, y: f32, z: f32, fallback_value: f32, max_nan_components: u32, emergency_on_nan: c_int, result_out: [*]f32) c_int",
+      "source_line": 2383
+    },
+    {
+      "name": "crash_defense_compute_no_progress",
+      "parameters": [
+        {
+          "name": "previous_progress",
+          "type": "f32"
+        },
+        {
+          "name": "current_progress",
+          "type": "f32"
+        },
+        {
+          "name": "min_progress",
+          "type": "f32"
+        },
+        {
+          "name": "stagnant_iterations",
+          "type": "u32"
+        },
+        {
+          "name": "max_stagnant_iterations",
+          "type": "u32"
+        },
+        {
+          "name": "hard_stagnant_scale",
+          "type": "f32"
+        },
+        {
+          "name": "emergency_on_no_progress",
+          "type": "c_int"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "crash_defense_compute_no_progress(previous_progress: f32, current_progress: f32, min_progress: f32, stagnant_iterations: u32, max_stagnant_iterations: u32, hard_stagnant_scale: f32, emergency_on_no_progress: c_int, result_out: [*]f32) c_int",
+      "source_line": 2597
+    },
+    {
+      "name": "crash_defense_compute_position_range_limit",
+      "parameters": [
+        {
+          "name": "pos_x",
+          "type": "f32"
+        },
+        {
+          "name": "pos_y",
+          "type": "f32"
+        },
+        {
+          "name": "pos_z",
+          "type": "f32"
+        },
+        {
+          "name": "reference_x",
+          "type": "f32"
+        },
+        {
+          "name": "reference_y",
+          "type": "f32"
+        },
+        {
+          "name": "reference_z",
+          "type": "f32"
+        },
+        {
+          "name": "allowed_offset",
+          "type": "f32"
+        },
+        {
+          "name": "hard_limit_scale",
+          "type": "f32"
+        },
+        {
+          "name": "emergency_on_violation",
+          "type": "c_int"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "crash_defense_compute_position_range_limit(pos_x: f32, pos_y: f32, pos_z: f32, reference_x: f32, reference_y: f32, reference_z: f32, allowed_offset: f32, hard_limit_scale: f32, emergency_on_violation: c_int, result_out: [*]f32) c_int",
+      "source_line": 2500
+    },
+    {
+      "name": "crash_defense_compute_rollback",
+      "parameters": [
+        {
+          "name": "fault_detected",
+          "type": "c_int"
+        },
+        {
+          "name": "emergency_stopped",
+          "type": "c_int"
+        },
+        {
+          "name": "has_snapshot",
+          "type": "c_int"
+        },
+        {
+          "name": "has_valid_snapshot",
+          "type": "c_int"
+        },
+        {
+          "name": "rollback_attempts",
+          "type": "u32"
+        },
+        {
+          "name": "max_rollback_attempts",
+          "type": "u32"
+        },
+        {
+          "name": "repeated_fault_count",
+          "type": "u32"
+        },
+        {
+          "name": "repeated_fault_threshold",
+          "type": "u32"
+        },
+        {
+          "name": "cooldown_ticks",
+          "type": "u32"
+        },
+        {
+          "name": "force_rollback",
+          "type": "c_int"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "crash_defense_compute_rollback(fault_detected: c_int, emergency_stopped: c_int, has_snapshot: c_int, has_valid_snapshot: c_int, rollback_attempts: u32, max_rollback_attempts: u32, repeated_fault_count: u32, repeated_fault_threshold: u32, cooldown_ticks: u32, force_rollback: c_int, result_out: [*]f32) c_int",
+      "source_line": 2644
+    },
+    {
+      "name": "crash_defense_compute_solver_divergence",
+      "parameters": [
+        {
+          "name": "previous_error",
+          "type": "f32"
+        },
+        {
+          "name": "current_error",
+          "type": "f32"
+        },
+        {
+          "name": "max_allowed_error",
+          "type": "f32"
+        },
+        {
+          "name": "allowed_growth_ratio",
+          "type": "f32"
+        },
+        {
+          "name": "emergency_growth_ratio",
+          "type": "f32"
+        },
+        {
+          "name": "emergency_on_divergence",
+          "type": "c_int"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "crash_defense_compute_solver_divergence(previous_error: f32, current_error: f32, max_allowed_error: f32, allowed_growth_ratio: f32, emergency_growth_ratio: f32, emergency_on_divergence: c_int, result_out: [*]f32) c_int",
+      "source_line": 2551
+    },
+    {
+      "name": "crash_defense_compute_torque_limit",
+      "parameters": [
+        {
+          "name": "torque_x",
+          "type": "f32"
+        },
+        {
+          "name": "torque_y",
+          "type": "f32"
+        },
+        {
+          "name": "torque_z",
+          "type": "f32"
+        },
+        {
+          "name": "allowed_torque",
+          "type": "f32"
+        },
+        {
+          "name": "hard_limit_scale",
+          "type": "f32"
+        },
+        {
+          "name": "emergency_on_violation",
+          "type": "c_int"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "crash_defense_compute_torque_limit(torque_x: f32, torque_y: f32, torque_z: f32, allowed_torque: f32, hard_limit_scale: f32, emergency_on_violation: c_int, result_out: [*]f32) c_int",
+      "source_line": 2527
+    },
+    {
+      "name": "crash_defense_compute_velocity_limit",
+      "parameters": [
+        {
+          "name": "vel_x",
+          "type": "f32"
+        },
+        {
+          "name": "vel_y",
+          "type": "f32"
+        },
+        {
+          "name": "vel_z",
+          "type": "f32"
+        },
+        {
+          "name": "allowed_speed",
+          "type": "f32"
+        },
+        {
+          "name": "hard_limit_scale",
+          "type": "f32"
+        },
+        {
+          "name": "emergency_on_violation",
+          "type": "c_int"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "crash_defense_compute_velocity_limit(vel_x: f32, vel_y: f32, vel_z: f32, allowed_speed: f32, hard_limit_scale: f32, emergency_on_violation: c_int, result_out: [*]f32) c_int",
+      "source_line": 2476
+    },
+    {
+      "name": "crash_defense_emergency_stop",
+      "parameters": [],
+      "return_type": "void",
+      "signature": "crash_defense_emergency_stop() void",
+      "source_line": 2780
+    },
+    {
+      "name": "crash_defense_get_diagnostic_at",
+      "parameters": [
+        {
+          "name": "index",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "crash_defense_get_diagnostic_at(index: u32, result_out: [*]f32) c_int",
+      "source_line": 2736
+    },
+    {
+      "name": "crash_defense_get_diagnostic_count",
+      "parameters": [],
+      "return_type": "u32",
+      "signature": "crash_defense_get_diagnostic_count() u32",
+      "source_line": 2732
+    },
+    {
+      "name": "crash_defense_get_emergency_reason",
+      "parameters": [],
+      "return_type": "u32",
+      "signature": "crash_defense_get_emergency_reason() u32",
+      "source_line": 2676
+    },
+    {
+      "name": "crash_defense_get_emergency_stop_count",
+      "parameters": [],
+      "return_type": "u32",
+      "signature": "crash_defense_get_emergency_stop_count() u32",
+      "source_line": 2680
+    },
+    {
+      "name": "crash_defense_get_error_log_at",
+      "parameters": [
+        {
+          "name": "index",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "crash_defense_get_error_log_at(index: u32, result_out: [*]f32) c_int",
+      "source_line": 2696
+    },
+    {
+      "name": "crash_defense_get_error_log_count",
+      "parameters": [],
+      "return_type": "u32",
+      "signature": "crash_defense_get_error_log_count() u32",
+      "source_line": 2692
+    },
+    {
+      "name": "crash_defense_get_stats_report",
+      "parameters": [
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "crash_defense_get_stats_report(result_out: [*]f32) c_int",
+      "source_line": 2755
+    },
+    {
+      "name": "crash_defense_init",
+      "parameters": [
+        {
+          "name": "nan_check",
+          "type": "bool"
+        },
+        {
+          "name": "bounds_check",
+          "type": "bool"
+        },
+        {
+          "name": "energy_check",
+          "type": "bool"
+        },
+        {
+          "name": "velocity_cap",
+          "type": "f32"
+        },
+        {
+          "name": "position_min",
+          "type": "f32"
+        },
+        {
+          "name": "position_max",
+          "type": "f32"
+        },
+        {
+          "name": "max_ticks_without_progress",
+          "type": "u32"
+        }
+      ],
+      "return_type": "void",
+      "signature": "crash_defense_init(nan_check: bool, bounds_check: bool, energy_check: bool, velocity_cap: f32, position_min: f32, position_max: f32, max_ticks_without_progress: u32) void",
+      "source_line": 2359
+    },
+    {
+      "name": "crash_defense_is_emergency_stopped",
+      "parameters": [],
+      "return_type": "c_int",
+      "signature": "crash_defense_is_emergency_stopped() c_int",
+      "source_line": 2672
+    },
+    {
+      "name": "crash_defense_is_infinite",
+      "parameters": [
+        {
+          "name": "value",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "crash_defense_is_infinite(value: f32) c_int",
+      "source_line": 2375
+    },
+    {
+      "name": "crash_defense_is_nan",
+      "parameters": [
+        {
+          "name": "value",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "crash_defense_is_nan(value: f32) c_int",
+      "source_line": 2371
+    },
+    {
+      "name": "crash_defense_is_stuck",
+      "parameters": [
+        {
+          "name": "current_tick",
+          "type": "u32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "crash_defense_is_stuck(current_tick: u32) c_int",
+      "source_line": 2796
+    },
+    {
+      "name": "crash_defense_is_valid_float",
+      "parameters": [
+        {
+          "name": "value",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "crash_defense_is_valid_float(value: f32) c_int",
+      "source_line": 2379
+    },
+    {
+      "name": "crash_defense_record_error_log",
+      "parameters": [
+        {
+          "name": "tick",
+          "type": "u32"
+        },
+        {
+          "name": "code",
+          "type": "u32"
+        },
+        {
+          "name": "severity",
+          "type": "u8"
+        },
+        {
+          "name": "value0",
+          "type": "f32"
+        },
+        {
+          "name": "value1",
+          "type": "f32"
+        }
+      ],
+      "return_type": "void",
+      "signature": "crash_defense_record_error_log(tick: u32, code: u32, severity: u8, value0: f32, value1: f32) void",
+      "source_line": 2684
+    },
+    {
+      "name": "crash_defense_reset_emergency_stop",
+      "parameters": [],
+      "return_type": "void",
+      "signature": "crash_defense_reset_emergency_stop() void",
+      "source_line": 2788
+    },
+    {
+      "name": "crash_defense_update_progress",
+      "parameters": [
+        {
+          "name": "tick",
+          "type": "u32"
+        }
+      ],
+      "return_type": "void",
+      "signature": "crash_defense_update_progress(tick: u32) void",
+      "source_line": 2792
+    },
+    {
+      "name": "destruction_calculate_damage",
+      "parameters": [
+        {
+          "name": "impact",
+          "type": "f32"
+        },
+        {
+          "name": "material",
+          "type": "u8"
+        },
+        {
+          "name": "hardness",
+          "type": "f32"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "destruction_calculate_damage(impact: f32, material: u8, hardness: f32) f32",
+      "source_line": 2046
+    },
+    {
+      "name": "destruction_create_destroyable",
+      "parameters": [
+        {
+          "name": "entity_id",
+          "type": "u16"
+        },
+        {
+          "name": "max_hp",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "destruction_create_destroyable(entity_id: u16, max_hp: f32) c_int",
+      "source_line": 2041
+    },
+    {
+      "name": "destruction_generate_fracture",
+      "parameters": [
+        {
+          "name": "_pos_x",
+          "type": "f32"
+        },
+        {
+          "name": "_pos_y",
+          "type": "f32"
+        },
+        {
+          "name": "_pos_z",
+          "type": "f32"
+        },
+        {
+          "name": "seed",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "void",
+      "signature": "destruction_generate_fracture(_pos_x: f32, _pos_y: f32, _pos_z: f32, seed: u32, result_out: [*]f32) void",
+      "source_line": 2057
+    },
+    {
+      "name": "destruction_init",
+      "parameters": [],
+      "return_type": "void",
+      "signature": "destruction_init() void",
+      "source_line": 2037
+    },
+    {
+      "name": "destruction_should_shatter",
+      "parameters": [
+        {
+          "name": "state_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "destruction_should_shatter(state_idx: u8) c_int",
+      "source_line": 2051
+    },
+    {
+      "name": "disasters_calculate_seismic_intensity",
+      "parameters": [
+        {
+          "name": "distance",
+          "type": "f32"
+        },
+        {
+          "name": "magnitude",
+          "type": "f32"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "disasters_calculate_seismic_intensity(distance: f32, magnitude: f32) f32",
+      "source_line": 3811
+    },
+    {
+      "name": "disasters_check_chain_reaction",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "f32"
+        },
+        {
+          "name": "y",
+          "type": "f32"
+        },
+        {
+          "name": "z",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "disasters_check_chain_reaction(x: f32, y: f32, z: f32) c_int",
+      "source_line": 3815
+    },
+    {
+      "name": "disasters_enable_chain_reactions",
+      "parameters": [
+        {
+          "name": "enable",
+          "type": "bool"
+        }
+      ],
+      "return_type": "void",
+      "signature": "disasters_enable_chain_reactions(enable: bool) void",
+      "source_line": 3826
+    },
+    {
+      "name": "disasters_get_wind_velocity",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "f32"
+        },
+        {
+          "name": "z",
+          "type": "f32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "void",
+      "signature": "disasters_get_wind_velocity(x: f32, z: f32, result_out: [*]f32) void",
+      "source_line": 3819
+    },
+    {
+      "name": "disasters_init",
+      "parameters": [],
+      "return_type": "void",
+      "signature": "disasters_init() void",
+      "source_line": 3802
+    },
+    {
+      "name": "disasters_trigger",
+      "parameters": [
+        {
+          "name": "disaster_type",
+          "type": "u8"
+        },
+        {
+          "name": "intensity",
+          "type": "f32"
+        },
+        {
+          "name": "x",
+          "type": "f32"
+        },
+        {
+          "name": "y",
+          "type": "f32"
+        },
+        {
+          "name": "z",
+          "type": "f32"
+        },
+        {
+          "name": "radius",
+          "type": "f32"
+        }
+      ],
+      "return_type": "void",
+      "signature": "disasters_trigger(disaster_type: u8, intensity: f32, x: f32, y: f32, z: f32, radius: f32) void",
+      "source_line": 3806
+    },
+    {
+      "name": "drivetrain_apply_throttle",
+      "parameters": [
+        {
+          "name": "position",
+          "type": "f32"
+        }
+      ],
+      "return_type": "void",
+      "signature": "drivetrain_apply_throttle(position: f32) void",
+      "source_line": 3637
+    },
+    {
+      "name": "drivetrain_calculate_horsepower",
+      "parameters": [
+        {
+          "name": "torque",
+          "type": "f32"
+        },
+        {
+          "name": "rpm",
+          "type": "f32"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "drivetrain_calculate_horsepower(torque: f32, rpm: f32) f32",
+      "source_line": 3617
+    },
+    {
+      "name": "drivetrain_calculate_torque_curve",
+      "parameters": [
+        {
+          "name": "rpm",
+          "type": "f32"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "drivetrain_calculate_torque_curve(rpm: f32) f32",
+      "source_line": 3613
+    },
+    {
+      "name": "drivetrain_calculate_wheel_torque",
+      "parameters": [
+        {
+          "name": "eng_torque",
+          "type": "f32"
+        },
+        {
+          "name": "gear",
+          "type": "i8"
+        },
+        {
+          "name": "final_drive",
+          "type": "f32"
+        },
+        {
+          "name": "efficiency",
+          "type": "f32"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "drivetrain_calculate_wheel_torque(eng_torque: f32, gear: i8, final_drive: f32, efficiency: f32) f32",
+      "source_line": 3625
+    },
+    {
+      "name": "drivetrain_get_engine_rpm",
+      "parameters": [],
+      "return_type": "f32",
+      "signature": "drivetrain_get_engine_rpm() f32",
+      "source_line": 3629
+    },
+    {
+      "name": "drivetrain_get_engine_torque",
+      "parameters": [],
+      "return_type": "f32",
+      "signature": "drivetrain_get_engine_torque() f32",
+      "source_line": 3633
+    },
+    {
+      "name": "drivetrain_get_gear_ratio",
+      "parameters": [
+        {
+          "name": "gear",
+          "type": "i8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "drivetrain_get_gear_ratio(gear: i8) f32",
+      "source_line": 3621
+    },
+    {
+      "name": "drivetrain_init",
+      "parameters": [],
+      "return_type": "void",
+      "signature": "drivetrain_init() void",
+      "source_line": 3609
+    },
+    {
+      "name": "entity_get_medium_type",
+      "parameters": [
+        {
+          "name": "inst_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "entity_get_medium_type(inst_idx: u8) c_int",
+      "source_line": 507
+    },
+    {
+      "name": "entity_is_floating",
+      "parameters": [
+        {
+          "name": "inst_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "entity_is_floating(inst_idx: u8) c_int",
+      "source_line": 516
+    },
+    {
+      "name": "get_emotion_arousal",
+      "parameters": [],
+      "return_type": "u8",
+      "signature": "get_emotion_arousal() u8",
+      "source_line": 228
+    },
+    {
+      "name": "get_emotion_valence",
+      "parameters": [],
+      "return_type": "i8",
+      "signature": "get_emotion_valence() i8",
+      "source_line": 225
+    },
+    {
+      "name": "get_instance_angular_velocity",
+      "parameters": [
+        {
+          "name": "inst_idx",
+          "type": "u8"
+        },
+        {
+          "name": "ang_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "get_instance_angular_velocity(inst_idx: u8, ang_out: [*]f32) c_int",
+      "source_line": 466
+    },
+    {
+      "name": "get_instance_count",
+      "parameters": [],
+      "return_type": "u8",
+      "signature": "get_instance_count() u8",
+      "source_line": 138
+    },
+    {
+      "name": "get_instance_handle",
+      "parameters": [
+        {
+          "name": "inst_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "u32",
+      "signature": "get_instance_handle(inst_idx: u8) u32",
+      "source_line": 143
+    },
+    {
+      "name": "get_instance_pos",
+      "parameters": [
+        {
+          "name": "inst_idx",
+          "type": "u8"
+        },
+        {
+          "name": "pos_out",
+          "type": "[*]i32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "get_instance_pos(inst_idx: u8, pos_out: [*]i32) c_int",
+      "source_line": 483
+    },
+    {
+      "name": "get_instance_state",
+      "parameters": [
+        {
+          "name": "inst_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "get_instance_state(inst_idx: u8) c_int",
+      "source_line": 500
+    },
+    {
+      "name": "get_instance_velocity",
+      "parameters": [
+        {
+          "name": "inst_idx",
+          "type": "u8"
+        },
+        {
+          "name": "vel_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "get_instance_velocity(inst_idx: u8, vel_out: [*]f32) c_int",
+      "source_line": 456
+    },
+    {
+      "name": "get_joint_break_ratio",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "get_joint_break_ratio(joint_idx: u8) f32",
+      "source_line": 1200
+    },
+    {
+      "name": "get_joint_count",
+      "parameters": [],
+      "return_type": "u8",
+      "signature": "get_joint_count() u8",
+      "source_line": 936
+    },
+    {
+      "name": "get_joint_damping",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "get_joint_damping(joint_idx: u8) f32",
+      "source_line": 981
+    },
+    {
+      "name": "get_joint_drive_error",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "get_joint_drive_error(joint_idx: u8) f32",
+      "source_line": 1050
+    },
+    {
+      "name": "get_joint_fatigue_damage",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "get_joint_fatigue_damage(joint_idx: u8) f32",
+      "source_line": 1083
+    },
+    {
+      "name": "get_joint_fatigue_ratio",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "get_joint_fatigue_ratio(joint_idx: u8) f32",
+      "source_line": 1089
+    },
+    {
+      "name": "get_joint_geometry_error",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "get_joint_geometry_error(joint_idx: u8) f32",
+      "source_line": 1040
+    },
+    {
+      "name": "get_joint_limit_error",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "get_joint_limit_error(joint_idx: u8) f32",
+      "source_line": 1045
+    },
+    {
+      "name": "get_joint_limit_max",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "get_joint_limit_max(joint_idx: u8) f32",
+      "source_line": 964
+    },
+    {
+      "name": "get_joint_limit_min",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "get_joint_limit_min(joint_idx: u8) f32",
+      "source_line": 956
+    },
+    {
+      "name": "get_joint_motor_position",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "get_joint_motor_position(joint_idx: u8) f32",
+      "source_line": 1172
+    },
+    {
+      "name": "get_joint_preload_angular",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "get_joint_preload_angular(joint_idx: u8) f32",
+      "source_line": 1017
+    },
+    {
+      "name": "get_joint_preload_linear_x",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "get_joint_preload_linear_x(joint_idx: u8) f32",
+      "source_line": 999
+    },
+    {
+      "name": "get_joint_preload_linear_y",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "get_joint_preload_linear_y(joint_idx: u8) f32",
+      "source_line": 1005
+    },
+    {
+      "name": "get_joint_preload_linear_z",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "get_joint_preload_linear_z(joint_idx: u8) f32",
+      "source_line": 1011
+    },
+    {
+      "name": "get_joint_residual_speed",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "get_joint_residual_speed(joint_idx: u8) f32",
+      "source_line": 1055
+    },
+    {
+      "name": "get_joint_stress",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "get_joint_stress(joint_idx: u8) f32",
+      "source_line": 1035
+    },
+    {
+      "name": "get_joint_temperature",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "get_joint_temperature(joint_idx: u8) f32",
+      "source_line": 1118
+    },
+    {
+      "name": "get_joint_temperature_ratio",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "get_joint_temperature_ratio(joint_idx: u8) f32",
+      "source_line": 1124
+    },
+    {
+      "name": "get_last_step_changed",
+      "parameters": [],
+      "return_type": "c_int",
+      "signature": "get_last_step_changed() c_int",
+      "source_line": 296
+    },
+    {
+      "name": "get_last_step_determinism_flags",
+      "parameters": [],
+      "return_type": "u32",
+      "signature": "get_last_step_determinism_flags() u32",
+      "source_line": 316
+    },
+    {
+      "name": "get_last_step_event_count",
+      "parameters": [],
+      "return_type": "u32",
+      "signature": "get_last_step_event_count() u32",
+      "source_line": 301
+    },
+    {
+      "name": "get_last_step_pair_count",
+      "parameters": [],
+      "return_type": "u32",
+      "signature": "get_last_step_pair_count() u32",
+      "source_line": 291
+    },
+    {
+      "name": "get_last_step_snapshot_tick",
+      "parameters": [],
+      "return_type": "u32",
+      "signature": "get_last_step_snapshot_tick() u32",
+      "source_line": 306
+    },
+    {
+      "name": "get_last_step_state_hash",
+      "parameters": [],
+      "return_type": "u64",
+      "signature": "get_last_step_state_hash() u64",
+      "source_line": 311
+    },
+    {
+      "name": "get_time_scale",
+      "parameters": [],
+      "return_type": "f32",
+      "signature": "get_time_scale() f32",
+      "source_line": 449
+    },
+    {
+      "name": "get_trace_count",
+      "parameters": [],
+      "return_type": "u32",
+      "signature": "get_trace_count() u32",
+      "source_line": 231
+    },
+    {
+      "name": "get_trace_entry",
+      "parameters": [
+        {
+          "name": "idx",
+          "type": "u32"
+        }
+      ],
+      "return_type": "?*TraceEntry",
+      "signature": "get_trace_entry(idx: u32) ?*TraceEntry",
+      "source_line": 234
+    },
+    {
+      "name": "get_trace_summary",
+      "parameters": [],
+      "return_type": "TraceSummary",
+      "signature": "get_trace_summary() TraceSummary",
+      "source_line": 361
+    },
+    {
+      "name": "init_kernel",
+      "parameters": [],
+      "return_type": "c_int",
+      "signature": "init_kernel() c_int",
+      "source_line": 81
+    },
+    {
+      "name": "is_instance_broken",
+      "parameters": [
+        {
+          "name": "inst_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "is_instance_broken(inst_idx: u8) c_int",
+      "source_line": 493
+    },
+    {
+      "name": "is_instance_sleeping",
+      "parameters": [
+        {
+          "name": "inst_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "is_instance_sleeping(inst_idx: u8) c_int",
+      "source_line": 476
+    },
+    {
+      "name": "is_joint_broken",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "is_joint_broken(joint_idx: u8) c_int",
+      "source_line": 1193
+    },
+    {
+      "name": "is_joint_enabled",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "is_joint_enabled(joint_idx: u8) c_int",
+      "source_line": 1187
+    },
+    {
+      "name": "is_joint_motor_enabled",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "is_joint_motor_enabled(joint_idx: u8) c_int",
+      "source_line": 1164
+    },
+    {
+      "name": "kcc_create_character",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "f32"
+        },
+        {
+          "name": "y",
+          "type": "f32"
+        },
+        {
+          "name": "z",
+          "type": "f32"
+        },
+        {
+          "name": "config",
+          "type": "KCCConfigFFI"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "kcc_create_character(x: f32, y: f32, z: f32, config: KCCConfigFFI) c_int",
+      "source_line": 1955
+    },
+    {
+      "name": "kcc_get_height",
+      "parameters": [
+        {
+          "name": "char_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "kcc_get_height(char_idx: u8) f32",
+      "source_line": 1973
+    },
+    {
+      "name": "kcc_init",
+      "parameters": [],
+      "return_type": "void",
+      "signature": "kcc_init() void",
+      "source_line": 1951
+    },
+    {
+      "name": "kcc_slide_along_wall",
+      "parameters": [
+        {
+          "name": "vel_x",
+          "type": "f32"
+        },
+        {
+          "name": "vel_z",
+          "type": "f32"
+        },
+        {
+          "name": "normal_x",
+          "type": "f32"
+        },
+        {
+          "name": "normal_z",
+          "type": "f32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "void",
+      "signature": "kcc_slide_along_wall(vel_x: f32, vel_z: f32, normal_x: f32, normal_z: f32, result_out: [*]f32) void",
+      "source_line": 1986
+    },
+    {
+      "name": "kcc_try_set_crouch",
+      "parameters": [
+        {
+          "name": "char_idx",
+          "type": "u8"
+        },
+        {
+          "name": "active",
+          "type": "bool"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "kcc_try_set_crouch(char_idx: u8, active: bool) c_int",
+      "source_line": 1979
+    },
+    {
+      "name": "mark_instance_broken",
+      "parameters": [
+        {
+          "name": "inst_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "mark_instance_broken(inst_idx: u8) c_int",
+      "source_line": 170
+    },
+    {
+      "name": "mark_instance_broken_handle",
+      "parameters": [
+        {
+          "name": "handle",
+          "type": "u32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "mark_instance_broken_handle(handle: u32) c_int",
+      "source_line": 177
+    },
+    {
+      "name": "material_pairing_calculate_impact_damage",
+      "parameters": [
+        {
+          "name": "impact_velocity",
+          "type": "f32"
+        },
+        {
+          "name": "mass",
+          "type": "f32"
+        },
+        {
+          "name": "surface_type",
+          "type": "u8"
+        },
+        {
+          "name": "material",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "material_pairing_calculate_impact_damage(impact_velocity: f32, mass: f32, surface_type: u8, material: u8) f32",
+      "source_line": 3752
+    },
+    {
+      "name": "material_pairing_get_buoyancy",
+      "parameters": [
+        {
+          "name": "surface_type",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "material_pairing_get_buoyancy(surface_type: u8) f32",
+      "source_line": 3763
+    },
+    {
+      "name": "material_pairing_get_friction",
+      "parameters": [
+        {
+          "name": "entity_friction",
+          "type": "u8"
+        },
+        {
+          "name": "surface_type",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "material_pairing_get_friction(entity_friction: u8, surface_type: u8) f32",
+      "source_line": 3747
+    },
+    {
+      "name": "material_pairing_get_medium_type",
+      "parameters": [
+        {
+          "name": "surface_type",
+          "type": "u8"
+        }
+      ],
+      "return_type": "u8",
+      "signature": "material_pairing_get_medium_type(surface_type: u8) u8",
+      "source_line": 3768
+    },
+    {
+      "name": "material_pairing_get_restitution",
+      "parameters": [
+        {
+          "name": "entity_restitution",
+          "type": "u8"
+        },
+        {
+          "name": "surface_type",
+          "type": "u8"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "material_pairing_get_restitution(entity_restitution: u8, surface_type: u8) f32",
+      "source_line": 3742
+    },
+    {
+      "name": "material_pairing_is_hard_surface",
+      "parameters": [
+        {
+          "name": "surface_type",
+          "type": "u8"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "material_pairing_is_hard_surface(surface_type: u8) c_int",
+      "source_line": 3773
+    },
+    {
+      "name": "network_calculate_crc",
+      "parameters": [
+        {
+          "name": "pos_x",
+          "type": "f32"
+        },
+        {
+          "name": "pos_y",
+          "type": "f32"
+        },
+        {
+          "name": "pos_z",
+          "type": "f32"
+        },
+        {
+          "name": "vel_x",
+          "type": "f32"
+        },
+        {
+          "name": "vel_y",
+          "type": "f32"
+        },
+        {
+          "name": "vel_z",
+          "type": "f32"
+        },
+        {
+          "name": "yaw",
+          "type": "f32"
+        }
+      ],
+      "return_type": "u32",
+      "signature": "network_calculate_crc(pos_x: f32, pos_y: f32, pos_z: f32, vel_x: f32, vel_y: f32, vel_z: f32, yaw: f32) u32",
+      "source_line": 2226
+    },
+    {
+      "name": "network_create_replica",
+      "parameters": [
+        {
+          "name": "entity_id",
+          "type": "u16"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "network_create_replica(entity_id: u16) c_int",
+      "source_line": 2217
+    },
+    {
+      "name": "network_get_tick",
+      "parameters": [],
+      "return_type": "u32",
+      "signature": "network_get_tick() u32",
+      "source_line": 2222
+    },
+    {
+      "name": "network_init",
+      "parameters": [
+        {
+          "name": "send_rate_hz",
+          "type": "u32"
+        },
+        {
+          "name": "timeout_ms",
+          "type": "u32"
+        },
+        {
+          "name": "max_rollback_ticks",
+          "type": "u32"
+        },
+        {
+          "name": "crc_check_enabled",
+          "type": "bool"
+        },
+        {
+          "name": "prediction_window",
+          "type": "u32"
+        }
+      ],
+      "return_type": "void",
+      "signature": "network_init(send_rate_hz: u32, timeout_ms: u32, max_rollback_ticks: u32, crc_check_enabled: bool, prediction_window: u32) void",
+      "source_line": 2207
+    },
+    {
+      "name": "prediction_assess_collision_risk",
+      "parameters": [
+        {
+          "name": "a_pos_x",
+          "type": "f32"
+        },
+        {
+          "name": "a_pos_y",
+          "type": "f32"
+        },
+        {
+          "name": "a_pos_z",
+          "type": "f32"
+        },
+        {
+          "name": "a_vel_x",
+          "type": "f32"
+        },
+        {
+          "name": "a_vel_y",
+          "type": "f32"
+        },
+        {
+          "name": "a_vel_z",
+          "type": "f32"
+        },
+        {
+          "name": "b_pos_x",
+          "type": "f32"
+        },
+        {
+          "name": "b_pos_y",
+          "type": "f32"
+        },
+        {
+          "name": "b_pos_z",
+          "type": "f32"
+        },
+        {
+          "name": "b_vel_x",
+          "type": "f32"
+        },
+        {
+          "name": "b_vel_y",
+          "type": "f32"
+        },
+        {
+          "name": "b_vel_z",
+          "type": "f32"
+        },
+        {
+          "name": "collision_radius",
+          "type": "f32"
+        },
+        {
+          "name": "horizon",
+          "type": "f32"
+        },
+        {
+          "name": "step",
+          "type": "f32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "prediction_assess_collision_risk(a_pos_x: f32, a_pos_y: f32, a_pos_z: f32, a_vel_x: f32, a_vel_y: f32, a_vel_z: f32, b_pos_x: f32, b_pos_y: f32, b_pos_z: f32, b_vel_x: f32, b_vel_y: f32, b_vel_z: f32, collision_radius: f32, horizon: f32, step: f32, result_out: [*]f32) c_int",
+      "source_line": 2259
+    },
+    {
+      "name": "prediction_compute_occupancy_conflict",
+      "parameters": [
+        {
+          "name": "a_pos_x",
+          "type": "f32"
+        },
+        {
+          "name": "a_pos_y",
+          "type": "f32"
+        },
+        {
+          "name": "a_pos_z",
+          "type": "f32"
+        },
+        {
+          "name": "a_vel_x",
+          "type": "f32"
+        },
+        {
+          "name": "a_vel_y",
+          "type": "f32"
+        },
+        {
+          "name": "a_vel_z",
+          "type": "f32"
+        },
+        {
+          "name": "a_yaw",
+          "type": "f32"
+        },
+        {
+          "name": "a_yaw_rate",
+          "type": "f32"
+        },
+        {
+          "name": "a_half_x",
+          "type": "f32"
+        },
+        {
+          "name": "a_half_y",
+          "type": "f32"
+        },
+        {
+          "name": "a_half_z",
+          "type": "f32"
+        },
+        {
+          "name": "b_pos_x",
+          "type": "f32"
+        },
+        {
+          "name": "b_pos_y",
+          "type": "f32"
+        },
+        {
+          "name": "b_pos_z",
+          "type": "f32"
+        },
+        {
+          "name": "b_vel_x",
+          "type": "f32"
+        },
+        {
+          "name": "b_vel_y",
+          "type": "f32"
+        },
+        {
+          "name": "b_vel_z",
+          "type": "f32"
+        },
+        {
+          "name": "b_yaw",
+          "type": "f32"
+        },
+        {
+          "name": "b_yaw_rate",
+          "type": "f32"
+        },
+        {
+          "name": "b_half_x",
+          "type": "f32"
+        },
+        {
+          "name": "b_half_y",
+          "type": "f32"
+        },
+        {
+          "name": "b_half_z",
+          "type": "f32"
+        },
+        {
+          "name": "horizon",
+          "type": "f32"
+        },
+        {
+          "name": "step",
+          "type": "f32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "prediction_compute_occupancy_conflict(a_pos_x: f32, a_pos_y: f32, a_pos_z: f32, a_vel_x: f32, a_vel_y: f32, a_vel_z: f32, a_yaw: f32, a_yaw_rate: f32, a_half_x: f32, a_half_y: f32, a_half_z: f32, b_pos_x: f32, b_pos_y: f32, b_pos_z: f32, b_vel_x: f32, b_vel_y: f32, b_vel_z: f32, b_yaw: f32, b_yaw_rate: f32, b_half_x: f32, b_half_y: f32, b_half_z: f32, horizon: f32, step: f32, result_out: [*]f32) c_int",
+      "source_line": 2303
+    },
+    {
+      "name": "prediction_compute_ttc",
+      "parameters": [
+        {
+          "name": "a_pos_x",
+          "type": "f32"
+        },
+        {
+          "name": "a_pos_y",
+          "type": "f32"
+        },
+        {
+          "name": "a_pos_z",
+          "type": "f32"
+        },
+        {
+          "name": "a_vel_x",
+          "type": "f32"
+        },
+        {
+          "name": "a_vel_y",
+          "type": "f32"
+        },
+        {
+          "name": "a_vel_z",
+          "type": "f32"
+        },
+        {
+          "name": "b_pos_x",
+          "type": "f32"
+        },
+        {
+          "name": "b_pos_y",
+          "type": "f32"
+        },
+        {
+          "name": "b_pos_z",
+          "type": "f32"
+        },
+        {
+          "name": "b_vel_x",
+          "type": "f32"
+        },
+        {
+          "name": "b_vel_y",
+          "type": "f32"
+        },
+        {
+          "name": "b_vel_z",
+          "type": "f32"
+        },
+        {
+          "name": "collision_radius",
+          "type": "f32"
+        },
+        {
+          "name": "horizon",
+          "type": "f32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "prediction_compute_ttc(a_pos_x: f32, a_pos_y: f32, a_pos_z: f32, a_vel_x: f32, a_vel_y: f32, a_vel_z: f32, b_pos_x: f32, b_pos_y: f32, b_pos_z: f32, b_vel_x: f32, b_vel_y: f32, b_vel_z: f32, collision_radius: f32, horizon: f32, result_out: [*]f32) c_int",
+      "source_line": 2238
+    },
+    {
+      "name": "query_compute_penetration_aabb_with_layer_mask",
+      "parameters": [
+        {
+          "name": "min_x",
+          "type": "f32"
+        },
+        {
+          "name": "min_y",
+          "type": "f32"
+        },
+        {
+          "name": "min_z",
+          "type": "f32"
+        },
+        {
+          "name": "max_x",
+          "type": "f32"
+        },
+        {
+          "name": "max_y",
+          "type": "f32"
+        },
+        {
+          "name": "max_z",
+          "type": "f32"
+        },
+        {
+          "name": "layer_mask",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        },
+        {
+          "name": "result_len",
+          "type": "u32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "query_compute_penetration_aabb_with_layer_mask(min_x: f32, min_y: f32, min_z: f32, max_x: f32, max_y: f32, max_z: f32, layer_mask: u32, result_out: [*]f32, result_len: u32) c_int",
+      "source_line": 1334
+    },
+    {
+      "name": "query_compute_penetration_aabb_with_manifold",
+      "parameters": [
+        {
+          "name": "min_x",
+          "type": "f32"
+        },
+        {
+          "name": "min_y",
+          "type": "f32"
+        },
+        {
+          "name": "min_z",
+          "type": "f32"
+        },
+        {
+          "name": "max_x",
+          "type": "f32"
+        },
+        {
+          "name": "max_y",
+          "type": "f32"
+        },
+        {
+          "name": "max_z",
+          "type": "f32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        },
+        {
+          "name": "result_len",
+          "type": "u32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "query_compute_penetration_aabb_with_manifold(min_x: f32, min_y: f32, min_z: f32, max_x: f32, max_y: f32, max_z: f32, result_out: [*]f32, result_len: u32) c_int",
+      "source_line": 3867
+    },
+    {
+      "name": "query_compute_penetration_capsule",
+      "parameters": [
+        {
+          "name": "center_x",
+          "type": "f32"
+        },
+        {
+          "name": "center_y",
+          "type": "f32"
+        },
+        {
+          "name": "center_z",
+          "type": "f32"
+        },
+        {
+          "name": "radius",
+          "type": "f32"
+        },
+        {
+          "name": "half_height",
+          "type": "f32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        },
+        {
+          "name": "result_len",
+          "type": "u32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "query_compute_penetration_capsule(center_x: f32, center_y: f32, center_z: f32, radius: f32, half_height: f32, result_out: [*]f32, result_len: u32) c_int",
+      "source_line": 3900
+    },
+    {
+      "name": "query_compute_penetration_capsule_with_layer_mask",
+      "parameters": [
+        {
+          "name": "center_x",
+          "type": "f32"
+        },
+        {
+          "name": "center_y",
+          "type": "f32"
+        },
+        {
+          "name": "center_z",
+          "type": "f32"
+        },
+        {
+          "name": "radius",
+          "type": "f32"
+        },
+        {
+          "name": "half_height",
+          "type": "f32"
+        },
+        {
+          "name": "layer_mask",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        },
+        {
+          "name": "result_len",
+          "type": "u32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "query_compute_penetration_capsule_with_layer_mask(center_x: f32, center_y: f32, center_z: f32, radius: f32, half_height: f32, layer_mask: u32, result_out: [*]f32, result_len: u32) c_int",
+      "source_line": 1371
+    },
+    {
+      "name": "query_get_contract_flags",
+      "parameters": [],
+      "return_type": "u32",
+      "signature": "query_get_contract_flags() u32",
+      "source_line": 325
+    },
+    {
+      "name": "query_get_contract_version",
+      "parameters": [],
+      "return_type": "u32",
+      "signature": "query_get_contract_version() u32",
+      "source_line": 321
+    },
+    {
+      "name": "query_overlap_aabb_with_layer_mask",
+      "parameters": [
+        {
+          "name": "min_x",
+          "type": "f32"
+        },
+        {
+          "name": "min_y",
+          "type": "f32"
+        },
+        {
+          "name": "min_z",
+          "type": "f32"
+        },
+        {
+          "name": "max_x",
+          "type": "f32"
+        },
+        {
+          "name": "max_y",
+          "type": "f32"
+        },
+        {
+          "name": "max_z",
+          "type": "f32"
+        },
+        {
+          "name": "layer_mask",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        },
+        {
+          "name": "result_len",
+          "type": "u32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "query_overlap_aabb_with_layer_mask(min_x: f32, min_y: f32, min_z: f32, max_x: f32, max_y: f32, max_z: f32, layer_mask: u32, result_out: [*]f32, result_len: u32) c_int",
+      "source_line": 1304
+    },
+    {
+      "name": "query_overlap_capsule_with_layer_mask",
+      "parameters": [
+        {
+          "name": "center_x",
+          "type": "f32"
+        },
+        {
+          "name": "center_y",
+          "type": "f32"
+        },
+        {
+          "name": "center_z",
+          "type": "f32"
+        },
+        {
+          "name": "radius",
+          "type": "f32"
+        },
+        {
+          "name": "half_height",
+          "type": "f32"
+        },
+        {
+          "name": "layer_mask",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        },
+        {
+          "name": "result_len",
+          "type": "u32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "query_overlap_capsule_with_layer_mask(center_x: f32, center_y: f32, center_z: f32, radius: f32, half_height: f32, layer_mask: u32, result_out: [*]f32, result_len: u32) c_int",
+      "source_line": 1319
+    },
+    {
+      "name": "ragdoll_break_limb",
+      "parameters": [
+        {
+          "name": "ragdoll_idx",
+          "type": "u8"
+        },
+        {
+          "name": "part_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "void",
+      "signature": "ragdoll_break_limb(ragdoll_idx: u8, part_idx: u8) void",
+      "source_line": 2080
+    },
+    {
+      "name": "ragdoll_create_humanoid",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "f32"
+        },
+        {
+          "name": "y",
+          "type": "f32"
+        },
+        {
+          "name": "z",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "ragdoll_create_humanoid(x: f32, y: f32, z: f32) c_int",
+      "source_line": 2075
+    },
+    {
+      "name": "ragdoll_init",
+      "parameters": [],
+      "return_type": "void",
+      "signature": "ragdoll_init() void",
+      "source_line": 2071
+    },
+    {
+      "name": "ragdoll_is_fully_broken",
+      "parameters": [
+        {
+          "name": "ragdoll_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "ragdoll_is_fully_broken(ragdoll_idx: u8) c_int",
+      "source_line": 2086
+    },
+    {
+      "name": "ragdoll_is_resurrection_ready",
+      "parameters": [
+        {
+          "name": "ragdoll_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "ragdoll_is_resurrection_ready(ragdoll_idx: u8) c_int",
+      "source_line": 2092
+    },
+    {
+      "name": "raycast_single",
+      "parameters": [
+        {
+          "name": "origin_x",
+          "type": "f32"
+        },
+        {
+          "name": "origin_y",
+          "type": "f32"
+        },
+        {
+          "name": "origin_z",
+          "type": "f32"
+        },
+        {
+          "name": "dir_x",
+          "type": "f32"
+        },
+        {
+          "name": "dir_y",
+          "type": "f32"
+        },
+        {
+          "name": "dir_z",
+          "type": "f32"
+        },
+        {
+          "name": "max_dist",
+          "type": "f32"
+        },
+        {
+          "name": "hit_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "raycast_single(origin_x: f32, origin_y: f32, origin_z: f32, dir_x: f32, dir_y: f32, dir_z: f32, max_dist: f32, hit_out: [*]f32) c_int",
+      "source_line": 1212
+    },
+    {
+      "name": "raycast_single_with_layer_mask",
+      "parameters": [
+        {
+          "name": "origin_x",
+          "type": "f32"
+        },
+        {
+          "name": "origin_y",
+          "type": "f32"
+        },
+        {
+          "name": "origin_z",
+          "type": "f32"
+        },
+        {
+          "name": "dir_x",
+          "type": "f32"
+        },
+        {
+          "name": "dir_y",
+          "type": "f32"
+        },
+        {
+          "name": "dir_z",
+          "type": "f32"
+        },
+        {
+          "name": "max_dist",
+          "type": "f32"
+        },
+        {
+          "name": "layer_mask",
+          "type": "u32"
+        },
+        {
+          "name": "hit_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "raycast_single_with_layer_mask(origin_x: f32, origin_y: f32, origin_z: f32, dir_x: f32, dir_y: f32, dir_z: f32, max_dist: f32, layer_mask: u32, hit_out: [*]f32) c_int",
+      "source_line": 1251
+    },
+    {
+      "name": "remove_instance",
+      "parameters": [
+        {
+          "name": "inst_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "remove_instance(inst_idx: u8) c_int",
+      "source_line": 154
+    },
+    {
+      "name": "remove_instance_handle",
+      "parameters": [
+        {
+          "name": "handle",
+          "type": "u32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "remove_instance_handle(handle: u32) c_int",
+      "source_line": 162
+    },
+    {
+      "name": "reset_context",
+      "parameters": [],
+      "return_type": "c_int",
+      "signature": "reset_context() c_int",
+      "source_line": 329
+    },
+    {
+      "name": "resolve_instance_handle",
+      "parameters": [
+        {
+          "name": "handle",
+          "type": "u32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "resolve_instance_handle(handle: u32) c_int",
+      "source_line": 148
+    },
+    {
+      "name": "rewind_calculate_state_hash",
+      "parameters": [
+        {
+          "name": "tick",
+          "type": "u32"
+        },
+        {
+          "name": "pos_x",
+          "type": "f32"
+        },
+        {
+          "name": "pos_y",
+          "type": "f32"
+        },
+        {
+          "name": "pos_z",
+          "type": "f32"
+        }
+      ],
+      "return_type": "u64",
+      "signature": "rewind_calculate_state_hash(tick: u32, pos_x: f32, pos_y: f32, pos_z: f32) u64",
+      "source_line": 4133
+    },
+    {
+      "name": "rewind_collect_world_snapshot_garbage",
+      "parameters": [
+        {
+          "name": "result_out",
+          "type": "[*]u32"
+        },
+        {
+          "name": "result_len",
+          "type": "usize"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "rewind_collect_world_snapshot_garbage(result_out: [*]u32, result_len: usize) c_int",
+      "source_line": 4048
+    },
+    {
+      "name": "rewind_compute_snapshot_ttc",
+      "parameters": [
+        {
+          "name": "tick",
+          "type": "u32"
+        },
+        {
+          "name": "instance_a_idx",
+          "type": "u8"
+        },
+        {
+          "name": "instance_b_idx",
+          "type": "u8"
+        },
+        {
+          "name": "collision_radius",
+          "type": "f32"
+        },
+        {
+          "name": "horizon",
+          "type": "f32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "rewind_compute_snapshot_ttc(tick: u32, instance_a_idx: u8, instance_b_idx: u8, collision_radius: f32, horizon: f32, result_out: [*]f32) c_int",
+      "source_line": 4179
+    },
+    {
+      "name": "rewind_create_world_snapshot_branch",
+      "parameters": [
+        {
+          "name": "fork_tick",
+          "type": "u32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "rewind_create_world_snapshot_branch(fork_tick: u32) c_int",
+      "source_line": 3969
+    },
+    {
+      "name": "rewind_delete_world_snapshot_branch",
+      "parameters": [
+        {
+          "name": "branch_id",
+          "type": "u32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "rewind_delete_world_snapshot_branch(branch_id: u32) c_int",
+      "source_line": 3979
+    },
+    {
+      "name": "rewind_diff_simulated_snapshot",
+      "parameters": [
+        {
+          "name": "tick",
+          "type": "u32"
+        },
+        {
+          "name": "ticks_forward",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]u32"
+        },
+        {
+          "name": "result_len",
+          "type": "u32"
+        }
+      ],
+      "return_type": "u32",
+      "signature": "rewind_diff_simulated_snapshot(tick: u32, ticks_forward: u32, result_out: [*]u32, result_len: u32) u32",
+      "source_line": 4239
+    },
+    {
+      "name": "rewind_export_world_snapshot_network_packet",
+      "parameters": [
+        {
+          "name": "tick",
+          "type": "u32"
+        },
+        {
+          "name": "branch_id",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]u8"
+        },
+        {
+          "name": "result_len",
+          "type": "usize"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "rewind_export_world_snapshot_network_packet(tick: u32, branch_id: u32, result_out: [*]u8, result_len: usize) c_int",
+      "source_line": 4070
+    },
+    {
+      "name": "rewind_export_world_snapshot_network_packet_encrypted",
+      "parameters": [
+        {
+          "name": "tick",
+          "type": "u32"
+        },
+        {
+          "name": "branch_id",
+          "type": "u32"
+        },
+        {
+          "name": "encryption_key",
+          "type": "u64"
+        },
+        {
+          "name": "nonce",
+          "type": "u64"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]u8"
+        },
+        {
+          "name": "result_len",
+          "type": "usize"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "rewind_export_world_snapshot_network_packet_encrypted(tick: u32, branch_id: u32, encryption_key: u64, nonce: u64, result_out: [*]u8, result_len: usize) c_int",
+      "source_line": 4082
+    },
+    {
+      "name": "rewind_forecast_snapshot_positions",
+      "parameters": [
+        {
+          "name": "tick",
+          "type": "u32"
+        },
+        {
+          "name": "time_delta",
+          "type": "f32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        },
+        {
+          "name": "max_instances",
+          "type": "u32"
+        }
+      ],
+      "return_type": "u32",
+      "signature": "rewind_forecast_snapshot_positions(tick: u32, time_delta: f32, result_out: [*]f32, max_instances: u32) u32",
+      "source_line": 4187
+    },
+    {
+      "name": "rewind_get_active_world_snapshot_branch_id",
+      "parameters": [],
+      "return_type": "u32",
+      "signature": "rewind_get_active_world_snapshot_branch_id() u32",
+      "source_line": 3965
+    },
+    {
+      "name": "rewind_get_buffer_count",
+      "parameters": [],
+      "return_type": "u32",
+      "signature": "rewind_get_buffer_count() u32",
+      "source_line": 3957
+    },
+    {
+      "name": "rewind_get_world_snapshot_branch_info",
+      "parameters": [
+        {
+          "name": "branch_id",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]u32"
+        },
+        {
+          "name": "result_len",
+          "type": "usize"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "rewind_get_world_snapshot_branch_info(branch_id: u32, result_out: [*]u32, result_len: usize) c_int",
+      "source_line": 3984
+    },
+    {
+      "name": "rewind_get_world_snapshot_budget_info",
+      "parameters": [
+        {
+          "name": "result_out",
+          "type": "[*]u32"
+        },
+        {
+          "name": "result_len",
+          "type": "usize"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "rewind_get_world_snapshot_budget_info(result_out: [*]u32, result_len: usize) c_int",
+      "source_line": 4038
+    },
+    {
+      "name": "rewind_get_world_snapshot_count",
+      "parameters": [],
+      "return_type": "u32",
+      "signature": "rewind_get_world_snapshot_count() u32",
+      "source_line": 3961
+    },
+    {
+      "name": "rewind_get_world_snapshot_hash",
+      "parameters": [
+        {
+          "name": "tick",
+          "type": "u32"
+        }
+      ],
+      "return_type": "u64",
+      "signature": "rewind_get_world_snapshot_hash(tick: u32) u64",
+      "source_line": 4155
+    },
+    {
+      "name": "rewind_get_world_snapshot_playback_state",
+      "parameters": [
+        {
+          "name": "result_out",
+          "type": "[*]u32"
+        },
+        {
+          "name": "result_len",
+          "type": "usize"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "rewind_get_world_snapshot_playback_state(result_out: [*]u32, result_len: usize) c_int",
+      "source_line": 4114
+    },
+    {
+      "name": "rewind_import_world_snapshot_network_packet",
+      "parameters": [
+        {
+          "name": "packet_ptr",
+          "type": "[*]const u8"
+        },
+        {
+          "name": "packet_len",
+          "type": "usize"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "rewind_import_world_snapshot_network_packet(packet_ptr: [*]const u8, packet_len: usize) c_int",
+      "source_line": 4077
+    },
+    {
+      "name": "rewind_import_world_snapshot_network_packet_encrypted",
+      "parameters": [
+        {
+          "name": "packet_ptr",
+          "type": "[*]const u8"
+        },
+        {
+          "name": "packet_len",
+          "type": "usize"
+        },
+        {
+          "name": "encryption_key",
+          "type": "u64"
+        },
+        {
+          "name": "nonce",
+          "type": "u64"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "rewind_import_world_snapshot_network_packet_encrypted(packet_ptr: [*]const u8, packet_len: usize, encryption_key: u64, nonce: u64) c_int",
+      "source_line": 4096
+    },
+    {
+      "name": "rewind_init",
+      "parameters": [],
+      "return_type": "void",
+      "signature": "rewind_init() void",
+      "source_line": 3927
+    },
+    {
+      "name": "rewind_is_deterministic",
+      "parameters": [],
+      "return_type": "c_int",
+      "signature": "rewind_is_deterministic() c_int",
+      "source_line": 3931
+    },
+    {
+      "name": "rewind_list_world_snapshot_branches",
+      "parameters": [
+        {
+          "name": "result_out",
+          "type": "[*]u32"
+        },
+        {
+          "name": "result_len",
+          "type": "usize"
+        }
+      ],
+      "return_type": "u32",
+      "signature": "rewind_list_world_snapshot_branches(result_out: [*]u32, result_len: usize) u32",
+      "source_line": 3996
+    },
+    {
+      "name": "rewind_load_world_snapshots",
+      "parameters": [
+        {
+          "name": "path_ptr",
+          "type": "[*]const u8"
+        },
+        {
+          "name": "path_len",
+          "type": "usize"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "rewind_load_world_snapshots(path_ptr: [*]const u8, path_len: usize) c_int",
+      "source_line": 4064
+    },
+    {
+      "name": "rewind_merge_world_snapshot_branches",
+      "parameters": [
+        {
+          "name": "target_branch_id",
+          "type": "u32"
+        },
+        {
+          "name": "source_branch_id",
+          "type": "u32"
+        },
+        {
+          "name": "strategy",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]u32"
+        },
+        {
+          "name": "result_len",
+          "type": "usize"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "rewind_merge_world_snapshot_branches(target_branch_id: u32, source_branch_id: u32, strategy: u32, result_out: [*]u32, result_len: usize) c_int",
+      "source_line": 4016
+    },
+    {
+      "name": "rewind_next_world_snapshot_playback_tick",
+      "parameters": [
+        {
+          "name": "tick_out",
+          "type": "*u32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "rewind_next_world_snapshot_playback_tick(tick_out: *u32) c_int",
+      "source_line": 4127
+    },
+    {
+      "name": "rewind_predict_instance_pose",
+      "parameters": [
+        {
+          "name": "tick",
+          "type": "u32"
+        },
+        {
+          "name": "instance_idx",
+          "type": "u8"
+        },
+        {
+          "name": "time_delta",
+          "type": "f32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "rewind_predict_instance_pose(tick: u32, instance_idx: u8, time_delta: f32, result_out: [*]f32) c_int",
+      "source_line": 4169
+    },
+    {
+      "name": "rewind_predict_instance_position",
+      "parameters": [
+        {
+          "name": "tick",
+          "type": "u32"
+        },
+        {
+          "name": "instance_idx",
+          "type": "u8"
+        },
+        {
+          "name": "time_delta",
+          "type": "f32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "rewind_predict_instance_position(tick: u32, instance_idx: u8, time_delta: f32, result_out: [*]f32) c_int",
+      "source_line": 4160
+    },
+    {
+      "name": "rewind_record_state",
+      "parameters": [
+        {
+          "name": "tick",
+          "type": "u32"
+        },
+        {
+          "name": "pos_x",
+          "type": "f32"
+        },
+        {
+          "name": "pos_y",
+          "type": "f32"
+        },
+        {
+          "name": "pos_z",
+          "type": "f32"
+        },
+        {
+          "name": "vel_x",
+          "type": "f32"
+        },
+        {
+          "name": "vel_y",
+          "type": "f32"
+        },
+        {
+          "name": "vel_z",
+          "type": "f32"
+        },
+        {
+          "name": "yaw",
+          "type": "f32"
+        },
+        {
+          "name": "pitch",
+          "type": "f32"
+        },
+        {
+          "name": "roll",
+          "type": "f32"
+        }
+      ],
+      "return_type": "void",
+      "signature": "rewind_record_state(tick: u32, pos_x: f32, pos_y: f32, pos_z: f32, vel_x: f32, vel_y: f32, vel_z: f32, yaw: f32, pitch: f32, roll: f32) void",
+      "source_line": 3935
+    },
+    {
+      "name": "rewind_save_world_snapshots",
+      "parameters": [
+        {
+          "name": "path_ptr",
+          "type": "[*]const u8"
+        },
+        {
+          "name": "path_len",
+          "type": "usize"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "rewind_save_world_snapshots(path_ptr: [*]const u8, path_len: usize) c_int",
+      "source_line": 4058
+    },
+    {
+      "name": "rewind_set_world_snapshot_budget",
+      "parameters": [
+        {
+          "name": "budget",
+          "type": "u32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "rewind_set_world_snapshot_budget(budget: u32) c_int",
+      "source_line": 4033
+    },
+    {
+      "name": "rewind_simulate_snapshot_hash",
+      "parameters": [
+        {
+          "name": "tick",
+          "type": "u32"
+        },
+        {
+          "name": "ticks_forward",
+          "type": "u32"
+        }
+      ],
+      "return_type": "u64",
+      "signature": "rewind_simulate_snapshot_hash(tick: u32, ticks_forward: u32) u64",
+      "source_line": 4214
+    },
+    {
+      "name": "rewind_simulate_snapshot_instance_position",
+      "parameters": [
+        {
+          "name": "tick",
+          "type": "u32"
+        },
+        {
+          "name": "instance_idx",
+          "type": "u8"
+        },
+        {
+          "name": "ticks_forward",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "rewind_simulate_snapshot_instance_position(tick: u32, instance_idx: u8, ticks_forward: u32, result_out: [*]f32) c_int",
+      "source_line": 4203
+    },
+    {
+      "name": "rewind_simulate_snapshot_positions",
+      "parameters": [
+        {
+          "name": "tick",
+          "type": "u32"
+        },
+        {
+          "name": "ticks_forward",
+          "type": "u32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        },
+        {
+          "name": "max_instances",
+          "type": "u32"
+        }
+      ],
+      "return_type": "u32",
+      "signature": "rewind_simulate_snapshot_positions(tick: u32, ticks_forward: u32, result_out: [*]f32, max_instances: u32) u32",
+      "source_line": 4221
+    },
+    {
+      "name": "rewind_start_world_snapshot_playback",
+      "parameters": [
+        {
+          "name": "start_tick",
+          "type": "u32"
+        },
+        {
+          "name": "end_tick",
+          "type": "u32"
+        },
+        {
+          "name": "loop_enabled",
+          "type": "c_int"
+        },
+        {
+          "name": "reverse",
+          "type": "c_int"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "rewind_start_world_snapshot_playback(start_tick: u32, end_tick: u32, loop_enabled: c_int, reverse: c_int) c_int",
+      "source_line": 4106
+    },
+    {
+      "name": "rewind_stop_world_snapshot_playback",
+      "parameters": [],
+      "return_type": "void",
+      "signature": "rewind_stop_world_snapshot_playback() void",
+      "source_line": 4110
+    },
+    {
+      "name": "rewind_switch_world_snapshot_branch",
+      "parameters": [
+        {
+          "name": "branch_id",
+          "type": "u32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "rewind_switch_world_snapshot_branch(branch_id: u32) c_int",
+      "source_line": 3974
+    },
+    {
+      "name": "run_logic_check",
+      "parameters": [
+        {
+          "name": "name",
+          "type": "[*:0]const u8"
+        },
+        {
+          "name": "timeout_ms",
+          "type": "u32"
+        }
+      ],
+      "return_type": "HookResultCode",
+      "signature": "run_logic_check(name: [*:0]const u8, timeout_ms: u32) HookResultCode",
+      "source_line": 353
+    },
+    {
+      "name": "run_ticks",
+      "parameters": [
+        {
+          "name": "max_ticks",
+          "type": "u32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "run_ticks(max_ticks: u32) c_int",
+      "source_line": 194
+    },
+    {
+      "name": "sensors_add",
+      "parameters": [
+        {
+          "name": "sensor_type",
+          "type": "u8"
+        },
+        {
+          "name": "fov",
+          "type": "f32"
+        },
+        {
+          "name": "range",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "sensors_add(sensor_type: u8, fov: f32, range: f32) c_int",
+      "source_line": 3838
+    },
+    {
+      "name": "sensors_calculate_confidence",
+      "parameters": [
+        {
+          "name": "distance",
+          "type": "f32"
+        },
+        {
+          "name": "sensor_type",
+          "type": "u8"
+        },
+        {
+          "name": "weather_visibility",
+          "type": "f32"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "sensors_calculate_confidence(distance: f32, sensor_type: u8, weather_visibility: f32) f32",
+      "source_line": 3852
+    },
+    {
+      "name": "sensors_get_detected_object_count",
+      "parameters": [],
+      "return_type": "u8",
+      "signature": "sensors_get_detected_object_count() u8",
+      "source_line": 3844
+    },
+    {
+      "name": "sensors_init",
+      "parameters": [],
+      "return_type": "void",
+      "signature": "sensors_init() void",
+      "source_line": 3834
+    },
+    {
+      "name": "sensors_predict_object_position",
+      "parameters": [
+        {
+          "name": "pos_x",
+          "type": "f32"
+        },
+        {
+          "name": "pos_y",
+          "type": "f32"
+        },
+        {
+          "name": "pos_z",
+          "type": "f32"
+        },
+        {
+          "name": "vel_x",
+          "type": "f32"
+        },
+        {
+          "name": "vel_y",
+          "type": "f32"
+        },
+        {
+          "name": "vel_z",
+          "type": "f32"
+        },
+        {
+          "name": "time_delta",
+          "type": "f32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "void",
+      "signature": "sensors_predict_object_position(pos_x: f32, pos_y: f32, pos_z: f32, vel_x: f32, vel_y: f32, vel_z: f32, time_delta: f32, result_out: [*]f32) void",
+      "source_line": 3860
+    },
+    {
+      "name": "sensors_raycast_occlusion",
+      "parameters": [
+        {
+          "name": "origin_x",
+          "type": "f32"
+        },
+        {
+          "name": "origin_y",
+          "type": "f32"
+        },
+        {
+          "name": "origin_z",
+          "type": "f32"
+        },
+        {
+          "name": "target_x",
+          "type": "f32"
+        },
+        {
+          "name": "target_y",
+          "type": "f32"
+        },
+        {
+          "name": "target_z",
+          "type": "f32"
+        },
+        {
+          "name": "occluder_x",
+          "type": "f32"
+        },
+        {
+          "name": "occluder_y",
+          "type": "f32"
+        },
+        {
+          "name": "occluder_z",
+          "type": "f32"
+        },
+        {
+          "name": "occluder_radius",
+          "type": "f32"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "sensors_raycast_occlusion(origin_x: f32, origin_y: f32, origin_z: f32, target_x: f32, target_y: f32, target_z: f32, occluder_x: f32, occluder_y: f32, occluder_z: f32, occluder_radius: f32) f32",
+      "source_line": 3848
+    },
+    {
+      "name": "set_joint_breaking_force",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        },
+        {
+          "name": "breaking_force",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "set_joint_breaking_force(joint_idx: u8, breaking_force: f32) c_int",
+      "source_line": 1130
+    },
+    {
+      "name": "set_joint_damping",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        },
+        {
+          "name": "damping",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "set_joint_damping(joint_idx: u8, damping: f32) c_int",
+      "source_line": 972
+    },
+    {
+      "name": "set_joint_limits",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        },
+        {
+          "name": "limit_min",
+          "type": "f32"
+        },
+        {
+          "name": "limit_max",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "set_joint_limits(joint_idx: u8, limit_min: f32, limit_max: f32) c_int",
+      "source_line": 944
+    },
+    {
+      "name": "set_joint_motor_enabled",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        },
+        {
+          "name": "enabled",
+          "type": "c_int"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "set_joint_motor_enabled(joint_idx: u8, enabled: c_int) c_int",
+      "source_line": 1154
+    },
+    {
+      "name": "set_joint_preload",
+      "parameters": [
+        {
+          "name": "joint_idx",
+          "type": "u8"
+        },
+        {
+          "name": "linear_x",
+          "type": "f32"
+        },
+        {
+          "name": "linear_y",
+          "type": "f32"
+        },
+        {
+          "name": "linear_z",
+          "type": "f32"
+        },
+        {
+          "name": "angular",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "set_joint_preload(joint_idx: u8, linear_x: f32, linear_y: f32, linear_z: f32, angular: f32) c_int",
+      "source_line": 987
+    },
+    {
+      "name": "set_time_scale",
+      "parameters": [
+        {
+          "name": "scale",
+          "type": "f32"
+        }
+      ],
+      "return_type": "void",
+      "signature": "set_time_scale(scale: f32) void",
+      "source_line": 443
+    },
+    {
+      "name": "shutdown_kernel",
+      "parameters": [],
+      "return_type": "c_int",
+      "signature": "shutdown_kernel() c_int",
+      "source_line": 342
+    },
+    {
+      "name": "solve_joints",
+      "parameters": [],
+      "return_type": "void",
+      "signature": "solve_joints() void",
+      "source_line": 923
+    },
+    {
+      "name": "spawn_instance",
+      "parameters": [
+        {
+          "name": "entity_id",
+          "type": "u16"
+        },
+        {
+          "name": "x",
+          "type": "i32"
+        },
+        {
+          "name": "y",
+          "type": "i32"
+        },
+        {
+          "name": "z",
+          "type": "i32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "spawn_instance(entity_id: u16, x: i32, y: i32, z: i32) c_int",
+      "source_line": 118
+    },
+    {
+      "name": "spawn_instance_handle",
+      "parameters": [
+        {
+          "name": "entity_id",
+          "type": "u16"
+        },
+        {
+          "name": "x",
+          "type": "i32"
+        },
+        {
+          "name": "y",
+          "type": "i32"
+        },
+        {
+          "name": "z",
+          "type": "i32"
+        }
+      ],
+      "return_type": "u32",
+      "signature": "spawn_instance_handle(entity_id: u16, x: i32, y: i32, z: i32) u32",
+      "source_line": 128
+    },
+    {
+      "name": "sphere_cast",
+      "parameters": [
+        {
+          "name": "center_x",
+          "type": "f32"
+        },
+        {
+          "name": "center_y",
+          "type": "f32"
+        },
+        {
+          "name": "center_z",
+          "type": "f32"
+        },
+        {
+          "name": "radius",
+          "type": "f32"
+        },
+        {
+          "name": "dir_x",
+          "type": "f32"
+        },
+        {
+          "name": "dir_y",
+          "type": "f32"
+        },
+        {
+          "name": "dir_z",
+          "type": "f32"
+        },
+        {
+          "name": "max_dist",
+          "type": "f32"
+        },
+        {
+          "name": "hit_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "sphere_cast(center_x: f32, center_y: f32, center_z: f32, radius: f32, dir_x: f32, dir_y: f32, dir_z: f32, max_dist: f32, hit_out: [*]f32) c_int",
+      "source_line": 1229
+    },
+    {
+      "name": "sphere_cast_with_layer_mask",
+      "parameters": [
+        {
+          "name": "center_x",
+          "type": "f32"
+        },
+        {
+          "name": "center_y",
+          "type": "f32"
+        },
+        {
+          "name": "center_z",
+          "type": "f32"
+        },
+        {
+          "name": "radius",
+          "type": "f32"
+        },
+        {
+          "name": "dir_x",
+          "type": "f32"
+        },
+        {
+          "name": "dir_y",
+          "type": "f32"
+        },
+        {
+          "name": "dir_z",
+          "type": "f32"
+        },
+        {
+          "name": "max_dist",
+          "type": "f32"
+        },
+        {
+          "name": "layer_mask",
+          "type": "u32"
+        },
+        {
+          "name": "hit_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "sphere_cast_with_layer_mask(center_x: f32, center_y: f32, center_z: f32, radius: f32, dir_x: f32, dir_y: f32, dir_z: f32, max_dist: f32, layer_mask: u32, hit_out: [*]f32) c_int",
+      "source_line": 1276
+    },
+    {
+      "name": "suspension_calculate_natural_frequency",
+      "parameters": [
+        {
+          "name": "mass",
+          "type": "f32"
+        },
+        {
+          "name": "spring_rate",
+          "type": "f32"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "suspension_calculate_natural_frequency(mass: f32, spring_rate: f32) f32",
+      "source_line": 3601
+    },
+    {
+      "name": "suspension_calculate_spring_force",
+      "parameters": [
+        {
+          "name": "current_length",
+          "type": "f32"
+        },
+        {
+          "name": "rest_length",
+          "type": "f32"
+        },
+        {
+          "name": "config",
+          "type": "SuspensionConfigFFI"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "suspension_calculate_spring_force(current_length: f32, rest_length: f32, config: SuspensionConfigFFI) f32",
+      "source_line": 3575
+    },
+    {
+      "name": "suspension_create",
+      "parameters": [
+        {
+          "name": "config",
+          "type": "SuspensionConfigFFI"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "suspension_create(config: SuspensionConfigFFI) c_int",
+      "source_line": 3561
+    },
+    {
+      "name": "suspension_init",
+      "parameters": [],
+      "return_type": "void",
+      "signature": "suspension_init() void",
+      "source_line": 3557
+    },
+    {
+      "name": "terrain_add_patch",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "i32"
+        },
+        {
+          "name": "z",
+          "type": "i32"
+        },
+        {
+          "name": "radius",
+          "type": "i32"
+        },
+        {
+          "name": "surface_type",
+          "type": "u8"
+        }
+      ],
+      "return_type": "void",
+      "signature": "terrain_add_patch(x: i32, z: i32, radius: i32, surface_type: u8) void",
+      "source_line": 3713
+    },
+    {
+      "name": "terrain_calculate_hydroplaning_risk",
+      "parameters": [
+        {
+          "name": "speed",
+          "type": "f32"
+        },
+        {
+          "name": "water_depth",
+          "type": "f32"
+        },
+        {
+          "name": "tire_width",
+          "type": "f32"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "terrain_calculate_hydroplaning_risk(speed: f32, water_depth: f32, tire_width: f32) f32",
+      "source_line": 3730
+    },
+    {
+      "name": "terrain_get_friction_at",
+      "parameters": [
+        {
+          "name": "world_x",
+          "type": "f32"
+        },
+        {
+          "name": "world_z",
+          "type": "f32"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "terrain_get_friction_at(world_x: f32, world_z: f32) f32",
+      "source_line": 3722
+    },
+    {
+      "name": "terrain_get_rolling_resistance_at",
+      "parameters": [
+        {
+          "name": "world_x",
+          "type": "f32"
+        },
+        {
+          "name": "world_z",
+          "type": "f32"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "terrain_get_rolling_resistance_at(world_x: f32, world_z: f32) f32",
+      "source_line": 3726
+    },
+    {
+      "name": "terrain_get_surface_at",
+      "parameters": [
+        {
+          "name": "world_x",
+          "type": "f32"
+        },
+        {
+          "name": "world_z",
+          "type": "f32"
+        }
+      ],
+      "return_type": "u8",
+      "signature": "terrain_get_surface_at(world_x: f32, world_z: f32) u8",
+      "source_line": 3718
+    },
+    {
+      "name": "terrain_get_weather_visibility",
+      "parameters": [],
+      "return_type": "f32",
+      "signature": "terrain_get_weather_visibility() f32",
+      "source_line": 3734
+    },
+    {
+      "name": "terrain_init",
+      "parameters": [],
+      "return_type": "void",
+      "signature": "terrain_init() void",
+      "source_line": 3709
+    },
+    {
+      "name": "tire_calculate_friction_circle",
+      "parameters": [
+        {
+          "name": "longitudinal",
+          "type": "f32"
+        },
+        {
+          "name": "lateral",
+          "type": "f32"
+        },
+        {
+          "name": "max_friction",
+          "type": "f32"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "tire_calculate_friction_circle(longitudinal: f32, lateral: f32, max_friction: f32) f32",
+      "source_line": 3532
+    },
+    {
+      "name": "tire_calculate_slip_ratio",
+      "parameters": [
+        {
+          "name": "tire_idx",
+          "type": "u8"
+        },
+        {
+          "name": "vehicle_speed",
+          "type": "f32"
+        },
+        {
+          "name": "tire_radius",
+          "type": "f32"
+        }
+      ],
+      "return_type": "f32",
+      "signature": "tire_calculate_slip_ratio(tire_idx: u8, vehicle_speed: f32, tire_radius: f32) f32",
+      "source_line": 3526
+    },
+    {
+      "name": "tire_check_hydroplaning",
+      "parameters": [
+        {
+          "name": "tire_idx",
+          "type": "u8"
+        },
+        {
+          "name": "water_depth",
+          "type": "f32"
+        },
+        {
+          "name": "speed",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "tire_check_hydroplaning(tire_idx: u8, water_depth: f32, speed: f32) c_int",
+      "source_line": 3536
+    },
+    {
+      "name": "tire_create",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "f32"
+        },
+        {
+          "name": "y",
+          "type": "f32"
+        },
+        {
+          "name": "z",
+          "type": "f32"
+        },
+        {
+          "name": "config",
+          "type": "TireConfigFFI"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "tire_create(x: f32, y: f32, z: f32, config: TireConfigFFI) c_int",
+      "source_line": 3507
+    },
+    {
+      "name": "tire_init",
+      "parameters": [],
+      "return_type": "void",
+      "signature": "tire_init() void",
+      "source_line": 3503
+    },
+    {
+      "name": "trace_export_visualization",
+      "parameters": [
+        {
+          "name": "include_pending",
+          "type": "c_int"
+        },
+        {
+          "name": "min_tick",
+          "type": "u32"
+        },
+        {
+          "name": "max_tick",
+          "type": "u32"
+        },
+        {
+          "name": "type_mask",
+          "type": "u16"
+        },
+        {
+          "name": "subject_filter_enabled",
+          "type": "c_int"
+        },
+        {
+          "name": "subject_id",
+          "type": "u16"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        },
+        {
+          "name": "max_entries",
+          "type": "u32"
+        }
+      ],
+      "return_type": "u32",
+      "signature": "trace_export_visualization(include_pending: c_int, min_tick: u32, max_tick: u32, type_mask: u16, subject_filter_enabled: c_int, subject_id: u16, result_out: [*]f32, max_entries: u32) u32",
+      "source_line": 244
+    },
+    {
+      "name": "trace_get_visualization_entry_stride",
+      "parameters": [],
+      "return_type": "u32",
+      "signature": "trace_get_visualization_entry_stride() u32",
+      "source_line": 240
+    },
+    {
+      "name": "vehicle_check_flipped",
+      "parameters": [
+        {
+          "name": "vehicle_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "vehicle_check_flipped(vehicle_idx: u8) c_int",
+      "source_line": 2138
+    },
+    {
+      "name": "vehicle_create_aircraft",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "f32"
+        },
+        {
+          "name": "y",
+          "type": "f32"
+        },
+        {
+          "name": "z",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "vehicle_create_aircraft(x: f32, y: f32, z: f32) c_int",
+      "source_line": 2111
+    },
+    {
+      "name": "vehicle_create_boat",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "f32"
+        },
+        {
+          "name": "y",
+          "type": "f32"
+        },
+        {
+          "name": "z",
+          "type": "f32"
+        },
+        {
+          "name": "yaw",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "vehicle_create_boat(x: f32, y: f32, z: f32, yaw: f32) c_int",
+      "source_line": 2116
+    },
+    {
+      "name": "vehicle_create_car",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "f32"
+        },
+        {
+          "name": "y",
+          "type": "f32"
+        },
+        {
+          "name": "z",
+          "type": "f32"
+        },
+        {
+          "name": "yaw",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "vehicle_create_car(x: f32, y: f32, z: f32, yaw: f32) c_int",
+      "source_line": 2106
+    },
+    {
+      "name": "vehicle_create_hovercraft",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "f32"
+        },
+        {
+          "name": "y",
+          "type": "f32"
+        },
+        {
+          "name": "z",
+          "type": "f32"
+        },
+        {
+          "name": "yaw",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "vehicle_create_hovercraft(x: f32, y: f32, z: f32, yaw: f32) c_int",
+      "source_line": 2121
+    },
+    {
+      "name": "vehicle_get_ai_link_info",
+      "parameters": [
+        {
+          "name": "vehicle_idx",
+          "type": "u8"
+        },
+        {
+          "name": "out_ai_id",
+          "type": "[*]u16"
+        },
+        {
+          "name": "out_speed",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "vehicle_get_ai_link_info(vehicle_idx: u8, out_ai_id: [*]u16, out_speed: [*]f32) c_int",
+      "source_line": 2194
+    },
+    {
+      "name": "vehicle_get_forward_dir",
+      "parameters": [
+        {
+          "name": "vehicle_idx",
+          "type": "u8"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "void",
+      "signature": "vehicle_get_forward_dir(vehicle_idx: u8, result_out: [*]f32) void",
+      "source_line": 2126
+    },
+    {
+      "name": "vehicle_init",
+      "parameters": [],
+      "return_type": "void",
+      "signature": "vehicle_init() void",
+      "source_line": 2102
+    },
+    {
+      "name": "vehicle_link_ai",
+      "parameters": [
+        {
+          "name": "vehicle_idx",
+          "type": "u8"
+        },
+        {
+          "name": "ai_vehicle_id",
+          "type": "u16"
+        },
+        {
+          "name": "initial_target_speed",
+          "type": "f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "vehicle_link_ai(vehicle_idx: u8, ai_vehicle_id: u16, initial_target_speed: f32) c_int",
+      "source_line": 2176
+    },
+    {
+      "name": "vehicle_predictive_conflict_response",
+      "parameters": [
+        {
+          "name": "vehicle_a_idx",
+          "type": "u8"
+        },
+        {
+          "name": "vehicle_b_idx",
+          "type": "u8"
+        },
+        {
+          "name": "dt",
+          "type": "f32"
+        },
+        {
+          "name": "result_out",
+          "type": "[*]f32"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "vehicle_predictive_conflict_response(vehicle_a_idx: u8, vehicle_b_idx: u8, dt: f32, result_out: [*]f32) c_int",
+      "source_line": 2144
+    },
+    {
+      "name": "vehicle_unlink_ai",
+      "parameters": [
+        {
+          "name": "vehicle_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "vehicle_unlink_ai(vehicle_idx: u8) c_int",
+      "source_line": 2185
+    },
+    {
+      "name": "wake_instance",
+      "parameters": [
+        {
+          "name": "inst_idx",
+          "type": "u8"
+        }
+      ],
+      "return_type": "c_int",
+      "signature": "wake_instance(inst_idx: u8) c_int",
+      "source_line": 436
+    }
+  ]
+}

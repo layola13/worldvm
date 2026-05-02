@@ -1,0 +1,177 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version label to package, for example 0.1.0"
+        required: true
+        type: string
+
+permissions:
+  attestations: write
+  contents: write
+  id-token: write
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            zig-package: zig-x86_64-linux
+            artifact-suffix: linux-x86_64
+            archive-extension: tar.xz
+            run-release-gate: true
+          - os: macos-14
+            zig-package: zig-aarch64-macos
+            artifact-suffix: macos-arm64
+            archive-extension: tar.xz
+            run-release-gate: false
+          - os: windows-latest
+            zig-package: zig-x86_64-windows
+            artifact-suffix: windows-x86_64
+            archive-extension: zip
+            run-release-gate: false
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      ZIG_VERSION: 0.14.1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Zig
+        shell: bash
+        run: |
+          archive="${{ matrix.zig-package }}-${ZIG_VERSION}.${{ matrix.archive-extension }}"
+          curl -fsSLO "https://ziglang.org/download/${ZIG_VERSION}/${archive}"
+          if [ "${{ matrix.archive-extension }}" = "zip" ]; then
+            7z x "${archive}"
+          else
+            tar -xf "${archive}"
+          fi
+          echo "$PWD/${{ matrix.zig-package }}-${ZIG_VERSION}" >> "$GITHUB_PATH"
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="${{ inputs.version }}"
+          fi
+          if [ -z "$version" ]; then
+            echo "version is required" >&2
+            exit 1
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Run Linux release gate
+        if: ${{ matrix.run-release-gate }}
+        shell: bash
+        run: |
+          zig build check-matrix
+          python tools/verify_entity16_abi.py
+          python tools/verify_ffi_manifest.py
+          python tools/verify_python_wrapper_api.py
+          python tools/verify_readme_snippets.py README.md
+          python -m py_compile worldvm.py examples/python_lifecycle.py tools/*.py tests/test_package_release.py tests/test_release_verifier.py tests/test_smoke_release_package.py tests/test_worldvm_wrapper.py tests/physics/test_acceptance_scenario.py
+          python -m unittest tests.test_package_release
+          python -m unittest tests.test_release_verifier
+          python -m unittest tests.test_smoke_release_package
+          python -m unittest tests.test_worldvm_wrapper
+          zig build test-fast
+          PYTHONDONTWRITEBYTECODE=1 python -m unittest tests.physics.test_acceptance_scenario
+
+      - name: Build release package
+        shell: bash
+        run: python tools/package_release.py --version "${{ steps.version.outputs.value }}"
+
+      - name: Run Python lifecycle example
+        shell: bash
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python examples/python_lifecycle.py
+
+      - name: Verify release package
+        shell: bash
+        run: python tools/verify_release_package.py dist/*.tar.gz
+
+      - name: Smoke release package
+        shell: bash
+        run: python tools/smoke_release_package.py dist/*.tar.gz
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: worldvm-${{ steps.version.outputs.value }}-${{ matrix.artifact-suffix }}
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          if-no-files-found: error
+
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="${{ inputs.version }}"
+          fi
+          if [ -z "$version" ]; then
+            echo "version is required" >&2
+            exit 1
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: worldvm-${{ steps.version.outputs.value }}-*
+          merge-multiple: true
+
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+
+      - name: Extract release notes
+        shell: bash
+        run: python3 tools/extract_release_notes.py --version "${{ steps.version.outputs.value }}" --output release-notes.md --require-bullet --reject-placeholder
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          tag="v${VERSION}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --notes-file release-notes.md
+            gh release upload "$tag" dist/*.tar.gz dist/*.tar.gz.sha256 --clobber
+          else
+            gh release create "$tag" dist/*.tar.gz dist/*.tar.gz.sha256 --title "WorldVM ${VERSION}" --notes-file release-notes.md
+          fi

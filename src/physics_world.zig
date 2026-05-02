@@ -389,7 +389,7 @@ pub fn recordSnapshot(world: *PhysicsWorld) void {
 fn runStep(world: *PhysicsWorld, cfg: StepConfig) StepResult {
     physics_kernel.beginWorldStep(&world.tick, world.s1024);
 
-    if (cfg.apply_continuous_physics and !cfg.run_pre_motion_constraint) {
+    if (cfg.apply_continuous_physics) {
         physics_kernel.runPreStepSystems(
             world.s1024,
             world.entities,
@@ -402,16 +402,25 @@ fn runStep(world: *PhysicsWorld, cfg: StepConfig) StepResult {
     var pre_changed = false;
     var observed_pair_count: usize = world.broadphase_pair_count;
     if (cfg.run_pre_motion_constraint) {
-        const pre_constraint = physics_kernel.runPreMotionConstraintStage(
-            world.s1024,
-            world.entities,
-            world.joints[0..world.joint_count],
-            world.broadphase_pairs[0..],
-            cfg.time_scale,
-            SLEEP_TIME_THRESHOLD,
-            cfg.dt,
-            &world.pending_joint_breaks,
-        );
+        const pre_constraint = if (cfg.apply_continuous_physics)
+            physics_kernel.runConstraintStage(
+                world.s1024,
+                world.entities,
+                world.joints[0..world.joint_count],
+                world.broadphase_pairs[0..],
+                &world.pending_joint_breaks,
+            )
+        else
+            physics_kernel.runPreMotionConstraintStage(
+                world.s1024,
+                world.entities,
+                world.joints[0..world.joint_count],
+                world.broadphase_pairs[0..],
+                cfg.time_scale,
+                SLEEP_TIME_THRESHOLD,
+                cfg.dt,
+                &world.pending_joint_breaks,
+            );
         world.broadphase_pair_count = pre_constraint.pair_count;
         observed_pair_count = pre_constraint.pair_count;
         pre_changed = pre_constraint.changed;

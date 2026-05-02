@@ -1068,7 +1068,7 @@ pub fn validateScene(s1024: *const scene1024.Scene1024, entities: []entity16.Ent
     return result;
 }
 
-/// Clamp instance state to valid range
+/// Clamp instance velocity and position into configured safety bounds.
 pub fn clampInstance(inst: *scene32.Instance) void {
     if (!isValidFloat(@as(f32, @floatFromInt(inst.vel_x)))) {
         inst.vel_x = 0;
@@ -1080,6 +1080,7 @@ pub fn clampInstance(inst: *scene32.Instance) void {
         inst.vel_z = 0;
     }
 
+    // Velocity magnitude clamping (safety limit)
     const velocity_plan = computeVelocityLimitPlan(
         @as(f32, @floatFromInt(inst.vel_x)),
         @as(f32, @floatFromInt(inst.vel_y)),
@@ -1089,17 +1090,16 @@ pub fn clampInstance(inst: *scene32.Instance) void {
         false,
     );
     if (velocity_plan.valid and velocity_plan.clamped) {
-        inst.vel_x = @intFromFloat(velocity_plan.clamped_x);
-        inst.vel_y = @intFromFloat(velocity_plan.clamped_y);
-        inst.vel_z = @intFromFloat(velocity_plan.clamped_z);
+        inst.vel_x = @as(i16, @intFromFloat(velocity_plan.clamped_x));
+        inst.vel_y = @as(i16, @intFromFloat(velocity_plan.clamped_y));
+        inst.vel_z = @as(i16, @intFromFloat(velocity_plan.clamped_z));
     }
 
-    if (inst.pos_x < g_defense_system.config.position_min) inst.pos_x = g_defense_system.config.position_min;
-    if (inst.pos_x > g_defense_system.config.position_max) inst.pos_x = g_defense_system.config.position_max;
-    if (inst.pos_y < g_defense_system.config.position_min) inst.pos_y = g_defense_system.config.position_min;
-    if (inst.pos_y > g_defense_system.config.position_max) inst.pos_y = g_defense_system.config.position_max;
-    if (inst.pos_z < g_defense_system.config.position_min) inst.pos_z = g_defense_system.config.position_min;
-    if (inst.pos_z > g_defense_system.config.position_max) inst.pos_z = g_defense_system.config.position_max;
+    if (g_defense_system.config.bounds_check_enabled) {
+        inst.pos_x = std.math.clamp(inst.pos_x, g_defense_system.config.position_min, g_defense_system.config.position_max);
+        inst.pos_y = std.math.clamp(inst.pos_y, g_defense_system.config.position_min, g_defense_system.config.position_max);
+        inst.pos_z = std.math.clamp(inst.pos_z, g_defense_system.config.position_min, g_defense_system.config.position_max);
+    }
 }
 
 /// Clamp all instances in scene

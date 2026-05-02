@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ZIG_VERSION: 0.14.1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Zig
+        run: |
+          curl -fsSLO "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+          tar -xf "zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+          echo "$PWD/zig-x86_64-linux-${ZIG_VERSION}" >> "$GITHUB_PATH"
+
+      - name: Show tool versions
+        run: |
+          zig version
+          python3 --version
+
+      - name: Check Zig test matrix
+        run: zig build check-matrix
+
+      - name: Check Entity16 ABI manifest
+        run: python3 tools/verify_entity16_abi.py
+
+      - name: Check FFI symbol manifest
+        run: python3 tools/verify_ffi_manifest.py
+
+      - name: Check Python wrapper FFI references
+        run: python3 tools/verify_python_wrapper_api.py
+
+      - name: Check README Python snippets
+        run: python3 tools/verify_readme_snippets.py README.md
+
+      - name: Run fast Zig tests
+        run: zig build test-fast
+
+      - name: Check Python wrapper syntax
+        run: python3 -m py_compile worldvm.py examples/python_lifecycle.py tools/*.py tests/test_package_release.py tests/test_release_verifier.py tests/test_smoke_release_package.py tests/test_worldvm_wrapper.py tests/physics/test_acceptance_scenario.py
+
+      - name: Run package tooling unit tests
+        run: python3 -m unittest tests.test_package_release
+
+      - name: Run release verifier unit tests
+        run: python3 -m unittest tests.test_release_verifier
+
+      - name: Run release smoke unit tests
+        run: python3 -m unittest tests.test_smoke_release_package
+
+      - name: Run Python wrapper unit tests
+        run: python3 -m unittest tests.test_worldvm_wrapper
+
+      - name: Build executable and shared library
+        run: zig build
+
+      - name: Build release package
+        run: python3 tools/package_release.py --version ci --skip-build
+
+      - name: Verify release package
+        run: python3 tools/verify_release_package.py dist/*.tar.gz
+
+      - name: Smoke release package
+        run: python3 tools/smoke_release_package.py dist/*.tar.gz
+
+      - name: Run CLI smoke
+        run: zig build run -- run --scenario apple_table --ticks 3
+
+      - name: Run Python FFI smoke
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python3 - <<'PY'
+          from worldvm import WorldVM
+
+          vm = WorldVM()
+          try:
+              vm.reset()
+              handle = vm.spawn_handle(0, 1, 2, 3)
+              assert handle != 0
+              assert vm.instance_count() == 1
+              assert vm.resolve_instance_handle(handle) == 0
+              assert vm.mark_instance_broken_handle(handle) == 0
+              assert vm.compact_broken_instances() == 1
+              assert vm.resolve_instance_handle(handle) == -1
+              assert vm.instance_count() == 0
+          finally:
+              vm.close()
+          PY
+
+      - name: Run Python lifecycle example
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python3 examples/python_lifecycle.py
+
+      - name: Run scenario acceptance smoke
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python3 -m unittest tests.physics.test_acceptance_scenario
+
+      - name: Run benchmark smoke
+        run: python3 tools/benchmark_scenarios.py --scenario apple_table --ticks 3 --runs 1 --skip-build --baseline benchmarks/ci_benchmark_baseline.json

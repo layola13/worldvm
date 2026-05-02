@@ -141,5 +141,54 @@ class TestInstanceStateAPI(unittest.TestCase):
         self.assertEqual(result, -1)
 
 
+class TestScenarioLevelMaterialMediumLifecycle(unittest.TestCase):
+    """Scenario-level smoke linking terrain, material response, handles, and lifecycle observation"""
+
+    def setUp(self):
+        self.vm = WorldVM()
+        self.vm.lib.terrain_init()
+        self.vm.lib.reset_context()
+        self.vm.lib.clear_joints()
+
+    def tearDown(self):
+        self.vm.lib.reset_context()
+        self.vm.lib.clear_joints()
+        self.vm.close()
+
+    def test_concrete_mud_water_instances_keep_distinct_medium_and_lifecycle(self):
+        self.vm.lib.terrain_add_patch(0, 0, 20, 2)     # concrete -> solid
+        self.vm.lib.terrain_add_patch(100, 0, 20, 6)   # mud -> soft
+        self.vm.lib.terrain_add_patch(200, 0, 20, 9)   # water -> liquid
+
+        concrete_handle = self.vm.spawn_handle(0, 0, 10, 0)
+        mud_handle = self.vm.spawn_handle(0, 100, 10, 0)
+        water_handle = self.vm.spawn_handle(0, 200, 10, 0)
+        self.assertNotEqual(concrete_handle, 0)
+        self.assertNotEqual(mud_handle, 0)
+        self.assertNotEqual(water_handle, 0)
+
+        concrete_idx = self.vm.resolve_instance_handle(concrete_handle)
+        mud_idx = self.vm.resolve_instance_handle(mud_handle)
+        water_idx = self.vm.resolve_instance_handle(water_handle)
+        self.assertEqual((concrete_idx, mud_idx, water_idx), (0, 1, 2))
+
+        self.assertEqual(self.vm.lib.entity_get_medium_type(concrete_idx), 0)
+        self.assertEqual(self.vm.lib.entity_get_medium_type(mud_idx), 1)
+        self.assertEqual(self.vm.lib.entity_get_medium_type(water_idx), 2)
+
+        concrete_damage = self.vm.lib.material_pairing_calculate_impact_damage(10.0, 5.0, 2, 3)
+        mud_damage = self.vm.lib.material_pairing_calculate_impact_damage(10.0, 5.0, 6, 3)
+        water_buoyancy = self.vm.lib.material_pairing_get_buoyancy(9)
+        self.assertGreater(concrete_damage, mud_damage)
+        self.assertGreater(water_buoyancy, 0.0)
+
+        self.assertEqual(self.vm.mark_instance_broken_handle(mud_handle), 0)
+        self.assertEqual(self.vm.lib.is_instance_broken(mud_idx), 1)
+        self.assertEqual(self.vm.compact_broken_instances(), 1)
+        self.assertEqual(self.vm.resolve_instance_handle(mud_handle), -1)
+        self.assertGreaterEqual(self.vm.resolve_instance_handle(water_handle), 0)
+        self.assertEqual(self.vm.instance_count(), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

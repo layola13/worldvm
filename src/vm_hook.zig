@@ -117,13 +117,78 @@ pub export fn init_kernel() c_int {
 
 pub export fn spawn_instance(entity_id: u16, x: i32, y: i32, z: i32) c_int {
     const s = g_state orelse return -1;
-    // P0 fix: validate entity_id to prevent out-of-bounds access
     if (entity_id >= 64) return -1;
     const inst = scene32.Instance{ .entity_id = entity_id, .pos_x = x, .pos_y = y, .pos_z = z, .rot_yaw = 0, .rot_pitch = 0, .rot_roll = 0, .state = .idle, .sleep_tick = 0, ._reserved = .{0} ** 2 };
     _ = s.s1024.addInstance(inst) catch return -1;
     s.s1024.rebuildOccupancy(&s.entities) catch return -1;
     s.engine.stable = false;
     return 0;
+}
+
+pub export fn spawn_instance_handle(entity_id: u16, x: i32, y: i32, z: i32) u32 {
+    const s = g_state orelse return scene1024.INVALID_INSTANCE_HANDLE;
+    if (entity_id >= 64) return scene1024.INVALID_INSTANCE_HANDLE;
+    const inst = scene32.Instance{ .entity_id = entity_id, .pos_x = x, .pos_y = y, .pos_z = z, .rot_yaw = 0, .rot_pitch = 0, .rot_roll = 0, .state = .idle, .sleep_tick = 0, ._reserved = .{0} ** 2 };
+    const idx = s.s1024.addInstance(inst) catch return scene1024.INVALID_INSTANCE_HANDLE;
+    s.s1024.rebuildOccupancy(&s.entities) catch return scene1024.INVALID_INSTANCE_HANDLE;
+    s.engine.stable = false;
+    return s.s1024.getInstanceHandle(idx);
+}
+
+pub export fn get_instance_count() u8 {
+    const s = g_state orelse return 0;
+    return s.s1024.instance_count;
+}
+
+pub export fn get_instance_handle(inst_idx: u8) u32 {
+    const s = g_state orelse return scene1024.INVALID_INSTANCE_HANDLE;
+    return s.s1024.getInstanceHandle(inst_idx);
+}
+
+pub export fn resolve_instance_handle(handle: u32) c_int {
+    const s = g_state orelse return -1;
+    const idx = s.s1024.resolveInstanceHandle(handle) orelse return -1;
+    return @as(c_int, @intCast(idx));
+}
+
+pub export fn remove_instance(inst_idx: u8) c_int {
+    const s = g_state orelse return -1;
+    if (!s.s1024.removeInstance(inst_idx)) return -1;
+    s.s1024.rebuildOccupancy(&s.entities) catch return -1;
+    s.engine.stable = false;
+    return 0;
+}
+
+pub export fn remove_instance_handle(handle: u32) c_int {
+    const s = g_state orelse return -1;
+    if (!s.s1024.removeInstanceByHandle(handle)) return -1;
+    s.s1024.rebuildOccupancy(&s.entities) catch return -1;
+    s.engine.stable = false;
+    return 0;
+}
+
+pub export fn mark_instance_broken(inst_idx: u8) c_int {
+    const s = g_state orelse return -1;
+    if (!s.s1024.markInstanceBroken(inst_idx)) return -1;
+    s.engine.stable = false;
+    return 0;
+}
+
+pub export fn mark_instance_broken_handle(handle: u32) c_int {
+    const s = g_state orelse return -1;
+    if (!s.s1024.markInstanceBrokenByHandle(handle)) return -1;
+    s.engine.stable = false;
+    return 0;
+}
+
+pub export fn compact_broken_instances() u8 {
+    const s = g_state orelse return 0;
+    const removed = s.s1024.compactBrokenInstances();
+    if (removed > 0) {
+        s.s1024.rebuildOccupancy(&s.entities) catch {};
+        s.engine.stable = false;
+    }
+    return removed;
 }
 
 pub export fn run_ticks(max_ticks: u32) c_int {
@@ -3096,6 +3161,61 @@ test "apply_vortex_force_field applies tangential swirl and keeps out-of-range u
     try std.testing.expectApproxEqAbs(@as(f32, 0.0), far_delta, 0.0001);
 }
 
+test "instance lifecycle exports remove and compact scene instances" {
+    try std.testing.expectEqual(@as(c_int, 0), init_kernel());
+    defer std.testing.expectEqual(@as(c_int, 0), shutdown_kernel()) catch {};
+    try std.testing.expectEqual(@as(c_int, 0), reset_context());
+
+    try std.testing.expectEqual(@as(c_int, 0), spawn_instance(0, 1, 2, 3));
+    try std.testing.expectEqual(@as(c_int, 0), spawn_instance(1, 4, 5, 6));
+    try std.testing.expectEqual(@as(c_int, 0), spawn_instance(2, 7, 8, 9));
+    try std.testing.expectEqual(@as(u8, 3), get_instance_count());
+
+    try std.testing.expectEqual(@as(c_int, 0), remove_instance(1));
+    try std.testing.expectEqual(@as(u8, 2), get_instance_count());
+
+    var pos: [3]i32 = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), get_instance_pos(1, &pos));
+    try std.testing.expectEqual(@as(i32, 7), pos[0]);
+    try std.testing.expectEqual(@as(c_int, -1), remove_instance(2));
+
+    try std.testing.expectEqual(@as(c_int, 0), mark_instance_broken(0));
+    try std.testing.expectEqual(@as(c_int, 1), is_instance_broken(0));
+    try std.testing.expectEqual(@as(u8, 1), compact_broken_instances());
+    try std.testing.expectEqual(@as(u8, 1), get_instance_count());
+    try std.testing.expectEqual(@as(c_int, 0), get_instance_pos(0, &pos));
+    try std.testing.expectEqual(@as(i32, 7), pos[0]);
+}
+
+test "instance handle exports remain stable across index compaction" {
+    try std.testing.expectEqual(@as(c_int, 0), init_kernel());
+    defer std.testing.expectEqual(@as(c_int, 0), shutdown_kernel()) catch {};
+    try std.testing.expectEqual(@as(c_int, 0), reset_context());
+
+    const first_handle = spawn_instance_handle(0, 1, 2, 3);
+    const second_handle = spawn_instance_handle(1, 4, 5, 6);
+    const third_handle = spawn_instance_handle(2, 7, 8, 9);
+    try std.testing.expect(first_handle != scene1024.INVALID_INSTANCE_HANDLE);
+    try std.testing.expect(second_handle != scene1024.INVALID_INSTANCE_HANDLE);
+    try std.testing.expect(third_handle != scene1024.INVALID_INSTANCE_HANDLE);
+    try std.testing.expectEqual(@as(c_int, 0), resolve_instance_handle(first_handle));
+    try std.testing.expectEqual(@as(c_int, 1), resolve_instance_handle(second_handle));
+    try std.testing.expectEqual(@as(c_int, 2), resolve_instance_handle(third_handle));
+    try std.testing.expectEqual(third_handle, get_instance_handle(2));
+
+    try std.testing.expectEqual(@as(c_int, 0), remove_instance_handle(second_handle));
+    try std.testing.expectEqual(@as(c_int, -1), resolve_instance_handle(second_handle));
+    try std.testing.expectEqual(@as(c_int, 1), resolve_instance_handle(third_handle));
+    try std.testing.expectEqual(third_handle, get_instance_handle(1));
+    try std.testing.expectEqual(@as(c_int, -1), remove_instance_handle(second_handle));
+
+    try std.testing.expectEqual(@as(c_int, 0), mark_instance_broken_handle(third_handle));
+    try std.testing.expectEqual(@as(c_int, 1), is_instance_broken(1));
+    try std.testing.expectEqual(@as(u8, 1), compact_broken_instances());
+    try std.testing.expectEqual(@as(c_int, -1), resolve_instance_handle(third_handle));
+    try std.testing.expectEqual(@as(c_int, 0), resolve_instance_handle(first_handle));
+}
+
 fn appendVmHookPlaybackSnapshot(tick: u32) void {
     const rewind_sys = rewind.getSystem();
     const idx = rewind_sys.world_snapshot_index;
@@ -4235,4 +4355,3 @@ pub export fn ai_traffic_get_vehicle_target_speed_by_id(vehicle_id: u16) f32 {
 pub export fn ai_traffic_get_vehicle_governed_speed_by_id(vehicle_id: u16) f32 {
     return ai_traffic.g_traffic_system.getGovernedTargetSpeed(vehicle_id) orelse -1;
 }
-

@@ -1,0 +1,96 @@
+{
+  "schema": "worldvm.entity16.abi",
+  "version": 1,
+  "entity_size": 4096,
+  "endianness": "little",
+  "fixture": {
+    "path": "tests/fixtures/entity16_abi_v1_default.bin",
+    "sha256": "4d70058644f3f0cdb6c37f470d72d3c8dedeb87f42431f79101f2cbff1c754d0"
+  },
+  "layout": [
+    {
+      "name": "topology",
+      "offset": 0,
+      "size": 512
+    },
+    {
+      "name": "physics",
+      "offset": 512,
+      "size": 16
+    },
+    {
+      "name": "chemistry",
+      "offset": 528,
+      "size": 16
+    },
+    {
+      "name": "visual",
+      "offset": 544,
+      "size": 4
+    },
+    {
+      "name": "semantics",
+      "offset": 548,
+      "size": 64
+    },
+    {
+      "name": "affect",
+      "offset": 612,
+      "size": 16
+    },
+    {
+      "name": "relations",
+      "offset": 628,
+      "size": 256
+    },
+    {
+      "name": "behavior",
+      "offset": 884,
+      "size": 128
+    },
+    {
+      "name": "reserved",
+      "offset": 1012,
+      "size": 3084
+    }
+  ],
+  "chemistry_fields": [
+    {
+      "name": "chemical_signature",
+      "offset": 0,
+      "size": 4
+    },
+    {
+      "name": "smell_profile_id",
+      "offset": 4,
+      "size": 2
+    },
+    {
+      "name": "taste_profile_id",
+      "offset": 6,
+      "size": 2
+    },
+    {
+      "name": "reaction_rule_set",
+      "offset": 8,
+      "size": 2
+    },
+    {
+      "name": "toxicity_level",
+      "offset": 10,
+      "size": 2
+    },
+    {
+      "name": "extension_abi_version",
+      "offset": 12,
+      "size": 2,
+      "default": 1
+    },
+    {
+      "name": "reserved",
+      "offset": 14,
+      "size": 2,
+      "default": 0
+    }
+  ]
+}

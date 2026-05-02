@@ -25,6 +25,7 @@ pub const PhysicsBlock = struct {
     temp_state: u8 = 0,
     stability: u16 = 100,
     group_id: u8 = 0,
+    reserved: u16 = 0,
 };
 
 pub const VisualBlock = struct {
@@ -40,14 +41,69 @@ pub const EdgeSlot = struct {
     weight: u8 = 0,
 };
 
+pub const ENTITY16_EXTENSION_ABI_VERSION: u16 = 1;
+
+pub const ChemistryBlock = extern struct {
+    chemical_signature: u32 = 0,
+    smell_profile_id: u16 = 0,
+    taste_profile_id: u16 = 0,
+    reaction_rule_set: u16 = 0,
+    toxicity_level: u16 = 0,
+    extension_abi_version: u16 = ENTITY16_EXTENSION_ABI_VERSION,
+    reserved: u16 = 0,
+};
+
+pub const SemanticsBlock = extern struct {
+    role_tag: u16 = 0,
+    category_tag: u16 = 0,
+    priority: u8 = 0,
+    affordance_flags: u8 = 0,
+    reserved: [58]u8 = .{0} ** 58,
+};
+
+pub const AffectBlock = extern struct {
+    valence: i8 = 0,
+    arousal: u8 = 0,
+    certainty: u8 = 128,
+    control: u8 = 128,
+    mood_flags: u8 = 0,
+    reserved: [11]u8 = .{0} ** 11,
+};
+
+pub const BehaviorBlock = extern struct {
+    on_contact_rule_id: u16 = 0,
+    on_focus_rule_id: u16 = 0,
+    on_threat_rule_id: u16 = 0,
+    on_bind_rule_id: u16 = 0,
+    on_decay_rule_id: u16 = 0,
+    on_sound_event_rule_id: u16 = 0,
+    on_chemical_event_rule_id: u16 = 0,
+    rule_flags: u16 = 0,
+    reserved: [112]u8 = .{0} ** 112,
+};
+
+pub const TOPOLOGY_SIZE: usize = TOPOLOGY_WORDS * @sizeOf(u64);
+pub const PHYSICS_SIZE: usize = 16;
+pub const CHEMISTRY_SIZE: usize = 16;
+pub const VISUAL_SIZE: usize = 4;
+pub const SEMANTICS_SIZE: usize = 64;
+pub const AFFECT_SIZE: usize = 16;
+pub const RELATIONS_SIZE: usize = 64 * @sizeOf(EdgeSlot);
+pub const BEHAVIOR_SIZE: usize = 128;
+pub const RESERVED_SIZE: usize = ENTITY_SIZE - TOPOLOGY_SIZE - PHYSICS_SIZE - CHEMISTRY_SIZE - VISUAL_SIZE - SEMANTICS_SIZE - AFFECT_SIZE - RELATIONS_SIZE - BEHAVIOR_SIZE;
+
 const sdf = @import("sdf.zig");
 
 pub const Entity16 = struct {
     topology: [TOPOLOGY_WORDS]u64 = undefined,
     physics: PhysicsBlock = .{},
+    chemistry: ChemistryBlock = .{},
     visual: VisualBlock = .{},
+    semantics: SemanticsBlock = .{},
+    affect: AffectBlock = .{},
     relations: [64]EdgeSlot = undefined,
-    reserved: [4096 - 512 - 16 - 4 - 256]u8 = undefined,
+    behavior: BehaviorBlock = .{},
+    reserved: [RESERVED_SIZE]u8 = undefined,
 
     pub fn fromSDF(node: sdf.SDFNode) Entity16 {
         var e = initEntity16();
@@ -251,12 +307,64 @@ pub const Prototypes = struct {
 pub fn initEntity16() Entity16 {
     var e: Entity16 = .{};
     e.topology = .{0} ** 64;
+    e.relations = .{EdgeSlot{}} ** 64;
+    e.reserved = .{0} ** RESERVED_SIZE;
     return e;
 }
 
 test "Entity16 layout stays fixed at 4KB" {
     try std.testing.expectEqual(@as(usize, ENTITY_SIZE), @sizeOf(Entity16));
     try std.testing.expectEqual(@as(usize, 512), @sizeOf(@TypeOf(initEntity16().topology)));
+    try std.testing.expectEqual(@as(usize, PHYSICS_SIZE), @sizeOf(PhysicsBlock));
+    try std.testing.expectEqual(@as(usize, CHEMISTRY_SIZE), @sizeOf(ChemistryBlock));
+    try std.testing.expectEqual(@as(usize, VISUAL_SIZE), @sizeOf(VisualBlock));
+    try std.testing.expectEqual(@as(usize, SEMANTICS_SIZE), @sizeOf(SemanticsBlock));
+    try std.testing.expectEqual(@as(usize, AFFECT_SIZE), @sizeOf(AffectBlock));
+    try std.testing.expectEqual(@as(usize, RELATIONS_SIZE), @sizeOf(@TypeOf(initEntity16().relations)));
+    try std.testing.expectEqual(@as(usize, BEHAVIOR_SIZE), @sizeOf(BehaviorBlock));
+    try std.testing.expectEqual(
+        @as(usize, ENTITY_SIZE),
+        TOPOLOGY_SIZE + PHYSICS_SIZE + CHEMISTRY_SIZE + VISUAL_SIZE + SEMANTICS_SIZE + AFFECT_SIZE + RELATIONS_SIZE + BEHAVIOR_SIZE + RESERVED_SIZE,
+    );
+}
+
+test "Entity16 named extension blocks initialize and remain writable" {
+    var entity = initEntity16();
+
+    try std.testing.expectEqual(ENTITY16_EXTENSION_ABI_VERSION, entity.chemistry.extension_abi_version);
+    try std.testing.expectEqual(@as(u32, 0), entity.chemistry.chemical_signature);
+    try std.testing.expectEqual(@as(i8, 0), entity.affect.valence);
+    try std.testing.expectEqual(@as(u8, 128), entity.affect.certainty);
+    try std.testing.expectEqual(@as(u16, 0), entity.behavior.on_contact_rule_id);
+
+    entity.chemistry.chemical_signature = 0xCAFE_BABE;
+    entity.chemistry.extension_abi_version = 2;
+    entity.semantics.role_tag = 7;
+    entity.affect.valence = -12;
+    entity.behavior.on_chemical_event_rule_id = 42;
+
+    try std.testing.expectEqual(@as(u32, 0xCAFE_BABE), entity.chemistry.chemical_signature);
+    try std.testing.expectEqual(@as(u16, 2), entity.chemistry.extension_abi_version);
+    try std.testing.expectEqual(@as(u16, 7), entity.semantics.role_tag);
+    try std.testing.expectEqual(@as(i8, -12), entity.affect.valence);
+    try std.testing.expectEqual(@as(u16, 42), entity.behavior.on_chemical_event_rule_id);
+}
+
+test "Entity16 extension ABI version occupies reserved chemistry slot" {
+    try std.testing.expectEqual(@as(usize, 0), @offsetOf(ChemistryBlock, "chemical_signature"));
+    try std.testing.expectEqual(@as(usize, 4), @offsetOf(ChemistryBlock, "smell_profile_id"));
+    try std.testing.expectEqual(@as(usize, 6), @offsetOf(ChemistryBlock, "taste_profile_id"));
+    try std.testing.expectEqual(@as(usize, 8), @offsetOf(ChemistryBlock, "reaction_rule_set"));
+    try std.testing.expectEqual(@as(usize, 10), @offsetOf(ChemistryBlock, "toxicity_level"));
+    try std.testing.expectEqual(@as(usize, 12), @offsetOf(ChemistryBlock, "extension_abi_version"));
+    try std.testing.expectEqual(@as(usize, 14), @offsetOf(ChemistryBlock, "reserved"));
+
+    const entity = initEntity16();
+    const bytes = std.mem.asBytes(&entity.chemistry);
+    try std.testing.expectEqual(@as(u8, @truncate(ENTITY16_EXTENSION_ABI_VERSION)), bytes[12]);
+    try std.testing.expectEqual(@as(u8, ENTITY16_EXTENSION_ABI_VERSION >> 8), bytes[13]);
+    try std.testing.expectEqual(@as(u8, 0), bytes[14]);
+    try std.testing.expectEqual(@as(u8, 0), bytes[15]);
 }
 
 test "Entity16 voxel bit mapping covers full 16 cube" {

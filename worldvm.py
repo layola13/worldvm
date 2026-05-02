@@ -2,13 +2,35 @@ import ctypes
 import os
 import sys
 
-if sys.platform == "win32":
-    lib_name = "worldvm.dll"
-    lib_dir = os.path.join("zig-out", "bin")
-else:
-    lib_name = "libworldvm.so"
-    lib_dir = os.path.join("zig-out", "lib")
+WORLDVM_LIBRARY_PATH_ENV = "WORLDVM_LIBRARY_PATH"
+
+def platform_library_name_and_dir(platform_name=None):
+    if platform_name is None:
+        platform_name = sys.platform
+    if platform_name == "win32":
+        return "worldvm.dll", os.path.join("zig-out", "bin")
+    if platform_name == "darwin":
+        return "libworldvm.dylib", os.path.join("zig-out", "lib")
+    return "libworldvm.so", os.path.join("zig-out", "lib")
+
+lib_name, lib_dir = platform_library_name_and_dir()
 lib_path = os.path.join(os.path.dirname(__file__), lib_dir, lib_name)
+
+def resolve_library_path(library_path=None):
+    if library_path is not None:
+        return os.fspath(library_path)
+    env_library_path = os.environ.get(WORLDVM_LIBRARY_PATH_ENV)
+    if env_library_path:
+        return env_library_path
+    package_root = os.path.dirname(os.path.abspath(__file__))
+    candidates = (
+        os.path.join(package_root, lib_dir, lib_name),
+        os.path.join(package_root, lib_name),
+    )
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+    return candidates[0]
 
 class TraceEntry(ctypes.Structure):
     _fields_ = [
@@ -61,10 +83,33 @@ class SuspensionConfigFFI(ctypes.Structure):
     ]
 
 class WorldVM:
-    def __init__(self):
-        self.lib = ctypes.CDLL(lib_path)
+    def __init__(self, library_path=None):
+        self.library_path = resolve_library_path(library_path)
+        try:
+            self.lib = ctypes.CDLL(self.library_path)
+        except OSError as exc:
+            raise OSError(
+                f"failed to load WorldVM shared library from {self.library_path!r}; "
+                f"set {WORLDVM_LIBRARY_PATH_ENV} or pass WorldVM(library_path=...)"
+            ) from exc
         self.lib.init_kernel.restype = ctypes.c_int
         self.lib.spawn_instance.argtypes = [ctypes.c_uint16, ctypes.c_int32, ctypes.c_int32, ctypes.c_int32]
+        self.lib.spawn_instance_handle.argtypes = [ctypes.c_uint16, ctypes.c_int32, ctypes.c_int32, ctypes.c_int32]
+        self.lib.spawn_instance_handle.restype = ctypes.c_uint32
+        self.lib.get_instance_count.restype = ctypes.c_uint8
+        self.lib.get_instance_handle.argtypes = [ctypes.c_uint8]
+        self.lib.get_instance_handle.restype = ctypes.c_uint32
+        self.lib.resolve_instance_handle.argtypes = [ctypes.c_uint32]
+        self.lib.resolve_instance_handle.restype = ctypes.c_int
+        self.lib.remove_instance.argtypes = [ctypes.c_uint8]
+        self.lib.remove_instance.restype = ctypes.c_int
+        self.lib.remove_instance_handle.argtypes = [ctypes.c_uint32]
+        self.lib.remove_instance_handle.restype = ctypes.c_int
+        self.lib.mark_instance_broken.argtypes = [ctypes.c_uint8]
+        self.lib.mark_instance_broken.restype = ctypes.c_int
+        self.lib.mark_instance_broken_handle.argtypes = [ctypes.c_uint32]
+        self.lib.mark_instance_broken_handle.restype = ctypes.c_int
+        self.lib.compact_broken_instances.restype = ctypes.c_uint8
         self.lib.run_ticks.argtypes = [ctypes.c_uint32]
         self.lib.get_emotion_valence.restype = ctypes.c_int8
         self.lib.get_emotion_arousal.restype = ctypes.c_uint8
@@ -610,7 +655,16 @@ class WorldVM:
     def ai_traffic_get_vehicle_governed_target_speed(self, vehicle_idx: int) -> float:
         return float(self.lib.ai_traffic_get_vehicle_governed_target_speed(int(vehicle_idx)))
 
-    def spawn(self, eid, x, y, z): self.lib.spawn_instance(eid, x, y, z)
+    def spawn(self, eid, x, y, z): return self.lib.spawn_instance(eid, x, y, z)
+    def spawn_handle(self, eid, x, y, z): return int(self.lib.spawn_instance_handle(eid, x, y, z))
+    def instance_count(self): return int(self.lib.get_instance_count())
+    def instance_handle(self, inst_idx): return int(self.lib.get_instance_handle(inst_idx))
+    def resolve_instance_handle(self, handle): return int(self.lib.resolve_instance_handle(handle))
+    def remove_instance(self, inst_idx): return self.lib.remove_instance(inst_idx)
+    def remove_instance_handle(self, handle): return self.lib.remove_instance_handle(handle)
+    def mark_instance_broken(self, inst_idx): return self.lib.mark_instance_broken(inst_idx)
+    def mark_instance_broken_handle(self, handle): return self.lib.mark_instance_broken_handle(handle)
+    def compact_broken_instances(self): return int(self.lib.compact_broken_instances())
     def run(self, t=1): return self.lib.run_ticks(t)
     def last_step(self):
         return {
